@@ -1,3 +1,5 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Departamentos from "./pages/Departamentos";
@@ -10,64 +12,78 @@ import Incidencias from "./pages/Incidencias";
 import Nomina from "./pages/Nomina";
 import ReciboNomina from "./pages/ReciboNomina";
 
-<Route
-  path="/"
-  element={<Login />}
-/>
+export default function App() {
 
-<Route
-  path="/dashboard"
-  element={<Dashboard />}
-/>
+  return (
 
-<Route
-  path="/empleados"
-  element={<Empleados />}
-/>
+    <BrowserRouter>
 
-<Route
-  path="/departamentos"
-  element={<Departamentos />}
-/>
+      <Routes>
 
-<Route
-  path="/puestos"
-  element={<Puestos />}
-/>
-<Route
-  path="/puestos"
-  element={<Puestos />}
-/>
-<Route
-  path="/empleados"
-  element={<Empleados />}
-/>
-<Route
-  path="/empleados/nuevo"
-  element={<EmpleadoForm />}
-/>
+        <Route
+          path="/"
+          element={<Login />}
+        />
 
-<Route
-  path="/empleados/:id"
-  element={<EmpleadoForm />}
-/>
-<Route
-  path="/empleados/detalle/:id"
-  element={<DetalleEmpleado />}
-/>
-<Route
-  path="/periodos"
-  element={<PeriodosNomina />}
-/>
-<Route
-  path="/incidencias"
-  element={<Incidencias />}
-/>
-<Route
-  path="/nomina"
-  element={<Nomina />}
-/>
-<Route
-  path="/nomina/recibo/:empleadoId/:periodoId"
-  element={<ReciboNomina />}
-/>
+        <Route
+          path="/dashboard"
+          element={<Dashboard />}
+        />
+
+        <Route
+          path="/departamentos"
+          element={<Departamentos />}
+        />
+
+        <Route
+          path="/puestos"
+          element={<Puestos />}
+        />
+
+        <Route
+          path="/empleados"
+          element={<Empleados />}
+        />
+
+        <Route
+          path="/empleados/nuevo"
+          element={<EmpleadoForm />}
+        />
+
+        <Route
+          path="/empleados/:id"
+          element={<EmpleadoForm />}
+        />
+
+        <Route
+          path="/empleados/detalle/:id"
+          element={<DetalleEmpleado />}
+        />
+
+        <Route
+          path="/periodos"
+          element={<PeriodosNomina />}
+        />
+
+        <Route
+          path="/incidencias"
+          element={<Incidencias />}
+        />
+
+        <Route
+          path="/nomina"
+          element={<Nomina />}
+        />
+
+        <Route
+          path="/nomina/recibo/:empleadoId/:periodoId"
+          element={<ReciboNomina />}
+        />
+
+      </Routes>
+
+    </BrowserRouter>
+
+  );
+
+}

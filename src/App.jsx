@@ -11,6 +11,12 @@ import PeriodosNomina from "./pages/PeriodosNomina";
 import Incidencias from "./pages/Incidencias";
 import Nomina from "./pages/Nomina";
 import ReciboNomina from "./pages/ReciboNomina";
+import Usuarios from "./pages/Usuarios";
+import SolicitudesUsuario from "./pages/SolicitudesUsuario";
+import Vacaciones from "./pages/Vacaciones";
+import Prestamos from "./pages/Prestamos";
+import Reportes from "./pages/Reportes";
+import DashboardEjecutivo from "./pages/DashboardEjecutivo";
 
 export default function App() {
 
@@ -79,6 +85,36 @@ export default function App() {
           path="/nomina/recibo/:empleadoId/:periodoId"
           element={<ReciboNomina />}
         />
+        <Route
+  path="/usuarios"
+  element={<Usuarios />}
+/>
+
+    <Route
+  path="/solicitudes"
+  element={<SolicitudesUsuario />}
+/>
+
+<Route
+  path="/vacaciones"
+  element={<Vacaciones />}
+/>
+<Route
+  path="/prestamos"
+  element={<Prestamos />}
+/>
+
+<Route
+  path="/reportes"
+  element={<Reportes />}
+/>
+
+<Route
+  path="/dashboard-ejecutivo"
+  element={
+    <DashboardEjecutivo />
+  }
+/>
 
       </Routes>
 

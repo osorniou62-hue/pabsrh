@@ -15,6 +15,19 @@ export default function Login() {
   const [loading, setLoading] =
     useState(false);
 
+  const [mostrarRegistro,
+    setMostrarRegistro] =
+    useState(false);
+
+  const [registro,
+    setRegistro] =
+    useState({
+      nombre: "",
+      correo: "",
+      telefono: "",
+      password: "",
+    });
+
   const iniciarSesion =
     async (e) => {
 
@@ -71,47 +84,21 @@ export default function Login() {
 
       if (perfilError) {
 
-        const {
-          error: crearError,
-        } = await supabase
-          .from("profiles")
-          .insert([
-            {
-              id: usuario.id,
-              nombre:
-                usuario.email,
-              rol: "ADMIN",
-              activo: true,
-            },
-          ]);
+        setLoading(false);
 
-        if (crearError) {
+        alert(
+          "No existe perfil para este usuario"
+        );
 
-          console.error(
-            crearError
-          );
-
-          alert(
-            crearError.message
-          );
-
-          await supabase.auth.signOut();
-
-          setLoading(false);
-
-          return;
-
-        }
-
-        navigate("/dashboard");
+        await supabase.auth.signOut();
 
         return;
 
       }
 
-      setLoading(false);
-
       if (!perfil.activo) {
+
+        setLoading(false);
 
         alert(
           "Usuario inactivo"
@@ -123,69 +110,73 @@ export default function Login() {
 
       }
 
+      setLoading(false);
+
       navigate("/dashboard");
 
     };
 
-  const registrarUsuario =
+  const solicitarRegistro =
     async () => {
 
       if (
-        !correo ||
-        !password
+        !registro.nombre ||
+        !registro.correo ||
+        !registro.password
       ) {
 
         alert(
-          "Captura correo y contraseña"
+          "Completa los campos requeridos"
         );
 
         return;
 
       }
 
-      setLoading(true);
+      const { error } =
+        await supabase
+          .from(
+            "solicitudes_usuario"
+          )
+          .insert([
+            {
+              nombre:
+                registro.nombre,
 
-      const {
-        data,
-        error,
-      } = await supabase.auth.signUp({
-        email: correo,
-        password,
-      });
+              correo:
+                registro.correo,
+
+              telefono:
+                registro.telefono,
+
+              password:
+                registro.password,
+
+              estatus:
+                "PENDIENTE",
+            },
+          ]);
 
       if (error) {
 
         alert(error.message);
 
-        setLoading(false);
-
         return;
 
       }
 
-      const usuario =
-        data?.user;
-
-      if (usuario) {
-
-        await supabase
-          .from("profiles")
-          .insert([
-            {
-              id: usuario.id,
-              nombre: correo,
-              rol: "ADMIN",
-              activo: true,
-            },
-          ]);
-
-      }
-
       alert(
-        "Usuario creado correctamente"
+        "Solicitud enviada. Un administrador deberá aprobarla."
       );
 
-      setLoading(false);
+      setRegistro({
+        nombre: "",
+        correo: "",
+        telefono: "",
+        password: "",
+      });
+
+      setMostrarRegistro(false);
 
     };
 
@@ -235,9 +226,7 @@ export default function Login() {
         </div>
 
         <form
-          onSubmit={
-            iniciarSesion
-          }
+          onSubmit={iniciarSesion}
           className="space-y-4"
         >
 
@@ -300,10 +289,9 @@ export default function Login() {
         <hr className="my-6" />
 
         <button
-          onClick={
-            registrarUsuario
+          onClick={() =>
+            setMostrarRegistro(true)
           }
-          disabled={loading}
           className="
             w-full
             bg-green-600
@@ -312,10 +300,164 @@ export default function Login() {
             rounded
           "
         >
-          Crear Usuario
+          Solicitar Registro
         </button>
 
       </div>
+
+      {mostrarRegistro && (
+
+        <div
+          className="
+            fixed
+            inset-0
+            bg-black/50
+            flex
+            items-center
+            justify-center
+            z-50
+          "
+        >
+
+          <div
+            className="
+              bg-white
+              rounded-lg
+              p-6
+              w-full
+              max-w-md
+            "
+          >
+
+            <h2
+              className="
+                text-xl
+                font-bold
+                mb-4
+              "
+            >
+              Solicitud de Registro
+            </h2>
+
+            <div className="space-y-3">
+
+              <input
+                type="text"
+                placeholder="Nombre completo"
+                value={registro.nombre}
+                onChange={(e) =>
+                  setRegistro({
+                    ...registro,
+                    nombre:
+                      e.target.value,
+                  })
+                }
+                className="
+                  w-full
+                  border
+                  rounded
+                  p-2
+                "
+              />
+
+              <input
+                type="email"
+                placeholder="Correo"
+                value={registro.correo}
+                onChange={(e) =>
+                  setRegistro({
+                    ...registro,
+                    correo:
+                      e.target.value,
+                  })
+                }
+                className="
+                  w-full
+                  border
+                  rounded
+                  p-2
+                "
+              />
+
+              <input
+                type="text"
+                placeholder="Teléfono"
+                value={registro.telefono}
+                onChange={(e) =>
+                  setRegistro({
+                    ...registro,
+                    telefono:
+                      e.target.value,
+                  })
+                }
+                className="
+                  w-full
+                  border
+                  rounded
+                  p-2
+                "
+              />
+
+              <input
+                type="password"
+                placeholder="Contraseña"
+                value={registro.password}
+                onChange={(e) =>
+                  setRegistro({
+                    ...registro,
+                    password:
+                      e.target.value,
+                  })
+                }
+                className="
+                  w-full
+                  border
+                  rounded
+                  p-2
+                "
+              />
+
+            </div>
+
+            <div className="flex gap-3 mt-6">
+
+              <button
+                onClick={
+                  solicitarRegistro
+                }
+                className="
+                  flex-1
+                  bg-green-600
+                  text-white
+                  py-2
+                  rounded
+                "
+              >
+                Enviar
+              </button>
+
+              <button
+                onClick={() =>
+                  setMostrarRegistro(false)
+                }
+                className="
+                  flex-1
+                  bg-gray-600
+                  text-white
+                  py-2
+                  rounded
+                "
+              >
+                Cancelar
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      )}
 
     </div>
 

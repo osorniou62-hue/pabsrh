@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
 export default function ReciboNomina() {
 
@@ -37,20 +39,14 @@ export default function ReciboNomina() {
         await supabase
           .from("empleados")
           .select("*")
-          .eq(
-            "id",
-            empleadoId
-          )
+          .eq("id", empleadoId)
           .single();
 
       const { data: periodo } =
         await supabase
           .from("periodos_nomina")
           .select("*")
-          .eq(
-            "id",
-            periodoId
-          )
+          .eq("id", periodoId)
           .single();
 
       const { data: nomina } =
@@ -72,6 +68,57 @@ export default function ReciboNomina() {
       setNomina(nomina);
 
       setLoading(false);
+
+    };
+
+  const descargarPDF =
+    async () => {
+
+      const recibo =
+        document.getElementById(
+          "recibo"
+        );
+
+      const canvas =
+        await html2canvas(
+          recibo,
+          {
+            scale: 2,
+          }
+        );
+
+      const imgData =
+        canvas.toDataURL(
+          "image/png"
+        );
+
+      const pdf =
+        new jsPDF(
+          "p",
+          "mm",
+          "a4"
+        );
+
+      const pdfWidth =
+        pdf.internal.pageSize.getWidth();
+
+      const pdfHeight =
+        (canvas.height *
+          pdfWidth) /
+        canvas.width;
+
+      pdf.addImage(
+        imgData,
+        "PNG",
+        0,
+        0,
+        pdfWidth,
+        pdfHeight
+      );
+
+      pdf.save(
+        `Recibo_${empleado.numero_empleado}.pdf`
+      );
 
     };
 
@@ -109,20 +156,37 @@ export default function ReciboNomina() {
           📄 Recibo de Nómina
         </h1>
 
-        <button
-          onClick={() =>
-            navigate(-1)
-          }
-          className="
-            bg-blue-600
-            text-white
-            px-4
-            py-2
-            rounded
-          "
-        >
-          Regresar
-        </button>
+        <div className="flex gap-3">
+
+          <button
+            onClick={descargarPDF}
+            className="
+              bg-green-600
+              text-white
+              px-4
+              py-2
+              rounded
+            "
+          >
+            Descargar PDF
+          </button>
+
+          <button
+            onClick={() =>
+              navigate(-1)
+            }
+            className="
+              bg-blue-600
+              text-white
+              px-4
+              py-2
+              rounded
+            "
+          >
+            Regresar
+          </button>
+
+        </div>
 
       </div>
 
@@ -157,27 +221,23 @@ export default function ReciboNomina() {
             </h4>
 
             <p>
-              <strong>No. Empleado:</strong>
-              {" "}
+              <strong>No. Empleado:</strong>{" "}
               {empleado.numero_empleado}
             </p>
 
             <p>
-              <strong>Nombre:</strong>
-              {" "}
+              <strong>Nombre:</strong>{" "}
               {empleado.nombre_completo}
             </p>
 
             <p>
-              <strong>RFC:</strong>
-              {" "}
-              {empleado.rfc}
+              <strong>RFC:</strong>{" "}
+              {empleado.rfc || "-"}
             </p>
 
             <p>
-              <strong>CURP:</strong>
-              {" "}
-              {empleado.curp}
+              <strong>CURP:</strong>{" "}
+              {empleado.curp || "-"}
             </p>
 
           </div>
@@ -189,26 +249,17 @@ export default function ReciboNomina() {
             </h4>
 
             <p>
-              <strong>
-                Descripción:
-              </strong>
-              {" "}
+              <strong>Descripción:</strong>{" "}
               {periodo.descripcion}
             </p>
 
             <p>
-              <strong>
-                Fecha Inicio:
-              </strong>
-              {" "}
+              <strong>Fecha Inicio:</strong>{" "}
               {periodo.fecha_inicio}
             </p>
 
             <p>
-              <strong>
-                Fecha Fin:
-              </strong>
-              {" "}
+              <strong>Fecha Fin:</strong>{" "}
               {periodo.fecha_fin}
             </p>
 
@@ -220,13 +271,7 @@ export default function ReciboNomina() {
 
           <div>
 
-            <h4
-              className="
-                font-bold
-                mb-3
-                text-green-700
-              "
-            >
+            <h4 className="font-bold mb-3 text-green-700">
               Percepciones
             </h4>
 
@@ -281,9 +326,7 @@ export default function ReciboNomina() {
 
                 <tr className="font-bold">
 
-                  <td>
-                    Total
-                  </td>
+                  <td>Total</td>
 
                   <td className="text-right">
                     $
@@ -302,13 +345,7 @@ export default function ReciboNomina() {
 
           <div>
 
-            <h4
-              className="
-                font-bold
-                mb-3
-                text-red-700
-              "
-            >
+            <h4 className="font-bold mb-3 text-red-700">
               Deducciones
             </h4>
 
@@ -333,9 +370,7 @@ export default function ReciboNomina() {
 
                 <tr className="font-bold">
 
-                  <td>
-                    Total
-                  </td>
+                  <td>Total</td>
 
                   <td className="text-right">
                     $
@@ -354,18 +389,10 @@ export default function ReciboNomina() {
 
         </div>
 
-        <div
-          className="
-            border-t
-            pt-6
-            text-center
-          "
-        >
+        <div className="border-t pt-6 text-center">
 
           <div className="text-xl font-bold">
-
             NETO A PAGAR
-
           </div>
 
           <div
@@ -388,12 +415,7 @@ export default function ReciboNomina() {
 
           <div className="text-center">
 
-            <div
-              className="
-                border-t
-                pt-2
-              "
-            >
+            <div className="border-t pt-2">
               Empleado
             </div>
 
@@ -401,12 +423,7 @@ export default function ReciboNomina() {
 
           <div className="text-center">
 
-            <div
-              className="
-                border-t
-                pt-2
-              "
-            >
+            <div className="border-t pt-2">
               Recursos Humanos
             </div>
 

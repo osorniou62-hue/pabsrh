@@ -244,6 +244,127 @@ export default function Dashboard() {
 
 </Link>
 
+<Link
+  to="/usuarios"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    👥 Usuarios
+  </h3>
+
+  <p className="text-gray-600">
+    Administración de accesos
+  </p>
+
+</Link>
+
+<Link
+  to="/vacaciones"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    🏖 Vacaciones
+  </h3>
+
+  <p className="text-gray-600">
+    Administración de vacaciones
+  </p>
+</Link>
+
+<Link
+  to="/prestamos"
+>
+  💳 Préstamos
+</Link>
+
+<Link
+  to="/reportes"
+>
+  📊 Reportes
+</Link>
+
+<Link
+  to="/prestamos"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    💳 Préstamos
+  </h3>
+
+  <p className="text-gray-600">
+    Administración de préstamos
+  </p>
+</Link>
+
+<Link
+  to="/reportes"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📊 Reportes
+  </h3>
+
+  <p className="text-gray-600">
+    Exportación a Excel
+  </p>
+</Link>
+
+<Link
+  to="/dashboard-ejecutivo"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📈 Dashboard Ejecutivo
+  </h3>
+
+  <p className="text-gray-600">
+    Indicadores y gráficas
+  </p>
+</Link>
+
+<Link
+  to="/solicitudes"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📨 Solicitudes
+  </h3>
+
+  <p className="text-gray-600">
+    Aprobación de usuarios
+  </p>
+</Link>
+
           <Link
             to="/puestos"
             className="

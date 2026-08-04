@@ -32,11 +32,11 @@ export default function Login() {
 
       if (error) {
 
+        console.error(error);
+
         setLoading(false);
 
-        alert(
-          "Correo o contraseña incorrectos"
-        );
+        alert(error.message);
 
         return;
 
@@ -69,23 +69,47 @@ export default function Login() {
         )
         .single();
 
-      setLoading(false);
-
       if (perfilError) {
 
-        console.error(
-          perfilError
-        );
+        const {
+          error: crearError,
+        } = await supabase
+          .from("profiles")
+          .insert([
+            {
+              id: usuario.id,
+              nombre:
+                usuario.email,
+              rol: "ADMIN",
+              activo: true,
+            },
+          ]);
 
-        alert(
-          "El usuario no tiene perfil asignado"
-        );
+        if (crearError) {
 
-        await supabase.auth.signOut();
+          console.error(
+            crearError
+          );
+
+          alert(
+            crearError.message
+          );
+
+          await supabase.auth.signOut();
+
+          setLoading(false);
+
+          return;
+
+        }
+
+        navigate("/dashboard");
 
         return;
 
       }
+
+      setLoading(false);
 
       if (!perfil.activo) {
 
@@ -99,43 +123,69 @@ export default function Login() {
 
       }
 
-      switch (
-        perfil.rol
+      navigate("/dashboard");
+
+    };
+
+  const registrarUsuario =
+    async () => {
+
+      if (
+        !correo ||
+        !password
       ) {
 
-        case "ADMIN":
+        alert(
+          "Captura correo y contraseña"
+        );
 
-          navigate(
-            "/dashboard"
-          );
-
-          break;
-
-        case "RH":
-
-          navigate(
-            "/dashboard"
-          );
-
-          break;
-
-        case "CONSULTA":
-
-          navigate(
-            "/dashboard"
-          );
-
-          break;
-
-        default:
-
-          alert(
-            "Rol no configurado"
-          );
-
-          await supabase.auth.signOut();
+        return;
 
       }
+
+      setLoading(true);
+
+      const {
+        data,
+        error,
+      } = await supabase.auth.signUp({
+        email: correo,
+        password,
+      });
+
+      if (error) {
+
+        alert(error.message);
+
+        setLoading(false);
+
+        return;
+
+      }
+
+      const usuario =
+        data?.user;
+
+      if (usuario) {
+
+        await supabase
+          .from("profiles")
+          .insert([
+            {
+              id: usuario.id,
+              nombre: correo,
+              rol: "ADMIN",
+              activo: true,
+            },
+          ]);
+
+      }
+
+      alert(
+        "Usuario creado correctamente"
+      );
+
+      setLoading(false);
 
     };
 
@@ -191,69 +241,41 @@ export default function Login() {
           className="space-y-4"
         >
 
-          <div>
+          <input
+            type="email"
+            value={correo}
+            onChange={(e) =>
+              setCorreo(
+                e.target.value
+              )
+            }
+            className="
+              w-full
+              border
+              rounded
+              p-3
+            "
+            placeholder="correo@empresa.com"
+            required
+          />
 
-            <label
-              className="
-                block
-                mb-1
-                font-medium
-              "
-            >
-              Correo
-            </label>
-
-            <input
-              type="email"
-              value={correo}
-              onChange={(e) =>
-                setCorreo(
-                  e.target.value
-                )
-              }
-              className="
-                w-full
-                border
-                rounded
-                p-3
-              "
-              placeholder="correo@empresa.com"
-              required
-            />
-
-          </div>
-
-          <div>
-
-            <label
-              className="
-                block
-                mb-1
-                font-medium
-              "
-            >
-              Contraseña
-            </label>
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e) =>
-                setPassword(
-                  e.target.value
-                )
-              }
-              className="
-                w-full
-                border
-                rounded
-                p-3
-              "
-              placeholder="********"
-              required
-            />
-
-          </div>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) =>
+              setPassword(
+                e.target.value
+              )
+            }
+            className="
+              w-full
+              border
+              rounded
+              p-3
+            "
+            placeholder="********"
+            required
+          />
 
           <button
             type="submit"
@@ -264,8 +286,6 @@ export default function Login() {
               text-white
               py-3
               rounded
-              hover:bg-blue-700
-              disabled:bg-gray-400
             "
           >
 
@@ -276,6 +296,24 @@ export default function Login() {
           </button>
 
         </form>
+
+        <hr className="my-6" />
+
+        <button
+          onClick={
+            registrarUsuario
+          }
+          disabled={loading}
+          className="
+            w-full
+            bg-green-600
+            text-white
+            py-3
+            rounded
+          "
+        >
+          Crear Usuario
+        </button>
 
       </div>
 

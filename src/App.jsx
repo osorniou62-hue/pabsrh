@@ -21,6 +21,8 @@ import Auditoria from "./pages/Auditoria";
 import Notificaciones from "./pages/Notificaciones";
 import RecibosMasivos from "./pages/RecibosMasivos";
 import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
+import ImportarEmpleados from "./pages/ImportarEmpleados";
+
 
 export default function App() {
 
@@ -138,6 +140,13 @@ export default function App() {
 <Route
   path="/recibos-masivos"
   element={<RecibosMasivos />}
+/>
+
+<Route
+  path="/importar-empleados"
+  element={
+    <ImportarEmpleados />
+  }
 />
 
       </Routes>

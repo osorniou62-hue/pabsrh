@@ -76,6 +76,12 @@ export default function Sidebar() {
         </Link>
 
         <Link
+          to="/importar-empleados"
+        >
+          📥 Importar Empleados
+        </Link>
+
+        <Link
           to="/configuracion"
           className="block p-3 rounded hover:bg-slate-700"
         >

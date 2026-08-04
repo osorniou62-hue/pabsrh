@@ -3,7 +3,7 @@ from "@supabase/supabase-js";
 
 const supabaseUrl =
   import.meta.env
-    .VITE_SUPABASE_URL=https://lbkpsujhaoydhjxntjda.supabase.co/rest/v1/;
+    .VITE_SUPABASE_URL=https:https://lbkpsujhaoydhjxntjda.supabase.co
 
 const supabaseAnonKey =
   import.meta.env

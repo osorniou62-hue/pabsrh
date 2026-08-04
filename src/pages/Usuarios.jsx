@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
-import { Link } from "react-router-dom";
+
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
 
 export default function Usuarios() {
 
@@ -81,154 +83,237 @@ export default function Usuarios() {
 
     };
 
+  const activos =
+    usuarios.filter(
+      (u) => u.activo
+    ).length;
+
+  const inactivos =
+    usuarios.filter(
+      (u) => !u.activo
+    ).length;
+
+  const admins =
+    usuarios.filter(
+      (u) => u.rol === "ADMIN"
+    ).length;
+
   return (
 
-    <div className="max-w-7xl mx-auto p-6">
+    <Layout>
 
-      <div className="flex justify-between items-center mb-6">
+      <div>
 
-        <h1 className="text-3xl font-bold">
-          👥 Usuarios
-        </h1>
+        <div className="mb-8">
 
-        <Link
-          to="/dashboard"
+          <h1 className="text-4xl font-bold">
+            👥 Usuarios
+          </h1>
+
+          <p className="text-gray-500 mt-2">
+            Administración de accesos y roles
+          </p>
+
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+
+          <KpiCard
+            titulo="Usuarios Activos"
+            valor={activos}
+            icono="✅"
+            color="text-green-600"
+          />
+
+          <KpiCard
+            titulo="Usuarios Inactivos"
+            valor={inactivos}
+            icono="🚫"
+            color="text-red-600"
+          />
+
+          <KpiCard
+            titulo="Administradores"
+            valor={admins}
+            icono="👑"
+            color="text-purple-600"
+          />
+
+        </div>
+
+        <div
           className="
-            bg-blue-600
-            text-white
-            px-4
-            py-2
-            rounded
+            bg-white
+            rounded-2xl
+            shadow-lg
+            overflow-x-auto
           "
         >
-          Dashboard
-        </Link>
 
-      </div>
+          <table className="w-full">
 
-      <div className="bg-white rounded shadow p-4">
+            <thead className="bg-slate-100">
 
-        <table className="w-full border">
+              <tr>
 
-          <thead>
+                <th className="p-4 text-left">
+                  Nombre
+                </th>
 
-            <tr className="bg-gray-100">
+                <th className="p-4 text-center">
+                  Rol
+                </th>
 
-              <th className="border p-2">
-                Nombre
-              </th>
+                <th className="p-4 text-center">
+                  Estado
+                </th>
 
-              <th className="border p-2">
-                Rol
-              </th>
+                <th className="p-4 text-center">
+                  Acciones
+                </th>
 
-              <th className="border p-2">
-                Estatus
-              </th>
+              </tr>
 
-              <th className="border p-2">
-                Acciones
-              </th>
+            </thead>
 
-            </tr>
+            <tbody>
 
-          </thead>
+              {usuarios.map(
+                (usuario) => (
 
-          <tbody>
+                  <tr
+                    key={usuario.id}
+                    className="
+                      border-t
+                      hover:bg-slate-50
+                      transition
+                    "
+                  >
 
-            {usuarios.map(
-              (usuario) => (
+                    <td className="p-4 font-medium">
+                      {usuario.nombre}
+                    </td>
 
-                <tr
-                  key={usuario.id}
-                >
+                    <td className="p-4 text-center">
 
-                  <td className="border p-2">
-                    {usuario.nombre}
-                  </td>
+                      <div className="flex justify-center">
 
-                  <td className="border p-2">
+                        <select
+                          value={usuario.rol}
+                          onChange={(e) =>
+                            cambiarRol(
+                              usuario.id,
+                              e.target.value
+                            )
+                          }
+                          className="
+                            border
+                            rounded-xl
+                            px-3
+                            py-2
+                          "
+                        >
 
-                    <select
-                      value={usuario.rol}
-                      onChange={(e) =>
-                        cambiarRol(
-                          usuario.id,
-                          e.target.value
-                        )
-                      }
-                      className="
-                        border
-                        p-1
-                        rounded
-                      "
-                    >
+                          <option value="ADMIN">
+                            ADMIN
+                          </option>
 
-                      <option value="ADMIN">
-                        ADMIN
-                      </option>
+                          <option value="RH">
+                            RH
+                          </option>
 
-                      <option value="RH">
-                        RH
-                      </option>
+                          <option value="CONSULTA">
+                            CONSULTA
+                          </option>
 
-                      <option value="CONSULTA">
-                        CONSULTA
-                      </option>
+                        </select>
 
-                    </select>
+                      </div>
 
-                  </td>
+                    </td>
 
-                  <td className="border p-2 text-center">
+                    <td className="p-4 text-center">
 
-                    {usuario.activo
-                      ? "✅ Activo"
-                      : "🚫 Inactivo"}
+                      {usuario.activo ? (
 
-                  </td>
+                        <span
+                          className="
+                            bg-green-100
+                            text-green-700
+                            px-3
+                            py-1
+                            rounded-full
+                            text-sm
+                            font-medium
+                          "
+                        >
+                          Activo
+                        </span>
 
-                  <td className="border p-2 text-center">
+                      ) : (
 
-                    <button
-                      onClick={() =>
-                        cambiarEstatus(
-                          usuario
-                        )
-                      }
-                      className={`
-                        px-3
-                        py-1
-                        rounded
-                        text-white
-                        ${
-                          usuario.activo
-                            ? "bg-red-600"
-                            : "bg-green-600"
+                        <span
+                          className="
+                            bg-red-100
+                            text-red-700
+                            px-3
+                            py-1
+                            rounded-full
+                            text-sm
+                            font-medium
+                          "
+                        >
+                          Inactivo
+                        </span>
+
+                      )}
+
+                    </td>
+
+                    <td className="p-4 text-center">
+
+                      <button
+                        onClick={() =>
+                          cambiarEstatus(
+                            usuario
+                          )
                         }
-                      `}
-                    >
+                        className={`
+                          px-4
+                          py-2
+                          rounded-xl
+                          text-white
+                          transition
+                          ${
+                            usuario.activo
+                              ? "bg-red-600 hover:bg-red-700"
+                              : "bg-green-600 hover:bg-green-700"
+                          }
+                        `}
+                      >
 
-                      {usuario.activo
-                        ? "Desactivar"
-                        : "Activar"}
+                        {usuario.activo
+                          ? "Desactivar"
+                          : "Activar"}
 
-                    </button>
+                      </button>
 
-                  </td>
+                    </td>
 
-                </tr>
+                  </tr>
 
-              )
-            )}
+                )
+              )}
 
-          </tbody>
+            </tbody>
 
-        </table>
+          </table>
+
+        </div>
 
       </div>
 
-    </div>
+    </Layout>
 
   );
 

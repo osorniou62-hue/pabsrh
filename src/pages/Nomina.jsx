@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../services/supabase";
+
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
 
 export default function Nomina() {
 
@@ -30,12 +34,15 @@ export default function Nomina() {
           .select("*")
           .order(
             "fecha_inicio",
-            { ascending: false }
+            {
+              ascending: false,
+            }
           );
 
       if (error) {
 
         console.error(error);
+
         return;
 
       }
@@ -67,7 +74,9 @@ export default function Nomina() {
 
       const resultado = [];
 
-      for (const empleado of empleados || []) {
+      for (
+        const empleado of empleados || []
+      ) {
 
         const { data: bonos } =
           await supabase
@@ -226,217 +235,324 @@ export default function Nomina() {
 
     };
 
+  const totalEmpleados =
+    nomina.length;
+
+  const totalPercepciones =
+    nomina.reduce(
+      (a, b) =>
+        a +
+        Number(
+          b.percepciones || 0
+        ),
+      0
+    );
+
+  const totalDescuentos =
+    nomina.reduce(
+      (a, b) =>
+        a +
+        Number(
+          b.descuentos || 0
+        ),
+      0
+    );
+
+  const totalNeto =
+    nomina.reduce(
+      (a, b) =>
+        a +
+        Number(
+          b.neto || 0
+        ),
+      0
+    );
+
   return (
 
-    <div className="max-w-7xl mx-auto p-6">
+    <Layout>
 
-      <div className="flex justify-between items-center mb-6">
+      <div>
 
-        <h1 className="text-3xl font-bold">
-          🧮 Nómina
-        </h1>
+        <div className="mb-8">
 
-      </div>
+          <h1 className="text-4xl font-bold">
+            🧮 Nómina
+          </h1>
 
-      <div
-        className="
-          bg-white
-          shadow
-          rounded
-          p-6
-          mb-6
-        "
-      >
+          <p className="text-gray-500 mt-2">
+            Generación y consulta de nómina
+          </p>
 
-        <div className="flex gap-4">
+        </div>
 
-          <select
-            value={periodoId}
-            onChange={(e) =>
-              setPeriodoId(
-                e.target.value
-              )
-            }
-            className="
-              border
-              p-2
-              rounded
-            "
-          >
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
 
-            <option value="">
-              Seleccionar período
-            </option>
+          <KpiCard
+            titulo="Empleados"
+            valor={totalEmpleados}
+            icono="👥"
+            color="text-blue-600"
+          />
 
-            {periodos.map(
-              (periodo) => (
+          <KpiCard
+            titulo="Percepciones"
+            valor={`$${totalPercepciones.toLocaleString("es-MX")}`}
+            icono="💵"
+            color="text-green-600"
+          />
 
-                <option
-                  key={periodo.id}
-                  value={periodo.id}
-                >
-                  {periodo.descripcion}
-                </option>
+          <KpiCard
+            titulo="Descuentos"
+            valor={`$${totalDescuentos.toLocaleString("es-MX")}`}
+            icono="💳"
+            color="text-red-600"
+          />
 
-              )
-            )}
+          <KpiCard
+            titulo="Neto"
+            valor={`$${totalNeto.toLocaleString("es-MX")}`}
+            icono="💰"
+            color="text-emerald-600"
+          />
 
-          </select>
+        </div>
 
-          <button
-            onClick={
-              generarNomina
-            }
-            disabled={loading}
-            className="
-              bg-green-600
-              text-white
-              px-4
-              py-2
-              rounded
-            "
-          >
+        <div
+          className="
+            bg-white
+            rounded-2xl
+            shadow-lg
+            p-6
+            mb-6
+          "
+        >
 
-            {loading
-              ? "Generando..."
-              : "Generar Nómina"}
+          <div className="flex flex-col md:flex-row gap-4">
 
-          </button>
+            <select
+              value={periodoId}
+              onChange={(e) =>
+                setPeriodoId(
+                  e.target.value
+                )
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+                flex-1
+              "
+            >
+
+              <option value="">
+                Seleccionar período
+              </option>
+
+              {periodos.map(
+                (periodo) => (
+
+                  <option
+                    key={periodo.id}
+                    value={periodo.id}
+                  >
+                    {periodo.descripcion}
+                  </option>
+
+                )
+              )}
+
+            </select>
+
+            <button
+              onClick={
+                generarNomina
+              }
+              disabled={loading}
+              className="
+                bg-green-600
+                hover:bg-green-700
+                text-white
+                px-6
+                py-3
+                rounded-xl
+              "
+            >
+
+              {loading
+                ? "Generando..."
+                : "Generar Nómina"}
+
+            </button>
+
+          </div>
+
+        </div>
+
+        <div
+          className="
+            bg-white
+            rounded-2xl
+            shadow-lg
+            overflow-x-auto
+          "
+        >
+
+          <table className="w-full">
+
+            <thead className="bg-slate-100">
+
+              <tr>
+
+                <th className="p-4 text-left">
+                  No.
+                </th>
+
+                <th className="p-4 text-left">
+                  Empleado
+                </th>
+
+                <th className="p-4 text-right">
+                  Sueldo
+                </th>
+
+                <th className="p-4 text-right">
+                  Bonos
+                </th>
+
+                <th className="p-4 text-right">
+                  Horas Extra
+                </th>
+
+                <th className="p-4 text-right">
+                  Descuentos
+                </th>
+
+                <th className="p-4 text-right">
+                  Percepciones
+                </th>
+
+                <th className="p-4 text-right">
+                  Neto
+                </th>
+
+                <th className="p-4 text-center">
+                  Recibo
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              {nomina.map(
+                (registro) => (
+
+                  <tr
+                    key={
+                      registro.id
+                    }
+                    className="
+                      border-t
+                      hover:bg-slate-50
+                      transition
+                    "
+                  >
+
+                    <td className="p-4">
+                      {
+                        registro.numero_empleado
+                      }
+                    </td>
+
+                    <td className="p-4 font-medium">
+                      {
+                        registro.nombre_completo
+                      }
+                    </td>
+
+                    <td className="p-4 text-right">
+                      $
+                      {registro.sueldo_base.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td className="p-4 text-right text-green-600">
+                      $
+                      {registro.bonos.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td className="p-4 text-right">
+                      $
+                      {registro.horas_extra.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td className="p-4 text-right text-red-600">
+                      $
+                      {registro.descuentos.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td className="p-4 text-right">
+                      $
+                      {registro.percepciones.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td
+                      className="
+                        p-4
+                        text-right
+                        font-bold
+                        text-blue-700
+                      "
+                    >
+                      $
+                      {registro.neto.toFixed(
+                        2
+                      )}
+                    </td>
+
+                    <td className="p-4 text-center">
+
+                      <Link
+                        to={`/nomina/recibo/${registro.id}/${periodoId}`}
+                        className="
+                          bg-blue-600
+                          hover:bg-blue-700
+                          text-white
+                          px-3
+                          py-2
+                          rounded-xl
+                        "
+                      >
+                        Ver Recibo
+                      </Link>
+
+                    </td>
+
+                  </tr>
+
+                )
+              )}
+
+            </tbody>
+
+          </table>
 
         </div>
 
       </div>
 
-      <div
-        className="
-          bg-white
-          shadow
-          rounded
-          p-4
-          overflow-x-auto
-        "
-      >
-
-        <table className="w-full border">
-
-          <thead>
-
-            <tr className="bg-gray-100">
-
-              <th className="border p-2">
-                No.
-              </th>
-
-              <th className="border p-2">
-                Empleado
-              </th>
-
-              <th className="border p-2">
-                Sueldo
-              </th>
-
-              <th className="border p-2">
-                Bonos
-              </th>
-
-              <th className="border p-2">
-                Horas Extra
-              </th>
-
-              <th className="border p-2">
-                Descuentos
-              </th>
-
-              <th className="border p-2">
-                Percepciones
-              </th>
-
-              <th className="border p-2">
-                Neto
-              </th>
-
-            </tr>
-
-          </thead>
-
-          <tbody>
-
-            {nomina.map(
-              (registro) => (
-
-                <tr
-                  key={registro.id}
-                >
-
-                  <td className="border p-2 text-center">
-                    {registro.numero_empleado}
-                  </td>
-
-                  <td className="border p-2">
-                    {registro.nombre_completo}
-                  </td>
-
-                  <td className="border p-2 text-right">
-                    $
-                    {registro.sueldo_base.toFixed(2)}
-                  </td>
-
-                  <td className="border p-2 text-right">
-                    $
-                    {registro.bonos.toFixed(2)}
-                  </td>
-
-                  <td className="border p-2 text-right">
-                    $
-                    {registro.horas_extra.toFixed(2)}
-                  </td>
-
-                  <td className="border p-2 text-right">
-                    $
-                    {registro.descuentos.toFixed(2)}
-                  </td>
-
-                  <td className="border p-2 text-right">
-                    $
-                    {registro.percepciones.toFixed(2)}
-                  </td>
-
-                  <td className="border p-2 text-right font-bold">
-
-                    $
-                    {registro.neto.toFixed(2)}
-
-                  </td>
-                  <th>Recibo</th>
-                  <td>
-
-  <Link
-    to={`/nomina/recibo/${registro.id}/${periodoId}`}
-    className="
-      bg-blue-600
-      text-white
-      px-3
-      py-1
-      rounded
-    "
-  >
-    Ver Recibo
-  </Link>
-
-</td>
-
-                </tr>
-
-              )
-            )}
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-    </div>
+    </Layout>
 
   );
 

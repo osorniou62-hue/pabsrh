@@ -1,19 +1,13 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../services/supabase";
 import { Link } from "react-router-dom";
+import { supabase } from "../services/supabase";
+
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
 
 export default function Empleados() {
 
   const [empleados, setEmpleados] =
-    useState([]);
-
-    const [historial, setHistorial] =
-  useState([]);
-
-  const [departamentos, setDepartamentos] =
-    useState([]);
-
-  const [puestos, setPuestos] =
     useState([]);
 
   const [busqueda, setBusqueda] =
@@ -22,24 +16,19 @@ export default function Empleados() {
   const [estatus, setEstatus] =
     useState("ACTIVOS");
 
-  const [departamentoFiltro,
-    setDepartamentoFiltro] =
-    useState("");
-
-  const [puestoFiltro,
-    setPuestoFiltro] =
-    useState("");
+  const [loading, setLoading] =
+    useState(true);
 
   useEffect(() => {
 
     cargarEmpleados();
-    cargarDepartamentos();
-    cargarPuestos();
 
   }, []);
 
   const cargarEmpleados =
     async () => {
+
+      setLoading(true);
 
       const { data, error } =
         await supabase
@@ -61,39 +50,13 @@ export default function Empleados() {
 
         console.error(error);
 
-        return;
+      } else {
+
+        setEmpleados(data || []);
 
       }
 
-      setEmpleados(data || []);
-
-    };
-
-  const cargarDepartamentos =
-    async () => {
-
-      const { data } =
-        await supabase
-          .from("departamentos")
-          .select("*")
-          .eq("activo", true)
-          .order("nombre");
-
-      setDepartamentos(data || []);
-
-    };
-
-  const cargarPuestos =
-    async () => {
-
-      const { data } =
-        await supabase
-          .from("puestos")
-          .select("*")
-          .eq("activo", true)
-          .order("nombre");
-
-      setPuestos(data || []);
+      setLoading(false);
 
     };
 
@@ -130,22 +93,7 @@ export default function Empleados() {
 
       }
 
-      await supabase
-        .from("historial_empleado")
-        .insert([
-          {
-            empleado_id:
-              empleado.id,
-            movimiento:
-              "Baja de empleado",
-          },
-        ]);
-
       await cargarEmpleados();
-
-      alert(
-        "Empleado dado de baja"
-      );
 
     };
 
@@ -172,53 +120,7 @@ export default function Empleados() {
 
       }
 
-      await supabase
-        .from("historial_empleado")
-        .insert([
-          {
-            empleado_id:
-              empleado.id,
-            movimiento:
-              "Reactivación",
-          },
-        ]);
-
       await cargarEmpleados();
-
-      alert(
-        "Empleado reactivado"
-      );
-
-    };
-
-  const calcularAntiguedad =
-    (fechaIngreso) => {
-
-      if (!fechaIngreso)
-        return "-";
-
-      const ingreso =
-        new Date(fechaIngreso);
-
-      const hoy =
-        new Date();
-
-      let años =
-        hoy.getFullYear() -
-        ingreso.getFullYear();
-
-      let meses =
-        hoy.getMonth() -
-        ingreso.getMonth();
-
-      if (meses < 0) {
-
-        años--;
-        meses += 12;
-
-      }
-
-      return `${años} años ${meses} meses`;
 
     };
 
@@ -238,22 +140,9 @@ export default function Empleados() {
           ||
 
           empleado.numero_empleado
-            ?.toLowerCase()
+            ?.toString()
+            .toLowerCase()
             .includes(texto);
-
-        const coincideDepartamento =
-
-          !departamentoFiltro ||
-
-          empleado.departamento_id ==
-            departamentoFiltro;
-
-        const coincidePuesto =
-
-          !puestoFiltro ||
-
-          empleado.puesto_id ==
-            puestoFiltro;
 
         let coincideEstatus =
           true;
@@ -279,8 +168,6 @@ export default function Empleados() {
         return (
 
           coincideBusqueda &&
-          coincideDepartamento &&
-          coincidePuesto &&
           coincideEstatus
 
         );
@@ -303,37 +190,36 @@ export default function Empleados() {
 
   return (
 
-    <div className="max-w-7xl mx-auto p-6">
+    <Layout>
 
-      <div className="flex justify-between items-center mb-6">
+      <div>
 
-        <h1 className="text-3xl font-bold">
-          👥 Empleados
-        </h1>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
 
-        <div className="flex gap-3">
+          <div>
 
-          <Link
-            to="/dashboard"
-            className="
-              bg-blue-600
-              text-white
-              px-4
-              py-2
-              rounded
-            "
-          >
-            Dashboard
-          </Link>
+            <h1 className="text-4xl font-bold">
+              👥 Empleados
+            </h1>
+
+            <p className="text-gray-500 mt-2">
+              Administración de empleados
+            </p>
+
+          </div>
 
           <Link
             to="/empleados/nuevo"
             className="
+              mt-4
+              md:mt-0
               bg-green-600
+              hover:bg-green-700
               text-white
-              px-4
-              py-2
-              rounded
+              px-5
+              py-3
+              rounded-xl
+              transition
             "
           >
             + Nuevo Empleado
@@ -341,310 +227,339 @@ export default function Empleados() {
 
         </div>
 
-      </div>
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
 
-      <div className="grid md:grid-cols-3 gap-4 mb-6">
-
-        <div className="bg-green-100 p-4 rounded shadow">
-
-          <div className="text-sm">
-            Activos
-          </div>
-
-          <div className="text-3xl font-bold">
-            {activos}
-          </div>
-
-        </div>
-
-        <div className="bg-red-100 p-4 rounded shadow">
-
-          <div className="text-sm">
-            Bajas
-          </div>
-
-          <div className="text-3xl font-bold">
-            {bajas}
-          </div>
-
-        </div>
-
-        <div className="bg-blue-100 p-4 rounded shadow">
-
-          <div className="text-sm">
-            Total
-          </div>
-
-          <div className="text-3xl font-bold">
-            {total}
-          </div>
-
-        </div>
-
-      </div>
-
-      <div className="bg-white shadow rounded p-4 mb-6">
-
-        <div className="grid md:grid-cols-4 gap-4">
-
-          <input
-            type="text"
-            placeholder="Buscar empleado..."
-            value={busqueda}
-            onChange={(e) =>
-              setBusqueda(
-                e.target.value
-              )
-            }
-            className="border p-2 rounded"
+          <KpiCard
+            titulo="Activos"
+            valor={activos}
+            icono="✅"
+            color="text-green-600"
           />
 
-          <select
-            value={departamentoFiltro}
-            onChange={(e) =>
-              setDepartamentoFiltro(
-                e.target.value
-              )
-            }
-            className="border p-2 rounded"
-          >
+          <KpiCard
+            titulo="Bajas"
+            valor={bajas}
+            icono="🚫"
+            color="text-red-600"
+          />
 
-            <option value="">
-              Todos los departamentos
-            </option>
-
-            {departamentos.map(
-              (d) => (
-
-                <option
-                  key={d.id}
-                  value={d.id}
-                >
-                  {d.nombre}
-                </option>
-
-              )
-            )}
-
-          </select>
-
-          <select
-            value={puestoFiltro}
-            onChange={(e) =>
-              setPuestoFiltro(
-                e.target.value
-              )
-            }
-            className="border p-2 rounded"
-          >
-
-            <option value="">
-              Todos los puestos
-            </option>
-
-            {puestos.map(
-              (p) => (
-
-                <option
-                  key={p.id}
-                  value={p.id}
-                >
-                  {p.nombre}
-                </option>
-
-              )
-            )}
-
-          </select>
-
-          <select
-            value={estatus}
-            onChange={(e) =>
-              setEstatus(
-                e.target.value
-              )
-            }
-            className="border p-2 rounded"
-          >
-
-            <option value="ACTIVOS">
-              Activos
-            </option>
-
-            <option value="BAJAS">
-              Bajas
-            </option>
-
-            <option value="TODOS">
-              Todos
-            </option>
-
-          </select>
+          <KpiCard
+            titulo="Total"
+            valor={total}
+            icono="👥"
+            color="text-blue-600"
+          />
 
         </div>
 
-      </div>
+        <div
+          className="
+            bg-white
+            rounded-2xl
+            shadow-lg
+            p-6
+            mb-6
+          "
+        >
 
-      <div className="mb-4 text-sm text-gray-600">
+          <div className="grid md:grid-cols-2 gap-4">
 
-        Mostrando
-        {" "}
-        <strong>
-          {empleadosFiltrados.length}
-        </strong>
-        {" "}
-        empleados
+            <input
+              type="text"
+              placeholder="🔍 Buscar empleado..."
+              value={busqueda}
+              onChange={(e) =>
+                setBusqueda(
+                  e.target.value
+                )
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            />
 
-      </div>
+            <select
+              value={estatus}
+              onChange={(e) =>
+                setEstatus(
+                  e.target.value
+                )
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            >
 
-      <div className="bg-white shadow rounded p-4 overflow-x-auto">
+              <option value="ACTIVOS">
+                Activos
+              </option>
 
-        <table className="w-full border">
+              <option value="BAJAS">
+                Bajas
+              </option>
 
-          <thead>
+              <option value="TODOS">
+                Todos
+              </option>
 
-            <tr className="bg-gray-100">
+            </select>
 
-              <th className="border p-2">No.</th>
-              <th className="border p-2">Nombre</th>
-              <th className="border p-2">Departamento</th>
-              <th className="border p-2">Puesto</th>
-              <th className="border p-2">Ingreso</th>
-              <th className="border p-2">Antigüedad</th>
-              <th className="border p-2">Estatus</th>
-              <th className="border p-2">Acciones</th>
+          </div>
 
-            </tr>
+        </div>
 
-          </thead>
+        <div className="mb-4 text-gray-600">
 
-          <tbody>
+          Mostrando
 
-            {empleadosFiltrados.map(
-              (empleado) => (
+          {" "}
 
-                <tr key={empleado.id}>
+          <strong>
+            {empleadosFiltrados.length}
+          </strong>
 
-                  <td className="border p-2 text-center">
-                    {empleado.numero_empleado}
-                  </td>
+          {" "}
 
-                  <td className="border p-2">
-                    {empleado.nombre_completo}
-                  </td>
+          empleados
 
-                  <td className="border p-2">
-                    {empleado.departamentos?.nombre}
-                  </td>
+        </div>
 
-                  <td className="border p-2">
-                    {empleado.puestos?.nombre}
-                  </td>
+        <div
+          className="
+            bg-white
+            rounded-2xl
+            shadow-lg
+            overflow-x-auto
+          "
+        >
 
-                  <td className="border p-2 text-center">
-                    {empleado.fecha_ingreso}
-                  </td>
+          <table className="w-full">
 
-                  <td className="border p-2 text-center">
-                    {calcularAntiguedad(
-                      empleado.fecha_ingreso
-                    )}
-                  </td>
+            <thead className="bg-slate-100">
 
-                  <td className="border p-2 text-center">
+              <tr>
 
-                    {empleado.activo
-                      ? "✅ Activo"
-                      : "🚫 Baja"}
+                <th className="p-4 text-left">
+                  No.
+                </th>
 
-                  </td>
+                <th className="p-4 text-left">
+                  Nombre
+                </th>
 
-                  <td className="border p-2">
+                <th className="p-4 text-left">
+                  Departamento
+                </th>
 
-                    <div className="flex gap-2">
+                <th className="p-4 text-left">
+                  Puesto
+                </th>
 
-                      <Link
-                        to={`/empleados/detalle/${empleado.id}`}
-                        className="
-                          bg-blue-600
-                          text-white
-                          px-3
-                          py-1
-                          rounded
-                        "
-                      >
-                        Ver
-                      </Link>
+                <th className="p-4 text-center">
+                  Estatus
+                </th>
 
-                      <Link
-                        to={`/empleados/${empleado.id}`}
-                        className="
-                          bg-yellow-500
-                          text-white
-                          px-3
-                          py-1
-                          rounded
-                        "
-                      >
-                        Editar
-                      </Link>
+                <th className="p-4 text-center">
+                  Acciones
+                </th>
 
-                      {empleado.activo ? (
+              </tr>
 
-                        <button
-                          onClick={() =>
-                            darDeBaja(
-                              empleado
-                            )
-                          }
-                          className="
-                            bg-red-600
-                            text-white
-                            px-3
-                            py-1
-                            rounded
-                          "
-                        >
-                          Baja
-                        </button>
+            </thead>
 
-                      ) : (
+            <tbody>
 
-                        <button
-                          onClick={() =>
-                            reactivarEmpleado(
-                              empleado
-                            )
-                          }
-                          className="
-                            bg-green-600
-                            text-white
-                            px-3
-                            py-1
-                            rounded
-                          "
-                        >
-                          Reactivar
-                        </button>
+              {loading && (
 
-                      )}
+                <tr>
 
-                    </div>
-
+                  <td
+                    colSpan="6"
+                    className="
+                      p-6
+                      text-center
+                    "
+                  >
+                    Cargando...
                   </td>
 
                 </tr>
 
-              )
-            )}
+              )}
 
-          </tbody>
+              {!loading &&
+                empleadosFiltrados.map(
+                  (empleado) => (
 
-        </table>
+                    <tr
+                      key={empleado.id}
+                      className="
+                        border-t
+                        hover:bg-slate-50
+                        transition
+                      "
+                    >
+
+                      <td className="p-4">
+                        {
+                          empleado.numero_empleado
+                        }
+                      </td>
+
+                      <td className="p-4 font-medium">
+                        {
+                          empleado.nombre_completo
+                        }
+                      </td>
+
+                      <td className="p-4">
+                        {
+                          empleado.departamentos
+                            ?.nombre
+                        }
+                      </td>
+
+                      <td className="p-4">
+                        {
+                          empleado.puestos
+                            ?.nombre
+                        }
+                      </td>
+
+                      <td className="p-4 text-center">
+
+                        {empleado.activo ? (
+
+                          <span
+                            className="
+                              bg-green-100
+                              text-green-700
+                              px-3
+                              py-1
+                              rounded-full
+                              text-sm
+                              font-medium
+                            "
+                          >
+                            Activo
+                          </span>
+
+                        ) : (
+
+                          <span
+                            className="
+                              bg-red-100
+                              text-red-700
+                              px-3
+                              py-1
+                              rounded-full
+                              text-sm
+                              font-medium
+                            "
+                          >
+                            Baja
+                          </span>
+
+                        )}
+
+                      </td>
+
+                      <td className="p-4">
+
+                        <div className="flex gap-2 justify-center">
+
+                          <Link
+                            to={`/empleados/detalle/${empleado.id}`}
+                            className="
+                              bg-blue-600
+                              hover:bg-blue-700
+                              text-white
+                              px-3
+                              py-2
+                              rounded-xl
+                            "
+                          >
+                            Ver
+                          </Link>
+
+                          <Link
+                            to={`/empleados/${empleado.id}`}
+                            className="
+                              bg-amber-500
+                              hover:bg-amber-600
+                              text-white
+                              px-3
+                              py-2
+                              rounded-xl
+                            "
+                          >
+                            Editar
+                          </Link>
+
+                          {empleado.activo ? (
+
+                            <button
+                              onClick={() =>
+                                darDeBaja(
+                                  empleado
+                                )
+                              }
+                              className="
+                                bg-red-600
+                                hover:bg-red-700
+                                text-white
+                                px-3
+                                py-2
+                                rounded-xl
+                              "
+                            >
+                              Baja
+                            </button>
+
+                          ) : (
+
+                            <button
+                              onClick={() =>
+                                reactivarEmpleado(
+                                  empleado
+                                )
+                              }
+                              className="
+                                bg-green-600
+                                hover:bg-green-700
+                                text-white
+                                px-3
+                                py-2
+                                rounded-xl
+                              "
+                            >
+                              Reactivar
+                            </button>
+
+                          )}
+
+                        </div>
+
+                      </td>
+
+                    </tr>
+
+                  )
+                )}
+
+            </tbody>
+
+          </table>
+
+        </div>
 
       </div>
 
-    </div>
+    </Layout>
 
   );
 

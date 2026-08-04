@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
 
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
+
 export default function Prestamos() {
 
   const [empleados, setEmpleados] =
@@ -27,19 +30,12 @@ export default function Prestamos() {
   const cargarEmpleados =
     async () => {
 
-      const { data, error } =
+      const { data } =
         await supabase
           .from("empleados")
           .select("*")
           .eq("activo", true)
           .order("nombre_completo");
-
-      if (error) {
-
-        console.error(error);
-        return;
-
-      }
 
       setEmpleados(data || []);
 
@@ -48,7 +44,7 @@ export default function Prestamos() {
   const cargarPrestamos =
     async () => {
 
-      const { data, error } =
+      const { data } =
         await supabase
           .from("prestamos")
           .select(`
@@ -64,13 +60,6 @@ export default function Prestamos() {
               ascending: false,
             }
           );
-
-      if (error) {
-
-        console.error(error);
-        return;
-
-      }
 
       setPrestamos(data || []);
 
@@ -99,7 +88,9 @@ export default function Prestamos() {
           .insert([
             {
               empleado_id:
-                Number(form.empleado_id),
+                Number(
+                  form.empleado_id
+                ),
 
               importe_total:
                 Number(
@@ -118,6 +109,9 @@ export default function Prestamos() {
 
               observaciones:
                 form.observaciones,
+
+              estatus:
+                "ACTIVO",
             },
           ]);
 
@@ -129,10 +123,6 @@ export default function Prestamos() {
 
       }
 
-      alert(
-        "Préstamo registrado"
-      );
-
       setForm({
         empleado_id: "",
         importe_total: "",
@@ -140,7 +130,7 @@ export default function Prestamos() {
         observaciones: "",
       });
 
-      cargarPrestamos();
+      await cargarPrestamos();
 
     };
 
@@ -149,7 +139,7 @@ export default function Prestamos() {
 
       const confirmar =
         window.confirm(
-          "¿Deseas marcar el préstamo como liquidado?"
+          "¿Deseas liquidar este préstamo?"
         );
 
       if (!confirmar) return;
@@ -175,241 +165,397 @@ export default function Prestamos() {
 
       }
 
-      cargarPrestamos();
+      await cargarPrestamos();
 
     };
 
+  const activos =
+    prestamos.filter(
+      (p) =>
+        p.estatus ===
+        "ACTIVO"
+    ).length;
+
+  const liquidados =
+    prestamos.filter(
+      (p) =>
+        p.estatus ===
+        "LIQUIDADO"
+    ).length;
+
+  const totalPrestado =
+    prestamos.reduce(
+      (a, b) =>
+        a +
+        Number(
+          b.importe_total || 0
+        ),
+      0
+    );
+
+  const saldoPendiente =
+    prestamos.reduce(
+      (a, b) =>
+        a +
+        Number(
+          b.saldo_actual || 0
+        ),
+      0
+    );
+
   return (
 
-    <div className="max-w-7xl mx-auto p-6">
+    <Layout>
 
-      <h1 className="text-3xl font-bold mb-6">
-        💳 Préstamos
-      </h1>
+      <div>
 
-      <div className="bg-white shadow rounded p-6 mb-6">
+        <div className="mb-8">
 
-        <div className="grid md:grid-cols-2 gap-4">
+          <h1 className="text-4xl font-bold">
+            💳 Préstamos
+          </h1>
 
-          <select
-            value={form.empleado_id}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                empleado_id:
-                  e.target.value,
-              })
-            }
-            className="border p-2 rounded"
-          >
+          <p className="text-gray-500 mt-2">
+            Administración de préstamos a empleados
+          </p>
 
-            <option value="">
-              Seleccionar empleado
-            </option>
+        </div>
 
-            {empleados.map(
-              (empleado) => (
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
 
-                <option
-                  key={empleado.id}
-                  value={empleado.id}
-                >
-                  {empleado.nombre_completo}
-                </option>
-
-              )
-            )}
-
-          </select>
-
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Importe total"
-            value={form.importe_total}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                importe_total:
-                  e.target.value,
-              })
-            }
-            className="border p-2 rounded"
+          <KpiCard
+            titulo="Activos"
+            valor={activos}
+            icono="💳"
+            color="text-blue-600"
           />
 
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Descuento por período"
-            value={form.descuento_periodo}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                descuento_periodo:
-                  e.target.value,
-              })
-            }
-            className="border p-2 rounded"
+          <KpiCard
+            titulo="Liquidados"
+            valor={liquidados}
+            icono="✅"
+            color="text-green-600"
           />
 
-          <textarea
-            placeholder="Observaciones"
-            value={form.observaciones}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                observaciones:
-                  e.target.value,
-              })
-            }
-            className="border p-2 rounded"
+          <KpiCard
+            titulo="Total Prestado"
+            valor={`$${totalPrestado.toLocaleString("es-MX")}`}
+            icono="💰"
+            color="text-emerald-600"
+          />
+
+          <KpiCard
+            titulo="Saldo Pendiente"
+            valor={`$${saldoPendiente.toLocaleString("es-MX")}`}
+            icono="📉"
+            color="text-red-600"
           />
 
         </div>
 
-        <button
-          onClick={
-            guardarPrestamo
-          }
+        <div
           className="
-            mt-4
-            bg-green-600
-            text-white
-            px-4
-            py-2
-            rounded
+            bg-white
+            rounded-2xl
+            shadow-lg
+            p-6
+            mb-6
           "
         >
-          Guardar Préstamo
-        </button>
+
+          <h2 className="text-xl font-bold mb-4">
+            Nuevo Préstamo
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-4">
+
+            <select
+              value={form.empleado_id}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  empleado_id:
+                    e.target.value,
+                })
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            >
+
+              <option value="">
+                Seleccionar empleado
+              </option>
+
+              {empleados.map(
+                (empleado) => (
+
+                  <option
+                    key={empleado.id}
+                    value={empleado.id}
+                  >
+                    {empleado.nombre_completo}
+                  </option>
+
+                )
+              )}
+
+            </select>
+
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Importe Total"
+              value={form.importe_total}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  importe_total:
+                    e.target.value,
+                })
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            />
+
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Descuento por período"
+              value={
+                form.descuento_periodo
+              }
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  descuento_periodo:
+                    e.target.value,
+                })
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            />
+
+            <textarea
+              placeholder="Observaciones"
+              value={
+                form.observaciones
+              }
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  observaciones:
+                    e.target.value,
+                })
+              }
+              className="
+                border
+                rounded-xl
+                p-3
+              "
+            />
+
+          </div>
+
+          <button
+            onClick={
+              guardarPrestamo
+            }
+            className="
+              mt-4
+              bg-green-600
+              hover:bg-green-700
+              text-white
+              px-5
+              py-3
+              rounded-xl
+            "
+          >
+            Guardar Préstamo
+          </button>
+
+        </div>
+
+        <div
+          className="
+            bg-white
+            rounded-2xl
+            shadow-lg
+            overflow-x-auto
+          "
+        >
+
+          <table className="w-full">
+
+            <thead className="bg-slate-100">
+
+              <tr>
+
+                <th className="p-4 text-left">
+                  Empleado
+                </th>
+
+                <th className="p-4 text-right">
+                  Monto
+                </th>
+
+                <th className="p-4 text-right">
+                  Saldo
+                </th>
+
+                <th className="p-4 text-right">
+                  Descuento
+                </th>
+
+                <th className="p-4 text-center">
+                  Estado
+                </th>
+
+                <th className="p-4 text-center">
+                  Acción
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              {prestamos.map(
+                (prestamo) => (
+
+                  <tr
+                    key={prestamo.id}
+                    className="
+                      border-t
+                      hover:bg-slate-50
+                    "
+                  >
+
+                    <td className="p-4">
+
+                      {
+                        prestamo.empleados
+                          ?.nombre_completo
+                      }
+
+                    </td>
+
+                    <td className="p-4 text-right">
+
+                      $
+                      {Number(
+                        prestamo.importe_total
+                      ).toFixed(2)}
+
+                    </td>
+
+                    <td className="p-4 text-right">
+
+                      $
+                      {Number(
+                        prestamo.saldo_actual
+                      ).toFixed(2)}
+
+                    </td>
+
+                    <td className="p-4 text-right">
+
+                      $
+                      {Number(
+                        prestamo.descuento_periodo
+                      ).toFixed(2)}
+
+                    </td>
+
+                    <td className="p-4 text-center">
+
+                      {prestamo.estatus ===
+                      "ACTIVO" ? (
+
+                        <span
+                          className="
+                            bg-blue-100
+                            text-blue-700
+                            px-3
+                            py-1
+                            rounded-full
+                            text-sm
+                            font-medium
+                          "
+                        >
+                          ACTIVO
+                        </span>
+
+                      ) : (
+
+                        <span
+                          className="
+                            bg-green-100
+                            text-green-700
+                            px-3
+                            py-1
+                            rounded-full
+                            text-sm
+                            font-medium
+                          "
+                        >
+                          LIQUIDADO
+                        </span>
+
+                      )}
+
+                    </td>
+
+                    <td className="p-4 text-center">
+
+                      {prestamo.estatus ===
+                        "ACTIVO" && (
+
+                        <button
+                          onClick={() =>
+                            liquidarPrestamo(
+                              prestamo
+                            )
+                          }
+                          className="
+                            bg-red-600
+                            hover:bg-red-700
+                            text-white
+                            px-3
+                            py-2
+                            rounded-xl
+                          "
+                        >
+                          Liquidar
+                        </button>
+
+                      )}
+
+                    </td>
+
+                  </tr>
+
+                )
+              )}
+
+            </tbody>
+
+          </table>
+
+        </div>
 
       </div>
 
-      <div className="bg-white shadow rounded p-4">
-
-        <table className="w-full border">
-
-          <thead>
-
-            <tr className="bg-gray-100">
-
-              <th className="border p-2">
-                Empleado
-              </th>
-
-              <th className="border p-2">
-                Monto
-              </th>
-
-              <th className="border p-2">
-                Saldo
-              </th>
-
-              <th className="border p-2">
-                Descuento
-              </th>
-
-              <th className="border p-2">
-                Estatus
-              </th>
-
-              <th className="border p-2">
-                Acción
-              </th>
-
-            </tr>
-
-          </thead>
-
-          <tbody>
-
-            {prestamos.map(
-              (prestamo) => (
-
-                <tr
-                  key={prestamo.id}
-                >
-
-                  <td className="border p-2">
-
-                    {
-                      prestamo.empleados
-                        ?.nombre_completo
-                    }
-
-                  </td>
-
-                  <td className="border p-2 text-right">
-
-                    $
-                    {Number(
-                      prestamo.importe_total
-                    ).toFixed(2)}
-
-                  </td>
-
-                  <td className="border p-2 text-right">
-
-                    $
-                    {Number(
-                      prestamo.saldo_actual
-                    ).toFixed(2)}
-
-                  </td>
-
-                  <td className="border p-2 text-right">
-
-                    $
-                    {Number(
-                      prestamo.descuento_periodo
-                    ).toFixed(2)}
-
-                  </td>
-
-                  <td className="border p-2 text-center">
-
-                    {prestamo.estatus}
-
-                  </td>
-
-                  <td className="border p-2 text-center">
-
-                    {prestamo.estatus ===
-                      "ACTIVO" && (
-
-                      <button
-                        onClick={() =>
-                          liquidarPrestamo(
-                            prestamo
-                          )
-                        }
-                        className="
-                          bg-red-600
-                          text-white
-                          px-3
-                          py-1
-                          rounded
-                        "
-                      >
-                        Liquidar
-                      </button>
-
-                    )}
-
-                  </td>
-
-                </tr>
-
-              )
-            )}
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-    </div>
+    </Layout>
 
   );
 

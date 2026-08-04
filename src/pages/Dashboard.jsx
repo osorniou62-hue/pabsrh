@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
 import { Link } from "react-router-dom";
 
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
+
 export default function Dashboard() {
 
   const [activos, setActivos] =
@@ -90,384 +93,253 @@ export default function Dashboard() {
 
     };
 
+  const Modulo = ({
+    titulo,
+    descripcion,
+    ruta,
+    icono,
+  }) => (
+
+    <Link
+      to={ruta}
+      className="
+        bg-white
+        rounded-2xl
+        shadow-lg
+        p-6
+        hover:shadow-xl
+        transition
+      "
+    >
+
+      <div className="text-4xl mb-3">
+        {icono}
+      </div>
+
+      <h3
+        className="
+          text-xl
+          font-bold
+          mb-2
+        "
+      >
+        {titulo}
+      </h3>
+
+      <p className="text-gray-500">
+        {descripcion}
+      </p>
+
+    </Link>
+
+  );
+
   return (
 
-    <div className="min-h-screen bg-gray-100">
+    <Layout>
 
-      <div className="bg-white shadow">
+      <div className="flex justify-between items-center mb-8">
 
-        <div className="max-w-7xl mx-auto p-4 flex justify-between items-center">
+        <div>
 
-          <h1 className="text-3xl font-bold">
-            Sistema RH
+          <h1
+            className="
+              text-4xl
+              font-bold
+            "
+          >
+            Dashboard
           </h1>
 
-          <button
-            onClick={cerrarSesion}
-            className="
-              bg-red-600
-              text-white
-              px-4
-              py-2
-              rounded
-              hover:bg-red-700
-            "
-          >
-            Cerrar Sesión
-          </button>
+          <p className="text-gray-500 mt-2">
+            Bienvenido al Sistema RH y Nómina
+          </p>
 
         </div>
+
+        <button
+          onClick={cerrarSesion}
+          className="
+            bg-red-600
+            hover:bg-red-700
+            text-white
+            px-5
+            py-3
+            rounded-xl
+            transition
+          "
+        >
+          Cerrar Sesión
+        </button>
 
       </div>
 
-      <div className="max-w-7xl mx-auto p-6">
+      <div
+        className="
+          grid
+          md:grid-cols-4
+          gap-6
+          mb-10
+        "
+      >
 
-        <h2 className="text-2xl font-bold mb-6">
-          Dashboard
-        </h2>
+        <KpiCard
+          titulo="Activos"
+          valor={activos}
+          icono="👥"
+          color="text-green-600"
+        />
 
-        <div className="grid md:grid-cols-4 gap-4 mb-8">
+        <KpiCard
+          titulo="Bajas"
+          valor={bajas}
+          icono="🚫"
+          color="text-red-600"
+        />
 
-          <div className="bg-white rounded shadow p-6">
+        <KpiCard
+          titulo="Departamentos"
+          valor={departamentos}
+          icono="🏢"
+          color="text-blue-600"
+        />
 
-            <div className="text-gray-500">
-              Empleados Activos
-            </div>
-
-            <div className="text-4xl font-bold text-green-600 mt-2">
-              {activos}
-            </div>
-
-          </div>
-
-          <div className="bg-white rounded shadow p-6">
-
-            <div className="text-gray-500">
-              Empleados de Baja
-            </div>
-
-            <div className="text-4xl font-bold text-red-600 mt-2">
-              {bajas}
-            </div>
-
-          </div>
-
-          <div className="bg-white rounded shadow p-6">
-
-            <div className="text-gray-500">
-              Departamentos
-            </div>
-
-            <div className="text-4xl font-bold text-blue-600 mt-2">
-              {departamentos}
-            </div>
-
-          </div>
-
-          <div className="bg-white rounded shadow p-6">
-
-            <div className="text-gray-500">
-              Puestos
-            </div>
-
-            <div className="text-4xl font-bold text-purple-600 mt-2">
-              {puestos}
-            </div>
-
-          </div>
-
-        </div>
-
-        <h2 className="text-2xl font-bold mb-4">
-          Módulos
-        </h2>
-
-        <div className="grid md:grid-cols-3 gap-4">
-
-          <Link
-            to="/empleados"
-            className="
-              bg-white
-              p-6
-              rounded
-              shadow
-              hover:bg-gray-50
-            "
-          >
-            <h3 className="font-bold text-xl mb-2">
-              👥 Empleados
-            </h3>
-
-            <p className="text-gray-600">
-              Altas, bajas, consultas y búsqueda.
-            </p>
-
-          </Link>
-
-          <Link
-            to="/departamentos"
-            className="
-              bg-white
-              p-6
-              rounded
-              shadow
-              hover:bg-gray-50
-            "
-          >
-            <h3 className="font-bold text-xl mb-2">
-              🏢 Departamentos
-            </h3>
-
-            <p className="text-gray-600">
-              Administración de departamentos.
-            </p>
-
-          </Link>
-
-          <Link
-  to="/periodos"
-  className="
-    bg-white
-    p-6
-    rounded
-    shadow
-    hover:bg-gray-50
-  "
->
-  <h3 className="font-bold text-xl mb-2">
-    📅 Periodos Nómina
-  </h3>
-
-  <p className="text-gray-600">
-    Administración de periodos.
-  </p>
-
-</Link>
-
-<Link
-  to="/usuarios"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    👥 Usuarios
-  </h3>
-
-  <p className="text-gray-600">
-    Administración de accesos
-  </p>
-
-</Link>
-
-<Link
-  to="/vacaciones"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    🏖 Vacaciones
-  </h3>
-
-  <p className="text-gray-600">
-    Administración de vacaciones
-  </p>
-</Link>
-
-<Link
-  to="/prestamos"
->
-  💳 Préstamos
-</Link>
-
-<Link
-  to="/reportes"
->
-  📊 Reportes
-</Link>
-
-<Link
-  to="/prestamos"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    💳 Préstamos
-  </h3>
-
-  <p className="text-gray-600">
-    Administración de préstamos
-  </p>
-</Link>
-
-<Link
-  to="/reportes"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📊 Reportes
-  </h3>
-
-  <p className="text-gray-600">
-    Exportación a Excel
-  </p>
-</Link>
-
-<Link
-  to="/notificaciones"
->
-  🔔 Notificaciones
-</Link>
-
-<Link
-  to="/recibos-masivos"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📦 Recibos Masivos
-  </h3>
-
-  <p className="text-gray-600">
-    Generación por período
-  </p>
-</Link>
-
-<Link
-  to="/auditoria"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📋 Auditoría
-  </h3>
-
-  <p className="text-gray-600">
-    Bitácora del sistema
-  </p>
-</Link>
-
-<Link
-  to="/dashboard-ejecutivo"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📈 Dashboard Ejecutivo
-  </h3>
-
-  <p className="text-gray-600">
-    Indicadores y gráficas
-  </p>
-</Link>
-
-<Link
-  to="/recibos-masivos"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📦 Recibos Masivos
-  </h3>
-
-  <p className="text-gray-600">
-    Gestión de recibos por período
-  </p>
-</Link>
-
-<Link
-  to="/solicitudes"
-  className="
-    bg-white
-    rounded
-    shadow
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    📨 Solicitudes
-  </h3>
-
-  <p className="text-gray-600">
-    Aprobación de usuarios
-  </p>
-</Link>
-
-<Link
-  to="/configuracion"
-  className="
-    bg-white
-    shadow
-    rounded
-    p-6
-  "
->
-  <h3 className="text-xl font-bold">
-    ⚙️ Configuración
-  </h3>
-
-  <p className="text-gray-600">
-    Datos de la empresa
-  </p>
-</Link>
-
-          <Link
-            to="/puestos"
-            className="
-              bg-white
-              p-6
-              rounded
-              shadow
-              hover:bg-gray-50
-            "
-          >
-            <h3 className="font-bold text-xl mb-2">
-              💼 Puestos
-            </h3>
-
-            <p className="text-gray-600">
-              Administración de puestos.
-            </p>
-
-          </Link>
-
-        </div>
+        <KpiCard
+          titulo="Puestos"
+          valor={puestos}
+          icono="💼"
+          color="text-purple-600"
+        />
 
       </div>
 
-    </div>
+      <h2
+        className="
+          text-2xl
+          font-bold
+          mb-6
+        "
+      >
+        Módulos
+      </h2>
+
+      <div
+        className="
+          grid
+          md:grid-cols-3
+          xl:grid-cols-4
+          gap-6
+        "
+      >
+
+        <Modulo
+          icono="👥"
+          titulo="Empleados"
+          descripcion="Altas, bajas y consultas."
+          ruta="/empleados"
+        />
+
+        <Modulo
+          icono="🏢"
+          titulo="Departamentos"
+          descripcion="Administración de departamentos."
+          ruta="/departamentos"
+        />
+
+        <Modulo
+          icono="💼"
+          titulo="Puestos"
+          descripcion="Administración de puestos."
+          ruta="/puestos"
+        />
+
+        <Modulo
+          icono="📅"
+          titulo="Periodos"
+          descripcion="Periodos de nómina."
+          ruta="/periodos"
+        />
+
+        <Modulo
+          icono="👤"
+          titulo="Usuarios"
+          descripcion="Administración de accesos."
+          ruta="/usuarios"
+        />
+
+        <Modulo
+          icono="📨"
+          titulo="Solicitudes"
+          descripcion="Solicitudes de usuarios."
+          ruta="/solicitudes"
+        />
+
+        <Modulo
+          icono="🏖"
+          titulo="Vacaciones"
+          descripcion="Control de vacaciones."
+          ruta="/vacaciones"
+        />
+
+        <Modulo
+          icono="💳"
+          titulo="Préstamos"
+          descripcion="Administración de préstamos."
+          ruta="/prestamos"
+        />
+
+        <Modulo
+          icono="🧮"
+          titulo="Nómina"
+          descripcion="Generación de nómina."
+          ruta="/nomina"
+        />
+
+        <Modulo
+          icono="📦"
+          titulo="Recibos Masivos"
+          descripcion="PDF y ZIP de recibos."
+          ruta="/recibos-masivos"
+        />
+
+        <Modulo
+          icono="📊"
+          titulo="Reportes"
+          descripcion="Exportación a Excel."
+          ruta="/reportes"
+        />
+
+        <Modulo
+          icono="📈"
+          titulo="Dashboard Ejecutivo"
+          descripcion="KPIs y gráficas."
+          ruta="/dashboard-ejecutivo"
+        />
+
+        <Modulo
+          icono="🔔"
+          titulo="Notificaciones"
+          descripcion="Centro de alertas."
+          ruta="/notificaciones"
+        />
+
+        <Modulo
+          icono="📋"
+          titulo="Auditoría"
+          descripcion="Bitácora del sistema."
+          ruta="/auditoria"
+        />
+
+        <Modulo
+          icono="⚙️"
+          titulo="Configuración"
+          descripcion="Datos corporativos."
+          ruta="/configuracion"
+        />
+
+      </div>
+
+    </Layout>
 
   );
 

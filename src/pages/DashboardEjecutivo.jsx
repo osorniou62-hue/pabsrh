@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
 
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
+
 import {
   ResponsiveContainer,
   BarChart,
@@ -53,135 +56,143 @@ export default function DashboardEjecutivo() {
   const cargarDashboard =
     async () => {
 
-      const {
-        count: activos,
-      } = await supabase
-        .from("empleados")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("activo", true);
+      try {
 
-      const {
-        count: inactivos,
-      } = await supabase
-        .from("empleados")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("activo", false);
+        const {
+          count: activos,
+        } = await supabase
+          .from("empleados")
+          .select("*", {
+            count: "exact",
+            head: true,
+          })
+          .eq("activo", true);
 
-      const {
-        count: usuarios,
-      } = await supabase
-        .from("profiles")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("activo", true);
+        const {
+          count: inactivos,
+        } = await supabase
+          .from("empleados")
+          .select("*", {
+            count: "exact",
+            head: true,
+          })
+          .eq("activo", false);
 
-      const {
-        count: departamentos,
-      } = await supabase
-        .from("departamentos")
-        .select("*", {
-          count: "exact",
-          head: true,
+        const {
+          count: usuarios,
+        } = await supabase
+          .from("profiles")
+          .select("*", {
+            count: "exact",
+            head: true,
+          })
+          .eq("activo", true);
+
+        const {
+          count: departamentos,
+        } = await supabase
+          .from("departamentos")
+          .select("*", {
+            count: "exact",
+            head: true,
+          });
+
+        const {
+          count: vacaciones,
+        } = await supabase
+          .from("vacaciones")
+          .select("*", {
+            count: "exact",
+            head: true,
+          });
+
+        const {
+          count: prestamosActivos,
+        } = await supabase
+          .from("prestamos")
+          .select("*", {
+            count: "exact",
+            head: true,
+          })
+          .eq(
+            "estatus",
+            "ACTIVO"
+          );
+
+        const { data: nomina } =
+          await supabase
+            .from("nomina")
+            .select("neto_pagar");
+
+        const costoNomina =
+          (nomina || []).reduce(
+            (total, item) =>
+              total +
+              Number(
+                item.neto_pagar || 0
+              ),
+            0
+          );
+
+        const {
+          data: empleados,
+        } = await supabase
+          .from("empleados")
+          .select("sueldo_base")
+          .eq("activo", true);
+
+        const promedioSalarial =
+          empleados?.length > 0
+            ? empleados.reduce(
+                (total, item) =>
+                  total +
+                  Number(
+                    item.sueldo_base || 0
+                  ),
+                0
+              ) /
+              empleados.length
+            : 0;
+
+        setKpis({
+          empleadosActivos:
+            activos || 0,
+
+          empleadosInactivos:
+            inactivos || 0,
+
+          usuariosActivos:
+            usuarios || 0,
+
+          departamentos:
+            departamentos || 0,
+
+          vacaciones:
+            vacaciones || 0,
+
+          prestamosActivos:
+            prestamosActivos || 0,
+
+          costoNomina,
+
+          promedioSalarial,
         });
 
-      const {
-        count: vacaciones,
-      } = await supabase
-        .from("vacaciones")
-        .select("*", {
-          count: "exact",
-          head: true,
-        });
+        await cargarGraficaDepartamentos();
+        await cargarGraficaPrestamos();
 
-      const {
-        count: prestamosActivos,
-      } = await supabase
-        .from("prestamos")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("estatus", "ACTIVO");
+      } catch (error) {
 
-      const { data: nomina } =
-        await supabase
-          .from("nomina")
-          .select("neto_pagar");
+        console.error(error);
 
-      const costoNomina =
-        (nomina || []).reduce(
-          (a, b) =>
-            a +
-            Number(
-              b.neto_pagar || 0
-            ),
-          0
-        );
-
-      const {
-        data: empleados,
-      } = await supabase
-        .from("empleados")
-        .select(
-          "sueldo_base"
-        )
-        .eq("activo", true);
-
-      const promedioSalarial =
-        empleados?.length > 0
-          ? empleados.reduce(
-              (a, b) =>
-                a +
-                Number(
-                  b.sueldo_base || 0
-                ),
-              0
-            ) /
-            empleados.length
-          : 0;
-
-      setKpis({
-        empleadosActivos:
-          activos || 0,
-
-        empleadosInactivos:
-          inactivos || 0,
-
-        usuariosActivos:
-          usuarios || 0,
-
-        departamentos:
-          departamentos || 0,
-
-        vacaciones:
-          vacaciones || 0,
-
-        prestamosActivos:
-          prestamosActivos || 0,
-
-        costoNomina,
-
-        promedioSalarial,
-      });
-
-      await cargarGraficaDepartamentos();
-
-      await cargarGraficaPrestamos();
+      }
 
     };
 
   const cargarGraficaDepartamentos =
     async () => {
 
-      const { data } =
+      const { data, error } =
         await supabase
           .from("empleados")
           .select(`
@@ -192,6 +203,13 @@ export default function DashboardEjecutivo() {
           `)
           .eq("activo", true);
 
+      if (error) {
+
+        console.error(error);
+        return;
+
+      }
+
       const agrupado = {};
 
       (data || []).forEach(
@@ -200,11 +218,10 @@ export default function DashboardEjecutivo() {
           const nombre =
             item.departamentos
               ?.nombre ||
-            "Sin Depto";
+            "Sin Departamento";
 
           agrupado[nombre] =
-            (agrupado[nombre] || 0) +
-            1;
+            (agrupado[nombre] || 0) + 1;
 
         }
       );
@@ -267,209 +284,222 @@ export default function DashboardEjecutivo() {
 
     };
 
-  const Card = ({
-    titulo,
-    valor,
-    icono,
-  }) => (
-
-    <div
-      className="
-        bg-white
-        shadow
-        rounded-xl
-        p-6
-      "
-    >
-
-      <div className="text-3xl">
-        {icono}
-      </div>
-
-      <div className="text-gray-500 mt-2">
-        {titulo}
-      </div>
-
-      <div className="text-3xl font-bold">
-        {valor}
-      </div>
-
-    </div>
-
-  );
-
   return (
 
-    <div className="max-w-7xl mx-auto p-6">
+    <Layout>
 
-      <h1 className="text-3xl font-bold mb-6">
-        📈 Dashboard Ejecutivo
-      </h1>
+      <div>
 
-      <div className="grid md:grid-cols-4 gap-4 mb-8">
+        <div className="mb-8">
 
-        <Card
-          icono="👥"
-          titulo="Activos"
-          valor={
-            kpis.empleadosActivos
-          }
-        />
+          <h1 className="text-4xl font-bold">
+            📈 Dashboard Ejecutivo
+          </h1>
 
-        <Card
-          icono="🚫"
-          titulo="Inactivos"
-          valor={
-            kpis.empleadosInactivos
-          }
-        />
+          <p className="text-gray-500 mt-2">
+            Indicadores estratégicos de RH y Nómina
+          </p>
 
-        <Card
-          icono="👤"
-          titulo="Usuarios"
-          valor={
-            kpis.usuariosActivos
-          }
-        />
+        </div>
 
-        <Card
-          icono="🏢"
-          titulo="Departamentos"
-          valor={
-            kpis.departamentos
-          }
-        />
+        <div
+          className="
+            grid
+            md:grid-cols-4
+            gap-6
+            mb-10
+          "
+        >
 
-        <Card
-          icono="🏖"
-          titulo="Vacaciones"
-          valor={
-            kpis.vacaciones
-          }
-        />
+          <KpiCard
+            titulo="Activos"
+            valor={kpis.empleadosActivos}
+            icono="👥"
+            color="text-green-600"
+          />
 
-        <Card
-          icono="💳"
-          titulo="Préstamos"
-          valor={
-            kpis.prestamosActivos
-          }
-        />
+          <KpiCard
+            titulo="Inactivos"
+            valor={kpis.empleadosInactivos}
+            icono="🚫"
+            color="text-red-600"
+          />
 
-        <Card
-          icono="💰"
-          titulo="Costo Nómina"
-          valor={`$${kpis.costoNomina.toLocaleString(
-            "es-MX"
-          )}`}
-        />
+          <KpiCard
+            titulo="Usuarios"
+            valor={kpis.usuariosActivos}
+            icono="👤"
+            color="text-purple-600"
+          />
 
-        <Card
-          icono="📊"
-          titulo="Promedio Salarial"
-          valor={`$${kpis.promedioSalarial.toFixed(0)}`}
-        />
+          <KpiCard
+            titulo="Departamentos"
+            valor={kpis.departamentos}
+            icono="🏢"
+            color="text-blue-600"
+          />
 
-      </div>
+          <KpiCard
+            titulo="Vacaciones"
+            valor={kpis.vacaciones}
+            icono="🏖"
+            color="text-green-600"
+          />
 
-      <div className="grid md:grid-cols-2 gap-6">
+          <KpiCard
+            titulo="Préstamos"
+            valor={kpis.prestamosActivos}
+            icono="💳"
+            color="text-orange-600"
+          />
 
-        <div className="bg-white shadow rounded-xl p-6">
+          <KpiCard
+            titulo="Costo Nómina"
+            valor={`$${kpis.costoNomina.toLocaleString("es-MX")}`}
+            icono="💰"
+            color="text-emerald-600"
+          />
 
-          <h2 className="font-bold text-xl mb-4">
-            Empleados por Departamento
-          </h2>
+          <KpiCard
+            titulo="Promedio Salarial"
+            valor={`$${kpis.promedioSalarial.toFixed(0)}`}
+            icono="📊"
+            color="text-indigo-600"
+          />
 
-          <ResponsiveContainer
-            width="100%"
-            height={350}
+        </div>
+
+        <div
+          className="
+            grid
+            lg:grid-cols-2
+            gap-6
+          "
+        >
+
+          <div
+            className="
+              bg-white
+              rounded-2xl
+              shadow-lg
+              p-6
+            "
           >
 
-            <BarChart
-              data={
-                empleadosDepto
-              }
+            <h2
+              className="
+                text-xl
+                font-bold
+                mb-4
+              "
+            >
+              Empleados por Departamento
+            </h2>
+
+            <ResponsiveContainer
+              width="100%"
+              height={350}
             >
 
-              <CartesianGrid
-                strokeDasharray="3 3"
-              />
-
-              <XAxis
-                dataKey="departamento"
-              />
-
-              <YAxis />
-
-              <Tooltip />
-
-              <Bar
-                dataKey="empleados"
-                fill="#2563eb"
-              />
-
-            </BarChart>
-
-          </ResponsiveContainer>
-
-        </div>
-
-        <div className="bg-white shadow rounded-xl p-6">
-
-          <h2 className="font-bold text-xl mb-4">
-            Préstamos
-          </h2>
-
-          <ResponsiveContainer
-            width="100%"
-            height={350}
-          >
-
-            <PieChart>
-
-              <Pie
+              <BarChart
                 data={
-                  prestamosChart
+                  empleadosDepto
                 }
-                dataKey="value"
-                nameKey="name"
-                outerRadius={120}
               >
 
-                {prestamosChart.map(
-                  (
-                    entry,
-                    index
-                  ) => (
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                />
 
-                    <Cell
-                      key={index}
-                      fill={
-                        COLORS[
-                          index %
-                            COLORS.length
-                        ]
-                      }
-                    />
+                <XAxis
+                  dataKey="departamento"
+                />
 
-                  )
-                )}
+                <YAxis />
 
-              </Pie>
+                <Tooltip />
 
-              <Tooltip />
+                <Bar
+                  dataKey="empleados"
+                  fill="#2563eb"
+                  radius={[8, 8, 0, 0]}
+                />
 
-              <Legend />
+              </BarChart>
 
-            </PieChart>
+            </ResponsiveContainer>
 
-          </ResponsiveContainer>
+          </div>
+
+          <div
+            className="
+              bg-white
+              rounded-2xl
+              shadow-lg
+              p-6
+            "
+          >
+
+            <h2
+              className="
+                text-xl
+                font-bold
+                mb-4
+              "
+            >
+              Estado de Préstamos
+            </h2>
+
+            <ResponsiveContainer
+              width="100%"
+              height={350}
+            >
+
+              <PieChart>
+
+                <Pie
+                  data={
+                    prestamosChart
+                  }
+                  dataKey="value"
+                  nameKey="name"
+                  outerRadius={120}
+                  label
+                >
+
+                  {prestamosChart.map(
+                    (entry, index) => (
+
+                      <Cell
+                        key={index}
+                        fill={
+                          COLORS[
+                            index %
+                              COLORS.length
+                          ]
+                        }
+                      />
+
+                    )
+                  )}
+
+                </Pie>
+
+                <Tooltip />
+
+                <Legend />
+
+              </PieChart>
+
+            </ResponsiveContainer>
+
+          </div>
 
         </div>
 
       </div>
 
-    </div>
+    </Layout>
 
   );
 

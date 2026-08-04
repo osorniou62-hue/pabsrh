@@ -17,6 +17,10 @@ import Vacaciones from "./pages/Vacaciones";
 import Prestamos from "./pages/Prestamos";
 import Reportes from "./pages/Reportes";
 import DashboardEjecutivo from "./pages/DashboardEjecutivo";
+import Auditoria from "./pages/Auditoria";
+import Notificaciones from "./pages/Notificaciones";
+import RecibosMasivos from "./pages/RecibosMasivos";
+import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
 
 export default function App() {
 
@@ -114,6 +118,26 @@ export default function App() {
   element={
     <DashboardEjecutivo />
   }
+/>
+
+<Route
+  path="/notificaciones"
+  element={<Notificaciones />}
+/>
+
+<Route
+  path="/configuracion"
+  element={<ConfiguracionEmpresa />}
+/>
+
+<Route
+  path="/auditoria"
+  element={<Auditoria />}
+/>
+
+<Route
+  path="/recibos-masivos"
+  element={<RecibosMasivos />}
 />
 
       </Routes>

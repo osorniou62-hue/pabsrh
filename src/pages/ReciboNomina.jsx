@@ -33,55 +33,65 @@ export default function ReciboNomina() {
   const cargarDatos =
     async () => {
 
-      setLoading(true);
+      try {
 
-      const { data: empleado } =
-        await supabase
-          .from("empleados")
-          .select("*")
-          .eq("id", empleadoId)
-          .single();
+        const { data: empleado } =
+          await supabase
+            .from("empleados")
+            .select("*")
+            .eq("id", empleadoId)
+            .single();
 
-      const { data: periodo } =
-        await supabase
-          .from("periodos_nomina")
-          .select("*")
-          .eq("id", periodoId)
-          .single();
+        const { data: periodo } =
+          await supabase
+            .from("periodos_nomina")
+            .select("*")
+            .eq("id", periodoId)
+            .single();
 
-      const { data: nomina } =
-        await supabase
-          .from("nomina")
-          .select("*")
-          .eq(
-            "empleado_id",
-            empleadoId
-          )
-          .eq(
-            "periodo_id",
-            periodoId
-          )
-          .single();
+        const { data: nomina } =
+          await supabase
+            .from("nomina")
+            .select("*")
+            .eq(
+              "empleado_id",
+              empleadoId
+            )
+            .eq(
+              "periodo_id",
+              periodoId
+            )
+            .single();
 
-      setEmpleado(empleado);
-      setPeriodo(periodo);
-      setNomina(nomina);
+        setEmpleado(empleado);
+        setPeriodo(periodo);
+        setNomina(nomina);
 
-      setLoading(false);
+      } catch (error) {
+
+        console.error(error);
+
+      } finally {
+
+        setLoading(false);
+
+      }
 
     };
 
   const descargarPDF =
     async () => {
 
-      const recibo =
+      const contenido =
         document.getElementById(
           "recibo"
         );
 
+      if (!contenido) return;
+
       const canvas =
         await html2canvas(
-          recibo,
+          contenido,
           {
             scale: 2,
           }
@@ -99,12 +109,12 @@ export default function ReciboNomina() {
           "a4"
         );
 
-      const pdfWidth =
+      const anchoPDF =
         pdf.internal.pageSize.getWidth();
 
-      const pdfHeight =
+      const altoPDF =
         (canvas.height *
-          pdfWidth) /
+          anchoPDF) /
         canvas.width;
 
       pdf.addImage(
@@ -112,8 +122,8 @@ export default function ReciboNomina() {
         "PNG",
         0,
         0,
-        pdfWidth,
-        pdfHeight
+        anchoPDF,
+        altoPDF
       );
 
       pdf.save(
@@ -249,18 +259,29 @@ export default function ReciboNomina() {
             </h4>
 
             <p>
-              <strong>Descripción:</strong>{" "}
+              <strong>
+                Descripción:
+              </strong>{" "}
               {periodo.descripcion}
             </p>
 
             <p>
-              <strong>Fecha Inicio:</strong>{" "}
+              <strong>
+                Fecha Inicio:
+              </strong>{" "}
               {periodo.fecha_inicio}
             </p>
 
             <p>
-              <strong>Fecha Fin:</strong>{" "}
+              <strong>
+                Fecha Fin:
+              </strong>{" "}
               {periodo.fecha_fin}
+            </p>
+
+            <p>
+              <strong>Folio:</strong>{" "}
+              NOM-{nomina.id}
             </p>
 
           </div>
@@ -326,7 +347,9 @@ export default function ReciboNomina() {
 
                 <tr className="font-bold">
 
-                  <td>Total</td>
+                  <td>
+                    Total
+                  </td>
 
                   <td className="text-right">
                     $
@@ -370,7 +393,9 @@ export default function ReciboNomina() {
 
                 <tr className="font-bold">
 
-                  <td>Total</td>
+                  <td>
+                    Total
+                  </td>
 
                   <td className="text-right">
                     $
@@ -409,6 +434,20 @@ export default function ReciboNomina() {
             ).toFixed(2)}
           </div>
 
+        </div>
+
+        <div
+          className="
+            mt-8
+            text-xs
+            text-gray-600
+          "
+        >
+          Recibí la cantidad
+          indicada como salario
+          neto correspondiente al
+          período señalado en este
+          recibo.
         </div>
 
         <div className="grid grid-cols-2 gap-12 mt-16">

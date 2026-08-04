@@ -330,6 +330,48 @@ export default function Dashboard() {
 </Link>
 
 <Link
+  to="/notificaciones"
+>
+  🔔 Notificaciones
+</Link>
+
+<Link
+  to="/recibos-masivos"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📦 Recibos Masivos
+  </h3>
+
+  <p className="text-gray-600">
+    Generación por período
+  </p>
+</Link>
+
+<Link
+  to="/auditoria"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📋 Auditoría
+  </h3>
+
+  <p className="text-gray-600">
+    Bitácora del sistema
+  </p>
+</Link>
+
+<Link
   to="/dashboard-ejecutivo"
   className="
     bg-white
@@ -348,6 +390,24 @@ export default function Dashboard() {
 </Link>
 
 <Link
+  to="/recibos-masivos"
+  className="
+    bg-white
+    rounded
+    shadow
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    📦 Recibos Masivos
+  </h3>
+
+  <p className="text-gray-600">
+    Gestión de recibos por período
+  </p>
+</Link>
+
+<Link
   to="/solicitudes"
   className="
     bg-white
@@ -362,6 +422,24 @@ export default function Dashboard() {
 
   <p className="text-gray-600">
     Aprobación de usuarios
+  </p>
+</Link>
+
+<Link
+  to="/configuracion"
+  className="
+    bg-white
+    shadow
+    rounded
+    p-6
+  "
+>
+  <h3 className="text-xl font-bold">
+    ⚙️ Configuración
+  </h3>
+
+  <p className="text-gray-600">
+    Datos de la empresa
   </p>
 </Link>
 

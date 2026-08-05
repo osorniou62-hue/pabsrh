@@ -322,7 +322,6 @@ if (
       nombreDepartamento
     ];
 }
-``
 
           let lineaId =
             null;

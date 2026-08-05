@@ -301,6 +301,28 @@ rows[rows.length - 1]
             empleado.departamento
               ?.trim()
               ?.toUpperCase();
+          const equivalencias = {
+  "MTTO NAVE 3":
+    "MANTENIMIENTO",
+
+  "AYU CHOFER":
+    "LOGISTICA INTERNA",
+
+  "CHOFER":
+    "LOGISTICA INTERNA",
+};
+
+if (
+  equivalencias[
+    nombreDepartamento
+  ]
+) {
+  nombreDepartamento =
+    equivalencias[
+      nombreDepartamento
+    ];
+}
+``
 
           let lineaId =
             null;

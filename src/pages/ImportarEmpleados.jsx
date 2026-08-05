@@ -308,7 +308,7 @@ export default function ImportarEmpleados() {
 
 const equivalencias = {
   "MTTO NAVE 3":
-    "MANTENIMIENTO",
+    "MTTO",
 
   "AYU CHOFER":
     "LOGISTICA INTERNA",

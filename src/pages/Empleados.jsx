@@ -147,21 +147,23 @@ export default function Empleados() {
   empleados.filter(
     (empleado) => {
 
-      const texto =
-        busqueda.toLowerCase();
-
       const coincideBusqueda =
+  empleado.nombre_completo
+    ?.toLowerCase()
+    .includes(texto) ||
 
-        empleado.nombre_completo
-          ?.toLowerCase()
-          .includes(texto)
+  empleado.numero_empleado
+    ?.toString()
+    .toLowerCase()
+    .includes(texto) ||
 
-        ||
+  empleado.departamentos?.nombre
+    ?.toLowerCase()
+    .includes(texto) ||
 
-        empleado.numero_empleado
-          ?.toString()
-          .toLowerCase()
-          .includes(texto);
+  empleado.puestos?.nombre
+    ?.toLowerCase()
+    .includes(texto);
 
       let coincideEstatus =
         true;

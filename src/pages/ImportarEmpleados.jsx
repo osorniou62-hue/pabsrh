@@ -17,6 +17,24 @@ export default function ImportarEmpleados() {
   const [loading, setLoading] =
     useState(false);
 
+  const esLineaMolienda =
+    (valor) => {
+
+      return [
+        "L1",
+        "L2",
+        "L3",
+        "L4",
+        "L5",
+        "L6",
+        "L7",
+        "L8",
+      ].includes(
+        valor
+      );
+
+    };
+
   const convertirFechaExcel =
     (valor) => {
 
@@ -78,7 +96,7 @@ export default function ImportarEmpleados() {
               fila?.[51] || 0
             );
 
-          if (
+          const empleadoValido =
 
             typeof numeroEmpleado ===
               "number" &&
@@ -92,8 +110,10 @@ export default function ImportarEmpleados() {
             typeof nombre ===
               "string" &&
 
-            nombre.trim() !== ""
+            nombre.trim() !== "";
 
+          if (
+            empleadoValido
           ) {
 
             encontrados.push({
@@ -123,6 +143,11 @@ export default function ImportarEmpleados() {
           }
 
         }
+      );
+
+      console.log(
+        "EMPLEADOS DETECTADOS:",
+        encontrados.length
       );
 
       setEmpleados(
@@ -198,226 +223,135 @@ export default function ImportarEmpleados() {
     };
 
   const importarEmpleados =
-  async () => {
-
-    if (
-      empleados.length === 0
-    ) {
-
-      alert(
-        "No hay empleados para importar"
-      );
-
-      return;
-
-    }
-
-    try {
-
-      setLoading(true);
-
-      const {
-        data: departamentos,
-        error: departamentosError,
-      } =
-        await supabase
-          .from("departamentos")
-          .select("*");
+    async () => {
 
       if (
-        departamentosError
+        empleados.length === 0
       ) {
-        throw departamentosError;
+
+        alert(
+          "No hay empleados para importar"
+        );
+
+        return;
+
       }
 
-      const {
-        data: puestos,
-        error: puestosError,
-      } =
-        await supabase
-          .from("puestos")
-          .select("*");
+      try {
 
-      if (
-        puestosError
-      ) {
-        throw puestosError;
-      }
-
-      let insertados = 0;
-      let actualizados = 0;
-
-      const errores = [];
-
-      const departamentosNoEncontrados =
-        [];
-
-      for (
-        const empleado of empleados
-      ) {
-
-        const departamento =
-          departamentos.find(
-            (d) =>
-              d.nombre
-                ?.trim()
-                ?.toUpperCase() ===
-              empleado.departamento
-                ?.trim()
-                ?.toUpperCase()
-          );
-
-        if (
-          !departamento
-        ) {
-
-          departamentosNoEncontrados.push(
-            empleado.departamento
-          );
-
-          errores.push({
-
-            numero:
-              empleado.numero_empleado,
-
-            nombre:
-              empleado.nombre_completo,
-
-            motivo:
-              `Departamento no encontrado: ${empleado.departamento}`,
-
-          });
-
-          continue;
-
-        }
-
-        let puesto =
-          puestos.find(
-            (p) =>
-              p.nombre
-                ?.trim()
-                ?.toUpperCase() ===
-              empleado.puesto
-                ?.trim()
-                ?.toUpperCase()
-          );
-
-        if (
-          !puesto
-        ) {
-
-          const {
-            data:
-              nuevoPuesto,
-            error:
-              puestoError,
-          } =
-            await supabase
-              .from(
-                "puestos"
-              )
-              .insert([
-                {
-                  nombre:
-                    empleado.puesto,
-
-                  departamento_id:
-                    departamento.id,
-
-                  activo: true,
-                },
-              ])
-              .select()
-              .single();
-
-          if (
-            puestoError
-          ) {
-
-            errores.push({
-
-              numero:
-                empleado.numero_empleado,
-
-              nombre:
-                empleado.nombre_completo,
-
-              motivo:
-                puestoError.message,
-
-            });
-
-            continue;
-
-          }
-
-          puesto =
-            nuevoPuesto;
-
-          puestos.push(
-            nuevoPuesto
-          );
-
-        }
+        setLoading(true);
 
         const {
-          data:
-            existente,
+          data: departamentos,
+          error: departamentosError,
         } =
           await supabase
             .from(
-              "empleados"
+              "departamentos"
             )
-            .select(
-              "id"
-            )
-            .eq(
-              "numero_empleado",
-              empleado.numero_empleado
-            )
-            .maybeSingle();
+            .select("*");
 
         if (
-          existente
+          departamentosError
+        ) {
+          throw departamentosError;
+        }
+
+        const {
+          data: puestos,
+          error: puestosError,
+        } =
+          await supabase
+            .from(
+              "puestos"
+            )
+            .select("*");
+
+        if (
+          puestosError
+        ) {
+          throw puestosError;
+        }
+
+        const {
+          data: lineas,
+          error: lineasError,
+        } =
+          await supabase
+            .from(
+              "lineas"
+            )
+            .select("*");
+
+        if (
+          lineasError
+        ) {
+          throw lineasError;
+        }
+
+        let insertados = 0;
+        let actualizados = 0;
+
+        const errores = [];
+
+        const departamentosNoEncontrados =
+          [];
+
+        for (
+          const empleado of empleados
         ) {
 
-          const {
-            error:
-              updateError,
-          } =
-            await supabase
-              .from(
-                "empleados"
-              )
-              .update({
+          let nombreDepartamento =
+            empleado.departamento
+              ?.trim()
+              ?.toUpperCase();
 
-                nombre_completo:
-                  empleado.nombre_completo,
-
-                fecha_ingreso:
-                  empleado.fecha_ingreso,
-
-                sueldo_base:
-                  empleado.sueldo_base,
-
-                departamento_id:
-                  departamento.id,
-
-                puesto_id:
-                  puesto.id,
-
-                activo: true,
-
-              })
-              .eq(
-                "id",
-                existente.id
-              );
+          let lineaId =
+            null;
 
           if (
-            updateError
+            esLineaMolienda(
+              nombreDepartamento
+            )
           ) {
+
+            const linea =
+              lineas.find(
+                (l) =>
+                  l.nombre ===
+                  nombreDepartamento
+              );
+
+            if (
+              linea
+            ) {
+
+              lineaId =
+                linea.id;
+
+            }
+
+            nombreDepartamento =
+              "MOLIENDA";
+
+          }
+
+          const departamento =
+            departamentos.find(
+              (d) =>
+                d.nombre
+                  ?.trim()
+                  ?.toUpperCase() ===
+                nombreDepartamento
+            );
+
+          if (
+            !departamento
+          ) {
+
+            departamentosNoEncontrados.push(
+              empleado.departamento
+            );
 
             errores.push({
 
@@ -428,7 +362,7 @@ export default function ImportarEmpleados() {
                 empleado.nombre_completo,
 
               motivo:
-                updateError.message,
+                `Departamento no encontrado: ${empleado.departamento}`,
 
             });
 
@@ -436,23 +370,107 @@ export default function ImportarEmpleados() {
 
           }
 
-          actualizados++;
+          let puesto =
+            puestos.find(
+              (p) =>
+                p.nombre
+                  ?.trim()
+                  ?.toUpperCase() ===
+                  empleado.puesto
+                    ?.trim()
+                    ?.toUpperCase()
+                &&
+                p.departamento_id ===
+                  departamento.id
+            );
 
-        } else {
+          if (
+            !puesto
+          ) {
+                        const {
+              data:
+                nuevoPuesto,
+              error:
+                puestoError,
+            } =
+              await supabase
+                .from(
+                  "puestos"
+                )
+                .insert([
+                  {
+                    nombre:
+                      empleado.puesto,
+
+                    departamento_id:
+                      departamento.id,
+
+                    activo: true,
+                  },
+                ])
+                .select()
+                .single();
+
+            if (
+              puestoError
+            ) {
+
+              errores.push({
+
+                numero:
+                  empleado.numero_empleado,
+
+                nombre:
+                  empleado.nombre_completo,
+
+                motivo:
+                  puestoError.message,
+
+              });
+
+              continue;
+
+            }
+
+            puesto =
+              nuevoPuesto;
+
+            puestos.push(
+              nuevoPuesto
+            );
+
+          }
 
           const {
-            error:
-              insertError,
+            data:
+              existente,
           } =
             await supabase
               .from(
                 "empleados"
               )
-              .insert([
-                {
+              .select(
+                "id"
+              )
+              .eq(
+                "numero_empleado",
+                empleado.numero_empleado
+              )
+              .maybeSingle();
 
-                  numero_empleado:
-                    empleado.numero_empleado,
+          if (
+            existente
+          ) {
+
+            const {
+              error:
+                updateError,
+            } =
+              await supabase
+                .from(
+                  "empleados"
+                )
+                .update({
 
                   nombre_completo:
                     empleado.nombre_completo,
@@ -469,59 +487,127 @@ export default function ImportarEmpleados() {
                   puesto_id:
                     puesto.id,
 
+                  linea_id:
+                    lineaId,
+
                   activo: true,
 
-                },
-              ]);
+                })
+                .eq(
+                  "id",
+                  existente.id
+                );
 
-          if (
-            insertError
-          ) {
+            if (
+              updateError
+            ) {
 
-            errores.push({
+              errores.push({
 
-              numero:
-                empleado.numero_empleado,
+                numero:
+                  empleado.numero_empleado,
 
-              nombre:
-                empleado.nombre_completo,
+                nombre:
+                  empleado.nombre_completo,
 
-              motivo:
-                insertError.message,
+                motivo:
+                  updateError.message,
 
-            });
+              });
 
-            continue;
+              continue;
+
+            }
+
+            actualizados++;
+
+          } else {
+
+            const {
+              error:
+                insertError,
+            } =
+              await supabase
+                .from(
+                  "empleados"
+                )
+                .insert([
+                  {
+
+                    numero_empleado:
+                      empleado.numero_empleado,
+
+                    nombre_completo:
+                      empleado.nombre_completo,
+
+                    fecha_ingreso:
+                      empleado.fecha_ingreso,
+
+                    sueldo_base:
+                      empleado.sueldo_base,
+
+                    departamento_id:
+                      departamento.id,
+
+                    puesto_id:
+                      puesto.id,
+
+                    linea_id:
+                      lineaId,
+
+                    activo: true,
+
+                  },
+                ]);
+
+            if (
+              insertError
+            ) {
+
+              errores.push({
+
+                numero:
+                  empleado.numero_empleado,
+
+                nombre:
+                  empleado.nombre_completo,
+
+                motivo:
+                  insertError.message,
+
+              });
+
+              continue;
+
+            }
+
+            insertados++;
 
           }
 
-          insertados++;
-
         }
 
-      }
+        console.log(
+          "ERRORES"
+        );
 
-      console.log(
-        "ERRORES"
-      );
+        console.table(
+          errores
+        );
 
-      console.table(
-        errores
-      );
+        console.log(
+          "DEPARTAMENTOS NO ENCONTRADOS"
+        );
 
-      console.log(
-        "DEPARTAMENTOS NO ENCONTRADOS"
-      );
+        console.table(
+          [
+            ...new Set(
+              departamentosNoEncontrados
+            ),
+          ]
+        );
 
-      console.table(
-        [
-          ...new Set(
-            departamentosNoEncontrados
-          ),
-        ]
-      );
-
-      alert(
+        alert(
 `Importación finalizada
 
 Insertados: ${insertados}
@@ -529,23 +615,24 @@ Actualizados: ${actualizados}
 Errores: ${errores.length}
 
 Revisa la consola (F12).`
-      );
+        );
 
-    } catch (error) {
+      } catch (error) {
 
-      console.error(
-        error
-      );
+        console.error(
+          error
+        );
 
-      alert(
-        "Error durante la importación"
-      );
+        alert(
+          "Error durante la importación"
+        );
 
-    }
+      }
 
-    setLoading(false);
+      setLoading(false);
 
-  };
+    };
+
   return (
 
     <Layout>

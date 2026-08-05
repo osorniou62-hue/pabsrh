@@ -9,8 +9,135 @@ export default function ImportarEmpleados() {
   const [archivo, setArchivo] =
     useState(null);
 
-  const [rawRows, setRawRows] =
+  const [empleados, setEmpleados] =
     useState([]);
+
+  const convertirFechaExcel =
+    (valor) => {
+
+      if (
+        typeof valor !==
+        "number"
+      ) {
+        return null;
+      }
+
+      const fecha =
+        new Date(
+          (valor - 25569) *
+          86400 *
+          1000
+        );
+
+      if (
+        isNaN(
+          fecha.getTime()
+        )
+      ) {
+        return null;
+      }
+
+      return fecha
+        .toISOString()
+        .split("T")[0];
+
+    };
+
+  const analizarNomina =
+    (rows) => {
+
+      const encontrados =
+        [];
+
+      rows.forEach(
+        (fila) => {
+
+          const numeroEmpleado =
+            fila?.[0];
+
+          const puesto =
+            fila?.[1];
+
+          const departamento =
+            fila?.[2];
+
+          const nombre =
+            fila?.[3];
+
+          const fechaIngreso =
+            convertirFechaExcel(
+              fila?.[5]
+            );
+
+          const sueldoBase =
+            Number(
+              fila?.[51] || 0
+            );
+
+          if (
+
+            typeof numeroEmpleado ===
+              "number" &&
+
+            typeof puesto ===
+              "string" &&
+
+            typeof departamento ===
+              "string" &&
+
+            typeof nombre ===
+              "string" &&
+
+            nombre.trim() !== ""
+
+          ) {
+
+            encontrados.push({
+
+              numero_empleado:
+                String(
+                  numeroEmpleado
+                ),
+
+              nombre_completo:
+                nombre.trim(),
+
+              puesto:
+                puesto.trim(),
+
+              departamento:
+                departamento.trim(),
+
+              fecha_ingreso:
+                fechaIngreso,
+
+              sueldo_base:
+                sueldoBase,
+
+            });
+
+          }
+
+        }
+      );
+
+      console.log(
+        "EMPLEADOS:",
+        encontrados.length
+      );
+
+      console.table(
+        encontrados.slice(
+          0,
+          20
+        )
+      );
+
+      setEmpleados(
+        encontrados
+      );
+
+    };
 
   const leerArchivo =
     (event) => {
@@ -32,39 +159,13 @@ export default function ImportarEmpleados() {
 
           try {
 
-            const data =
-              e.target.result;
-
             const workbook =
               XLSX.read(
-                data,
+                e.target.result,
                 {
                   type: "binary",
                 }
               );
-
-            console.clear();
-
-            console.log(
-              "========================"
-            );
-
-            console.log(
-              "ARCHIVO:",
-              file.name
-            );
-
-            console.log(
-              "HOJAS:"
-            );
-
-            console.log(
-              workbook.SheetNames
-            );
-
-            console.log(
-              "========================"
-            );
 
             const sheet =
               workbook.Sheets[
@@ -80,78 +181,18 @@ export default function ImportarEmpleados() {
                 }
               );
 
-            setRawRows(rows);
-
-            console.log(
-              "TOTAL FILAS:",
-              rows.length
-            );
-
-            console.log(
-              "========================"
-            );
-
-            console.log(
-              "ROW 0"
-            );
-
-            console.log(
-              rows[0]
-            );
-
-            console.log(
-              "ROW 1"
-            );
-
-            console.log(
-              rows[1]
-            );
-
-            console.log(
-              "ROW 2"
-            );
-
-            console.log(
-              rows[2]
-            );
-
-            console.log(
-              "ROW 3"
-            );
-
-            console.log(
-              rows[3]
-            );
-
-            console.log(
-              "ROW 4"
-            );
-
-            console.log(
-              rows[4]
-            );
-
-            console.log(
-              "========================"
-            );
-
-            console.table(
-              rows.slice(0, 20)
-            );
-
-            alert(
-              `Filas detectadas: ${rows.length}`
+            analizarNomina(
+              rows
             );
 
           } catch (error) {
 
             console.error(
-              "ERROR AL LEER EXCEL",
               error
             );
 
             alert(
-              "Error leyendo el archivo"
+              "Error leyendo Excel"
             );
 
           }
@@ -173,11 +214,11 @@ export default function ImportarEmpleados() {
         <div className="mb-8">
 
           <h1 className="text-4xl font-bold">
-            📥 Diagnóstico Excel
+            📥 Importar Empleados
           </h1>
 
           <p className="text-gray-500 mt-2">
-            Herramienta temporal para analizar NOMINA.xlsx
+            Lectura de NOMINA.xlsx
           </p>
 
         </div>
@@ -196,20 +237,18 @@ export default function ImportarEmpleados() {
           />
 
           <KpiCard
-            titulo="Filas"
+            titulo="Detectados"
             valor={
-              rawRows.length
+              empleados.length
             }
-            icono="📊"
+            icono="👥"
             color="text-green-600"
           />
 
           <KpiCard
-            titulo="Estado"
+            titulo="Listos"
             valor={
-              rawRows.length > 0
-                ? "Leído"
-                : "Esperando"
+              empleados.length
             }
             icono="✅"
             color="text-purple-600"
@@ -248,46 +287,109 @@ export default function ImportarEmpleados() {
             bg-white
             rounded-2xl
             shadow-lg
-            p-6
-            mb-6
+            overflow-x-auto
           "
         >
 
-          <h2
-            className="
-              text-xl
-              font-bold
-              mb-4
-            "
-          >
-            🔍 Primeras 10 filas
-          </h2>
+          <table className="w-full">
 
-          <div
-            className="
-              bg-slate-100
-              rounded-lg
-              p-4
-              overflow-auto
-              max-h-[500px]
-              text-xs
-            "
-          >
+            <thead className="bg-slate-100">
 
-            <pre>
+              <tr>
 
-              {JSON.stringify(
-                rawRows.slice(
-                  0,
-                  10
-                ),
-                null,
-                2
+                <th className="p-4">
+                  #
+                </th>
+
+                <th className="p-4">
+                  Nombre
+                </th>
+
+                <th className="p-4">
+                  Departamento
+                </th>
+
+                <th className="p-4">
+                  Puesto
+                </th>
+
+                <th className="p-4">
+                  Fecha Ingreso
+                </th>
+
+                <th className="p-4">
+                  Sueldo
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              {empleados.map(
+                (
+                  empleado,
+                  index
+                ) => (
+
+                  <tr
+                    key={index}
+                    className="
+                      border-t
+                      hover:bg-slate-50
+                    "
+                  >
+
+                    <td className="p-3">
+                      {
+                        empleado.numero_empleado
+                      }
+                    </td>
+
+                    <td className="p-3">
+                      {
+                        empleado.nombre_completo
+                      }
+                    </td>
+
+                    <td className="p-3">
+                      {
+                        empleado.departamento
+                      }
+                    </td>
+
+                    <td className="p-3">
+                      {
+                        empleado.puesto
+                      }
+                    </td>
+
+                    <td className="p-3">
+                      {
+                        empleado.fecha_ingreso
+                      }
+                    </td>
+
+                    <td className="p-3">
+
+                      $
+                      {Number(
+                        empleado.sueldo_base
+                      ).toLocaleString(
+                        "es-MX"
+                      )}
+
+                    </td>
+
+                  </tr>
+
+                )
               )}
 
-            </pre>
+            </tbody>
 
-          </div>
+          </table>
 
         </div>
 

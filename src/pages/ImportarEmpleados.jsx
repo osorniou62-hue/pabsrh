@@ -4,6 +4,8 @@ import * as XLSX from "xlsx";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
+import { supabase } from "../services/supabase";
+
 export default function ImportarEmpleados() {
 
   const [archivo, setArchivo] =
@@ -12,12 +14,14 @@ export default function ImportarEmpleados() {
   const [empleados, setEmpleados] =
     useState([]);
 
+  const [loading, setLoading] =
+    useState(false);
+
   const convertirFechaExcel =
     (valor) => {
 
       if (
-        typeof valor !==
-        "number"
+        typeof valor !== "number"
       ) {
         return null;
       }
@@ -121,18 +125,6 @@ export default function ImportarEmpleados() {
         }
       );
 
-      console.log(
-        "EMPLEADOS:",
-        encontrados.length
-      );
-
-      console.table(
-        encontrados.slice(
-          0,
-          20
-        )
-      );
-
       setEmpleados(
         encontrados
       );
@@ -205,6 +197,258 @@ export default function ImportarEmpleados() {
 
     };
 
+  const importarEmpleados =
+    async () => {
+
+      if (
+        empleados.length === 0
+      ) {
+
+        alert(
+          "No hay empleados para importar"
+        );
+
+        return;
+
+      }
+
+      try {
+
+        setLoading(true);
+
+        const {
+          data: departamentos,
+          error:
+            departamentosError,
+        } =
+          await supabase
+            .from(
+              "departamentos"
+            )
+            .select("*");
+
+        if (
+          departamentosError
+        ) {
+          throw departamentosError;
+        }
+
+        const {
+          data: puestos,
+          error:
+            puestosError,
+        } =
+          await supabase
+            .from(
+              "puestos"
+            )
+            .select("*");
+
+        if (
+          puestosError
+        ) {
+          throw puestosError;
+        }
+
+        let insertados = 0;
+        let actualizados = 0;
+
+        for (
+          const empleado of empleados
+        ) {
+
+          const departamento =
+            departamentos.find(
+              (d) =>
+                d.nombre
+                  ?.trim()
+                  ?.toUpperCase() ===
+                empleado.departamento
+                  ?.trim()
+                  ?.toUpperCase()
+            );
+
+          if (
+            !departamento
+          ) {
+
+            console.warn(
+              "Departamento no encontrado:",
+              empleado.departamento
+            );
+
+            continue;
+
+          }
+
+          let puesto =
+            puestos.find(
+              (p) =>
+                p.nombre
+                  ?.trim()
+                  ?.toUpperCase() ===
+                empleado.puesto
+                  ?.trim()
+                  ?.toUpperCase()
+            );
+
+          if (!puesto) {
+
+            const {
+              data:
+                nuevoPuesto,
+              error,
+            } =
+              await supabase
+                .from(
+                  "puestos"
+                )
+                .insert([
+                  {
+                    nombre:
+                      empleado.puesto,
+
+                    departamento_id:
+                      departamento.id,
+
+                    activo: true,
+
+                  },
+                ])
+                .select()
+                .single();
+
+            if (error) {
+
+              console.error(
+                error
+              );
+
+              continue;
+
+            }
+
+            puesto =
+              nuevoPuesto;
+
+            puestos.push(
+              nuevoPuesto
+            );
+
+          }
+
+          const {
+            data: existente,
+          } =
+            await supabase
+              .from(
+                "empleados"
+              )
+              .select(
+                "id"
+              )
+              .eq(
+                "numero_empleado",
+                empleado.numero_empleado
+              )
+              .maybeSingle();
+
+          if (
+            existente
+          ) {
+
+            await supabase
+              .from(
+                "empleados"
+              )
+              .update({
+
+                nombre_completo:
+                  empleado.nombre_completo,
+
+                fecha_ingreso:
+                  empleado.fecha_ingreso,
+
+                sueldo_base:
+                  empleado.sueldo_base,
+
+                departamento_id:
+                  departamento.id,
+
+                puesto_id:
+                  puesto.id,
+
+                activo: true,
+
+              })
+              .eq(
+                "id",
+                existente.id
+              );
+
+            actualizados++;
+
+          } else {
+
+            await supabase
+              .from(
+                "empleados"
+              )
+              .insert([
+                {
+
+                  numero_empleado:
+                    empleado.numero_empleado,
+
+                  nombre_completo:
+                    empleado.nombre_completo,
+
+                  fecha_ingreso:
+                    empleado.fecha_ingreso,
+
+                  sueldo_base:
+                    empleado.sueldo_base,
+
+                  departamento_id:
+                    departamento.id,
+
+                  puesto_id:
+                    puesto.id,
+
+                  activo: true,
+
+                },
+              ]);
+
+            insertados++;
+
+          }
+
+        }
+
+        alert(
+`Importación completada
+
+Insertados: ${insertados}
+Actualizados: ${actualizados}`
+        );
+
+      } catch (error) {
+
+        console.error(
+          error
+        );
+
+        alert(
+          "Ocurrió un error durante la importación"
+        );
+
+      }
+
+      setLoading(false);
+
+    };
+
   return (
 
     <Layout>
@@ -218,7 +462,7 @@ export default function ImportarEmpleados() {
           </h1>
 
           <p className="text-gray-500 mt-2">
-            Lectura de NOMINA.xlsx
+            Carga masiva desde NOMINA.xlsx
           </p>
 
         </div>
@@ -280,6 +524,32 @@ export default function ImportarEmpleados() {
             "
           />
 
+          <button
+            onClick={
+              importarEmpleados
+            }
+            disabled={
+              loading ||
+              empleados.length === 0
+            }
+            className="
+              mt-4
+              bg-green-600
+              hover:bg-green-700
+              disabled:bg-gray-400
+              text-white
+              px-5
+              py-3
+              rounded-xl
+            "
+          >
+
+            {loading
+              ? "Importando..."
+              : "🚀 Importar Empleados"}
+
+          </button>
+
         </div>
 
         <div
@@ -314,7 +584,7 @@ export default function ImportarEmpleados() {
                 </th>
 
                 <th className="p-4">
-                  Fecha Ingreso
+                  Ingreso
                 </th>
 
                 <th className="p-4">

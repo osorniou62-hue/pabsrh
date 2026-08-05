@@ -197,11 +197,8 @@ export default function ImportarEmpleados() {
         );
 
         console.log(
-2
 "ULTIMA FILA:",
-3
 rows[rows.length - 1]
-4
 );
 
         console.table(

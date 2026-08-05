@@ -6,233 +6,152 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 export default function Empleados() {
-
-  const [empleados, setEmpleados] =
-    useState([]);
-
-  const [busqueda, setBusqueda] =
-    useState("");
-
-  const [estatus, setEstatus] =
-    useState("ACTIVOS");
-
-  const [
-  departamentoFiltro,
-  setDepartamentoFiltro
-] = useState("TODOS");
-
-  const [loading, setLoading] =
-    useState(true);
+  const [empleados, setEmpleados] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [estatus, setEstatus] = useState("ACTIVOS");
+  const [departamentoFiltro, setDepartamentoFiltro] =
+    useState("TODOS");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-
     cargarEmpleados();
-
   }, []);
 
-  const cargarEmpleados =
-    async () => {
+  const cargarEmpleados = async () => {
+    setLoading(true);
 
-      setLoading(true);
+    const { data, error } = await supabase
+      .from("empleados")
+      .select(`
+        *,
+        departamentos (
+          nombre
+        ),
+        puestos (
+          nombre
+        )
+      `)
+      .order("nombre_completo");
 
-      const { data, error } =
-        await supabase
-          .from("empleados")
-          .select(`
-            *,
-            departamentos (
-              nombre
-            ),
-            puestos (
-              nombre
-            )
-          `)
-          .order(
-            "nombre_completo"
-          );
+    if (error) {
+      console.error(error);
+    } else {
+      setEmpleados(data || []);
+    }
 
-      if (error) {
+    setLoading(false);
+  };
 
-        console.error(error);
+  const darDeBaja = async (empleado) => {
+    const confirmar = window.confirm(
+      `¿Deseas dar de baja a ${empleado.nombre_completo}?`
+    );
 
-      } else {
+    if (!confirmar) return;
 
-        setEmpleados(data || []);
+    const { error } = await supabase
+      .from("empleados")
+      .update({
+        activo: false,
+        fecha_baja: new Date()
+          .toISOString()
+          .split("T")[0],
+      })
+      .eq("id", empleado.id);
 
-      }
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
-      setLoading(false);
+    await cargarEmpleados();
+  };
 
-    };
+  const reactivarEmpleado = async (empleado) => {
+    const { error } = await supabase
+      .from("empleados")
+      .update({
+        activo: true,
+        fecha_baja: null,
+      })
+      .eq("id", empleado.id);
 
-  const darDeBaja =
-    async (empleado) => {
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
-      const confirmar =
-        window.confirm(
-          `¿Deseas dar de baja a ${empleado.nombre_completo}?`
-        );
+    await cargarEmpleados();
+  };
 
-      if (!confirmar) return;
-
-      const { error } =
-        await supabase
-          .from("empleados")
-          .update({
-            activo: false,
-            fecha_baja:
-              new Date()
-                .toISOString()
-                .split("T")[0],
-          })
-          .eq(
-            "id",
-            empleado.id
-          );
-
-      if (error) {
-
-        alert(error.message);
-
-        return;
-
-      }
-
-      await cargarEmpleados();
-
-    };
-
-  const reactivarEmpleado =
-    async (empleado) => {
-
-      const { error } =
-        await supabase
-          .from("empleados")
-          .update({
-            activo: true,
-            fecha_baja: null,
-          })
-          .eq(
-            "id",
-            empleado.id
-          );
-
-      if (error) {
-
-        alert(error.message);
-
-        return;
-
-      }
-
-      await cargarEmpleados();
-
-    };
-  const departamentos =
-  [
+  const departamentos = [
     "TODOS",
-
     ...new Set(
       empleados
-        .map(
-          (e) =>
-            e.departamentos
-              ?.nombre
-        )
+        .map((e) => e.departamentos?.nombre)
         .filter(Boolean)
     ),
   ].sort();
 
-  const empleadosFiltrados =
-  empleados.filter(
+  const empleadosFiltrados = empleados.filter(
     (empleado) => {
+      const texto = busqueda
+        .toLowerCase()
+        .trim();
 
       const coincideBusqueda =
-  empleado.nombre_completo
-    ?.toLowerCase()
-    .includes(texto) ||
+        empleado.nombre_completo
+          ?.toLowerCase()
+          .includes(texto) ||
+        empleado.numero_empleado
+          ?.toString()
+          .toLowerCase()
+          .includes(texto) ||
+        empleado.departamentos?.nombre
+          ?.toLowerCase()
+          .includes(texto) ||
+        empleado.puestos?.nombre
+          ?.toLowerCase()
+          .includes(texto);
 
-  empleado.numero_empleado
-    ?.toString()
-    .toLowerCase()
-    .includes(texto) ||
+      let coincideEstatus = true;
 
-  empleado.departamentos?.nombre
-    ?.toLowerCase()
-    .includes(texto) ||
-
-  empleado.puestos?.nombre
-    ?.toLowerCase()
-    .includes(texto);
-
-      let coincideEstatus =
-        true;
-
-      if (
-        estatus === "ACTIVOS"
-      ) {
-
-        coincideEstatus =
-          empleado.activo;
-
+      if (estatus === "ACTIVOS") {
+        coincideEstatus = empleado.activo;
       }
 
-      if (
-        estatus === "BAJAS"
-      ) {
-
-        coincideEstatus =
-          !empleado.activo;
-
+      if (estatus === "BAJAS") {
+        coincideEstatus = !empleado.activo;
       }
 
       const coincideDepartamento =
-
-        departamentoFiltro ===
-          "TODOS"
-
-        ||
-
-        empleado.departamentos
-          ?.nombre ===
+        departamentoFiltro === "TODOS" ||
+        empleado.departamentos?.nombre ===
           departamentoFiltro;
 
       return (
-
         coincideBusqueda &&
-
         coincideEstatus &&
-
         coincideDepartamento
-
       );
-
     }
   );
 
-  const total =
-    empleados.length;
+  const total = empleados.length;
 
-  const activos =
-    empleados.filter(
-      (e) => e.activo
-    ).length;
+  const activos = empleados.filter(
+    (e) => e.activo
+  ).length;
 
-  const bajas =
-    empleados.filter(
-      (e) => !e.activo
-    ).length;
+  const bajas = empleados.filter(
+    (e) => !e.activo
+  ).length;
 
   return (
-
     <Layout>
-
       <div>
-
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
-
           <div>
-
             <h1 className="text-4xl font-bold">
               👥 Empleados
             </h1>
@@ -240,30 +159,17 @@ export default function Empleados() {
             <p className="text-gray-500 mt-2">
               Administración de empleados
             </p>
-
           </div>
 
           <Link
             to="/empleados/nuevo"
-            className="
-              mt-4
-              md:mt-0
-              bg-green-600
-              hover:bg-green-700
-              text-white
-              px-5
-              py-3
-              rounded-xl
-              transition
-            "
+            className="mt-4 md:mt-0 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl transition"
           >
             + Nuevo Empleado
           </Link>
-
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 mb-8">
-
           <KpiCard
             titulo="Activos"
             valor={activos}
@@ -284,51 +190,26 @@ export default function Empleados() {
             icono="👥"
             color="text-blue-600"
           />
-
         </div>
-
-        <div
-          className="
-            bg-white
-            rounded-2xl
-            shadow-lg
-            p-6
-            mb-6
-          "
-        >
-
+                <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="grid md:grid-cols-3 gap-4">
-
             <input
               type="text"
-              placeholder="🔍 Buscar empleado..."
+              placeholder="🔍 Buscar nombre, número, departamento o puesto..."
               value={busqueda}
               onChange={(e) =>
-                setBusqueda(
-                  e.target.value
-                )
+                setBusqueda(e.target.value)
               }
-              className="
-                border
-                rounded-xl
-                p-3
-              "
+              className="border rounded-xl p-3"
             />
 
             <select
               value={estatus}
               onChange={(e) =>
-                setEstatus(
-                  e.target.value
-                )
+                setEstatus(e.target.value)
               }
-              className="
-                border
-                rounded-xl
-                p-3
-              "
+              className="border rounded-xl p-3"
             >
-
               <option value="ACTIVOS">
                 Activos
               </option>
@@ -340,71 +221,41 @@ export default function Empleados() {
               <option value="TODOS">
                 Todos
               </option>
-
             </select>
 
-          <select
-  value={
-    departamentoFiltro
-  }
-  onChange={(e) =>
-    setDepartamentoFiltro(
-      e.target.value
-    )
-  }
-  className="
-    border
-    rounded-xl
-    p-3
-  "
->
-  {departamentos.map(
-    (dep) => (
-      <option
-        key={dep}
-        value={dep}
-      >
-        {dep}
-      </option>
-    )
-  )}
-</select>
-
+            <select
+              value={departamentoFiltro}
+              onChange={(e) =>
+                setDepartamentoFiltro(
+                  e.target.value
+                )
+              }
+              className="border rounded-xl p-3"
+            >
+              {departamentos.map((dep) => (
+                <option
+                  key={dep}
+                  value={dep}
+                >
+                  {dep}
+                </option>
+              ))}
+            </select>
           </div>
-
         </div>
 
         <div className="mb-4 text-gray-600">
-
-          Mostrando
-
-          {" "}
-
+          Mostrando{" "}
           <strong>
             {empleadosFiltrados.length}
-          </strong>
-
-          {" "}
-
+          </strong>{" "}
           empleados
-
         </div>
 
-        <div
-          className="
-            bg-white
-            rounded-2xl
-            shadow-lg
-            overflow-x-auto
-          "
-        >
-
+        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
           <table className="w-full">
-
             <thead className="bg-slate-100">
-
               <tr>
-
                 <th className="p-4 text-left">
                   No.
                 </th>
@@ -428,44 +279,28 @@ export default function Empleados() {
                 <th className="p-4 text-center">
                   Acciones
                 </th>
-
               </tr>
-
             </thead>
 
             <tbody>
-
               {loading && (
-
                 <tr>
-
                   <td
-                    colSpan="6"
-                    className="
-                      p-6
-                      text-center
-                    "
+                    colSpan={6}
+                    className="p-6 text-center"
                   >
                     Cargando...
                   </td>
-
                 </tr>
-
               )}
 
               {!loading &&
                 empleadosFiltrados.map(
                   (empleado) => (
-
                     <tr
                       key={empleado.id}
-                      className="
-                        border-t
-                        hover:bg-slate-50
-                        transition
-                      "
+                      className="border-t hover:bg-slate-50 transition"
                     >
-
                       <td className="p-4">
                         {
                           empleado.numero_empleado
@@ -487,142 +322,84 @@ export default function Empleados() {
 
                       <td className="p-4">
                         {
-                          empleado.puestos
-                            ?.nombre
+                          empleado.puestos?.nombre
                         }
                       </td>
 
                       <td className="p-4 text-center">
-
                         {empleado.activo ? (
-
-                          <span
-                            className="
-                              bg-green-100
-                              text-green-700
-                              px-3
-                              py-1
-                              rounded-full
-                              text-sm
-                              font-medium
-                            "
-                          >
+                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
                             Activo
                           </span>
-
                         ) : (
-
-                          <span
-                            className="
-                              bg-red-100
-                              text-red-700
-                              px-3
-                              py-1
-                              rounded-full
-                              text-sm
-                              font-medium
-                            "
-                          >
+                          <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium">
                             Baja
                           </span>
-
                         )}
-
                       </td>
 
                       <td className="p-4">
-
                         <div className="flex gap-2 justify-center">
-
-                          <Link
+                                                  <Link
                             to={`/empleados/detalle/${empleado.id}`}
-                            className="
-                              bg-blue-600
-                              hover:bg-blue-700
-                              text-white
-                              px-3
-                              py-2
-                              rounded-xl
-                            "
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl"
                           >
                             Ver
                           </Link>
 
                           <Link
                             to={`/empleados/${empleado.id}`}
-                            className="
-                              bg-amber-500
-                              hover:bg-amber-600
-                              text-white
-                              px-3
-                              py-2
-                              rounded-xl
-                            "
+                            className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl"
                           >
                             Editar
                           </Link>
 
                           {empleado.activo ? (
-
                             <button
                               onClick={() =>
                                 darDeBaja(
                                   empleado
                                 )
                               }
-                              className="
-                                bg-red-600
-                                hover:bg-red-700
-                                text-white
-                                px-3
-                                py-2
-                                rounded-xl
-                              "
+                              className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl"
                             >
                               Baja
                             </button>
-
                           ) : (
-
                             <button
                               onClick={() =>
                                 reactivarEmpleado(
                                   empleado
                                 )
                               }
-                              className="
-                                bg-green-600
-                                hover:bg-green-700
-                                text-white
-                                px-3
-                                py-2
-                                rounded-xl
-                              "
+                              className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl"
                             >
                               Reactivar
                             </button>
-
                           )}
-
                         </div>
-
                       </td>
-
                     </tr>
-
                   )
                 )}
 
+              {!loading &&
+                empleadosFiltrados.length ===
+                  0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="p-6 text-center text-gray-500"
+                    >
+                      No se encontraron
+                      empleados
+                    </td>
+                  </tr>
+                )}
             </tbody>
-
           </table>
-
         </div>
-
       </div>
-
     </Layout>
-
   );
-
 }

@@ -198,165 +198,194 @@ export default function ImportarEmpleados() {
     };
 
   const importarEmpleados =
-    async () => {
+  async () => {
+
+    if (
+      empleados.length === 0
+    ) {
+
+      alert(
+        "No hay empleados para importar"
+      );
+
+      return;
+
+    }
+
+    try {
+
+      setLoading(true);
+
+      const {
+        data: departamentos,
+        error: departamentosError,
+      } =
+        await supabase
+          .from("departamentos")
+          .select("*");
 
       if (
-        empleados.length === 0
+        departamentosError
       ) {
-
-        alert(
-          "No hay empleados para importar"
-        );
-
-        return;
-
+        throw departamentosError;
       }
 
-      try {
+      const {
+        data: puestos,
+        error: puestosError,
+      } =
+        await supabase
+          .from("puestos")
+          .select("*");
 
-        setLoading(true);
+      if (
+        puestosError
+      ) {
+        throw puestosError;
+      }
 
-        const {
-          data: departamentos,
-          error:
-            departamentosError,
-        } =
-          await supabase
-            .from(
-              "departamentos"
-            )
-            .select("*");
+      let insertados = 0;
+      let actualizados = 0;
+
+      const errores = [];
+
+      const departamentosNoEncontrados =
+        [];
+
+      for (
+        const empleado of empleados
+      ) {
+
+        const departamento =
+          departamentos.find(
+            (d) =>
+              d.nombre
+                ?.trim()
+                ?.toUpperCase() ===
+              empleado.departamento
+                ?.trim()
+                ?.toUpperCase()
+          );
 
         if (
-          departamentosError
+          !departamento
         ) {
-          throw departamentosError;
+
+          departamentosNoEncontrados.push(
+            empleado.departamento
+          );
+
+          errores.push({
+
+            numero:
+              empleado.numero_empleado,
+
+            nombre:
+              empleado.nombre_completo,
+
+            motivo:
+              `Departamento no encontrado: ${empleado.departamento}`,
+
+          });
+
+          continue;
+
         }
 
-        const {
-          data: puestos,
-          error:
-            puestosError,
-        } =
-          await supabase
-            .from(
-              "puestos"
-            )
-            .select("*");
+        let puesto =
+          puestos.find(
+            (p) =>
+              p.nombre
+                ?.trim()
+                ?.toUpperCase() ===
+              empleado.puesto
+                ?.trim()
+                ?.toUpperCase()
+          );
 
         if (
-          puestosError
-        ) {
-          throw puestosError;
-        }
-
-        let insertados = 0;
-        let actualizados = 0;
-
-        for (
-          const empleado of empleados
+          !puesto
         ) {
 
-          const departamento =
-            departamentos.find(
-              (d) =>
-                d.nombre
-                  ?.trim()
-                  ?.toUpperCase() ===
-                empleado.departamento
-                  ?.trim()
-                  ?.toUpperCase()
-            );
+          const {
+            data:
+              nuevoPuesto,
+            error:
+              puestoError,
+          } =
+            await supabase
+              .from(
+                "puestos"
+              )
+              .insert([
+                {
+                  nombre:
+                    empleado.puesto,
+
+                  departamento_id:
+                    departamento.id,
+
+                  activo: true,
+                },
+              ])
+              .select()
+              .single();
 
           if (
-            !departamento
+            puestoError
           ) {
 
-            console.warn(
-              "Departamento no encontrado:",
-              empleado.departamento
-            );
+            errores.push({
+
+              numero:
+                empleado.numero_empleado,
+
+              nombre:
+                empleado.nombre_completo,
+
+              motivo:
+                puestoError.message,
+
+            });
 
             continue;
 
           }
 
-          let puesto =
-            puestos.find(
-              (p) =>
-                p.nombre
-                  ?.trim()
-                  ?.toUpperCase() ===
-                empleado.puesto
-                  ?.trim()
-                  ?.toUpperCase()
-            );
+          puesto =
+            nuevoPuesto;
 
-          if (!puesto) {
+          puestos.push(
+            nuevoPuesto
+          );
 
-            const {
-              data:
-                nuevoPuesto,
-              error,
-            } =
-              await supabase
-                .from(
-                  "puestos"
-                )
-                .insert([
-                  {
-                    nombre:
-                      empleado.puesto,
+        }
 
-                    departamento_id:
-                      departamento.id,
+        const {
+          data:
+            existente,
+        } =
+          await supabase
+            .from(
+              "empleados"
+            )
+            .select(
+              "id"
+            )
+            .eq(
+              "numero_empleado",
+              empleado.numero_empleado
+            )
+            .maybeSingle();
 
-                    activo: true,
-
-                  },
-                ])
-                .select()
-                .single();
-
-            if (error) {
-
-              console.error(
-                error
-              );
-
-              continue;
-
-            }
-
-            puesto =
-              nuevoPuesto;
-
-            puestos.push(
-              nuevoPuesto
-            );
-
-          }
+        if (
+          existente
+        ) {
 
           const {
-            data: existente,
+            error:
+              updateError,
           } =
-            await supabase
-              .from(
-                "empleados"
-              )
-              .select(
-                "id"
-              )
-              .eq(
-                "numero_empleado",
-                empleado.numero_empleado
-              )
-              .maybeSingle();
-
-          if (
-            existente
-          ) {
-
             await supabase
               .from(
                 "empleados"
@@ -386,10 +415,35 @@ export default function ImportarEmpleados() {
                 existente.id
               );
 
-            actualizados++;
+          if (
+            updateError
+          ) {
 
-          } else {
+            errores.push({
 
+              numero:
+                empleado.numero_empleado,
+
+              nombre:
+                empleado.nombre_completo,
+
+              motivo:
+                updateError.message,
+
+            });
+
+            continue;
+
+          }
+
+          actualizados++;
+
+        } else {
+
+          const {
+            error:
+              insertError,
+          } =
             await supabase
               .from(
                 "empleados"
@@ -420,35 +474,78 @@ export default function ImportarEmpleados() {
                 },
               ]);
 
-            insertados++;
+          if (
+            insertError
+          ) {
+
+            errores.push({
+
+              numero:
+                empleado.numero_empleado,
+
+              nombre:
+                empleado.nombre_completo,
+
+              motivo:
+                insertError.message,
+
+            });
+
+            continue;
 
           }
 
+          insertados++;
+
         }
-
-        alert(
-`Importación completada
-
-Insertados: ${insertados}
-Actualizados: ${actualizados}`
-        );
-
-      } catch (error) {
-
-        console.error(
-          error
-        );
-
-        alert(
-          "Ocurrió un error durante la importación"
-        );
 
       }
 
-      setLoading(false);
+      console.log(
+        "ERRORES"
+      );
 
-    };
+      console.table(
+        errores
+      );
 
+      console.log(
+        "DEPARTAMENTOS NO ENCONTRADOS"
+      );
+
+      console.table(
+        [
+          ...new Set(
+            departamentosNoEncontrados
+          ),
+        ]
+      );
+
+      alert(
+`Importación finalizada
+
+Insertados: ${insertados}
+Actualizados: ${actualizados}
+Errores: ${errores.length}
+
+Revisa la consola (F12).`
+      );
+
+    } catch (error) {
+
+      console.error(
+        error
+      );
+
+      alert(
+        "Error durante la importación"
+      );
+
+    }
+
+    setLoading(false);
+
+  };
   return (
 
     <Layout>

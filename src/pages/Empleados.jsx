@@ -16,6 +16,11 @@ export default function Empleados() {
   const [estatus, setEstatus] =
     useState("ACTIVOS");
 
+  const [
+  departamentoFiltro,
+  setDepartamentoFiltro
+] = useState("TODOS");
+
   const [loading, setLoading] =
     useState(true);
 
@@ -123,57 +128,85 @@ export default function Empleados() {
       await cargarEmpleados();
 
     };
+  const departamentos =
+  [
+    "TODOS",
+
+    ...new Set(
+      empleados
+        .map(
+          (e) =>
+            e.departamentos
+              ?.nombre
+        )
+        .filter(Boolean)
+    ),
+  ].sort();
 
   const empleadosFiltrados =
-    empleados.filter(
-      (empleado) => {
+  empleados.filter(
+    (empleado) => {
 
-        const texto =
-          busqueda.toLowerCase();
+      const texto =
+        busqueda.toLowerCase();
 
-        const coincideBusqueda =
+      const coincideBusqueda =
 
-          empleado.nombre_completo
-            ?.toLowerCase()
-            .includes(texto)
+        empleado.nombre_completo
+          ?.toLowerCase()
+          .includes(texto)
 
-          ||
+        ||
 
-          empleado.numero_empleado
-            ?.toString()
-            .toLowerCase()
-            .includes(texto);
+        empleado.numero_empleado
+          ?.toString()
+          .toLowerCase()
+          .includes(texto);
 
-        let coincideEstatus =
-          true;
+      let coincideEstatus =
+        true;
 
-        if (
-          estatus === "ACTIVOS"
-        ) {
+      if (
+        estatus === "ACTIVOS"
+      ) {
 
-          coincideEstatus =
-            empleado.activo;
-
-        }
-
-        if (
-          estatus === "BAJAS"
-        ) {
-
-          coincideEstatus =
-            !empleado.activo;
-
-        }
-
-        return (
-
-          coincideBusqueda &&
-          coincideEstatus
-
-        );
+        coincideEstatus =
+          empleado.activo;
 
       }
-    );
+
+      if (
+        estatus === "BAJAS"
+      ) {
+
+        coincideEstatus =
+          !empleado.activo;
+
+      }
+
+      const coincideDepartamento =
+
+        departamentoFiltro ===
+          "TODOS"
+
+        ||
+
+        empleado.departamentos
+          ?.nombre ===
+          departamentoFiltro;
+
+      return (
+
+        coincideBusqueda &&
+
+        coincideEstatus &&
+
+        coincideDepartamento
+
+      );
+
+    }
+  );
 
   const total =
     empleados.length;
@@ -262,7 +295,7 @@ export default function Empleados() {
           "
         >
 
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-3 gap-4">
 
             <input
               type="text"
@@ -307,6 +340,19 @@ export default function Empleados() {
               </option>
 
             </select>
+
+            <select
+  value={
+    departamentoFiltro
+  }
+  onChange={(e) =>
+    setDepartamentoFiltro(
+      e.target.value
+    )
+  }
+  className="
+    border
+    rounded-
 
           </div>
 

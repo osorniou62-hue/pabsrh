@@ -341,7 +341,7 @@ export default function Empleados() {
 
             </select>
 
-            <select
+          <select
   value={
     departamentoFiltro
   }
@@ -352,7 +352,21 @@ export default function Empleados() {
   }
   className="
     border
-    rounded-
+    rounded-xl
+    p-3
+  "
+>
+  {departamentos.map(
+    (dep) => (
+      <option
+        key={dep}
+        value={dep}
+      >
+        {dep}
+      </option>
+    )
+  )}
+</select>
 
           </div>
 

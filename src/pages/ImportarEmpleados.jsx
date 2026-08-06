@@ -176,13 +176,15 @@ export default function ImportarEmpleados() {
       fila?.[3];
 
     const fechaIngreso =
-      convertirFechaExcel(
-        fila?.[5]
-    console.table(fila);
-    if (encontrados.length === 1) {
+  convertirFechaExcel(
+    fila?.[5]
+  );
+
+console.table(fila);
+
+if (encontrados.length === 1) {
   console.log(fila);
 }
-      );
 
     const sueldoBase =
       Number(

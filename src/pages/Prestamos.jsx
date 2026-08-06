@@ -9,10 +9,12 @@ export default function Prestamos() {
   const [prestamos, setPrestamos] = useState([]);
   const [prestamosFiltrados, setPrestamosFiltrados] = useState([]);
 
-  // Estados para Búsqueda e Historial
+  // Estados para Búsqueda con Autocomplete e Historial
+  const [busquedaTexto, setBusquedaTexto] = useState("");
   const [empleadoSeleccionadoId, setEmpleadoSeleccionadoId] = useState("");
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [busquedaActiva, setBusquedaActiva] = useState(false);
-  const [historialModal, setHistorialModal] = useState(null); // Almacena los datos del historial para el modal
+  const [historialModal, setHistorialModal] = useState(null);
 
   const [form, setForm] = useState({
     empleado_id: "",
@@ -52,16 +54,41 @@ export default function Prestamos() {
     setPrestamosFiltrados(data || []);
   };
 
-  // Función para buscar préstamos e historial de un empleado específico
+  // Filtrar lista de empleados sugeridos según lo que escribe el usuario
+  const sugerenciasEmpleados = empleados.filter((emp) => {
+    const query = busquedaTexto.toLowerCase();
+    const nombre = (emp.nombre_completo || "").toLowerCase();
+    const numero = (emp.numero_empleado || "").toString().toLowerCase();
+    return nombre.includes(query) || numero.includes(query);
+  });
+
+  // Seleccionar un empleado de la lista desplegable
+  const seleccionarEmpleadoBuscador = (empleado) => {
+    setBusquedaTexto(`[${empleado.numero_empleado}] ${empleado.nombre_completo}`);
+    setEmpleadoSeleccionadoId(empleado.id);
+    setMostrarSugerencias(false);
+  };
+
+  // Función para filtrar los préstamos por el empleado seleccionado o texto
   const buscarPrestamoEmpleado = () => {
-    if (!empleadoSeleccionadoId) {
+    let idTarget = empleadoSeleccionadoId;
+
+    // Si el usuario escribió algo pero no seleccionó explícitamente de la lista
+    if (!idTarget && busquedaTexto.trim() !== "") {
+      const coincidencia = empleados.find((e) =>
+        e.nombre_completo.toLowerCase().includes(busquedaTexto.toLowerCase())
+      );
+      if (coincidencia) idTarget = coincidencia.id;
+    }
+
+    if (!idTarget) {
       setPrestamosFiltrados(prestamos);
       setBusquedaActiva(false);
       return;
     }
 
     const filtrados = prestamos.filter(
-      (p) => String(p.empleado_id) === String(empleadoSeleccionadoId)
+      (p) => String(p.empleado_id) === String(idTarget)
     );
 
     setPrestamosFiltrados(filtrados);
@@ -69,13 +96,14 @@ export default function Prestamos() {
   };
 
   const limpiarBusqueda = () => {
+    setBusquedaTexto("");
     setEmpleadoSeleccionadoId("");
     setPrestamosFiltrados(prestamos);
     setBusquedaActiva(false);
+    setMostrarSugerencias(false);
   };
 
   const verHistorialDetallado = async (prestamo) => {
-    // Si manejas una tabla de pagos/abonos o historial_prestamos en Supabase:
     const { data: historialPagos } = await supabase
       .from("historial_prestamos")
       .select("*")
@@ -195,24 +223,50 @@ export default function Prestamos() {
           />
         </div>
 
-        {/* BUSCADOR DE HISTORIAL DE EMPLEADO */}
+        {/* BUSCADOR DE HISTORIAL CON AUTOCOMPLETE */}
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-6">
           <h2 className="text-lg font-bold mb-3 text-slate-700">
             🔎 Buscar Préstamo e Historial por Empleado
           </h2>
-          <div className="flex flex-col md:flex-row gap-3">
-            <select
-              value={empleadoSeleccionadoId}
-              onChange={(e) => setEmpleadoSeleccionadoId(e.target.value)}
-              className="border rounded-xl p-3 bg-white flex-1"
-            >
-              <option value="">-- Selecciona un empleado --</option>
-              {empleados.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  [{emp.numero_empleado}] {emp.nombre_completo}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col md:flex-row gap-3 relative">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="Escribe el nombre o número de empleado..."
+                value={busquedaTexto}
+                onChange={(e) => {
+                  setBusquedaTexto(e.target.value);
+                  setEmpleadoSeleccionadoId("");
+                  setMostrarSugerencias(true);
+                }}
+                onFocus={() => setMostrarSugerencias(true)}
+                className="border rounded-xl p-3 bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+
+              {/* LISTA DESPLEGABLE DE SUGERENCIAS */}
+              {mostrarSugerencias && busquedaTexto.trim() !== "" && (
+                <ul className="absolute z-10 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-56 overflow-y-auto">
+                  {sugerenciasEmpleados.length === 0 ? (
+                    <li className="p-3 text-gray-400 text-sm">
+                      No se encontraron empleados
+                    </li>
+                  ) : (
+                    sugerenciasEmpleados.map((emp) => (
+                      <li
+                        key={emp.id}
+                        onClick={() => seleccionarEmpleadoBuscador(emp)}
+                        className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b last:border-b-0 flex justify-between items-center"
+                      >
+                        <span className="font-medium">{emp.nombre_completo}</span>
+                        <span className="text-xs text-gray-400">
+                          #{emp.numero_empleado}
+                        </span>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
+            </div>
 
             <button
               onClick={buscarPrestamoEmpleado}
@@ -221,7 +275,7 @@ export default function Prestamos() {
               Buscar
             </button>
 
-            {busquedaActiva && (
+            {(busquedaActiva || busquedaTexto !== "") && (
               <button
                 onClick={limpiarBusqueda}
                 className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-xl"

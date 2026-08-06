@@ -9,7 +9,7 @@ export default function Vacaciones() {
   const [vacaciones, setVacaciones] = useState([]);
   const [vacacionesFiltradas, setVacacionesFiltradas] = useState([]);
 
-  // Reglas globales de vacaciones: { 0: 0, 1: 12, 2: 14, ... }
+  // Reglas globales
   const [reglasGlobales, setReglasGlobales] = useState({});
   const [anoReglaInput, setAnoReglaInput] = useState(1);
   const [diasReglaInput, setDiasReglaInput] = useState("");
@@ -20,16 +20,27 @@ export default function Vacaciones() {
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [busquedaActiva, setBusquedaActiva] = useState(false);
 
-  // Modales
+  // Modal Kardex
   const [modalKardexEmpleado, setModalKardexEmpleado] = useState(null);
 
-  // Formulario Solicitud
+  // Formulario dentro del Kardex
+  const [formKardex, setFormKardex] = useState({
+    fecha_inicio: "",
+    fecha_fin: "",
+    dias_solicitados: "",
+    nomina_impactada: "",
+    tipo_vacaciones: "TOMADAS_Y_PAGADAS", // 'TOMADAS_Y_PAGADAS' | 'PAGADAS_NO_TOMADAS'
+    observaciones: "",
+  });
+
+  // Formulario Solicitud General
   const [form, setForm] = useState({
     empleado_id: "",
     fecha_inicio: "",
     fecha_fin: "",
     dias_solicitados: "",
     nomina_impactada: "",
+    tipo_vacaciones: "TOMADAS_Y_PAGADAS",
     observaciones: "",
   });
 
@@ -43,7 +54,6 @@ export default function Vacaciones() {
     aplicarFiltroEmpleado();
   }, [empleadoSeleccionadoId, busquedaActiva, vacaciones]);
 
-  // Cargar tabla de reglas globales de vacaciones
   const cargarReglasGlobales = async () => {
     const { data, error } = await supabase.from("regla_vacaciones").select("*");
     if (!error && data) {
@@ -83,7 +93,6 @@ export default function Vacaciones() {
     setVacacionesFiltradas(data || []);
   };
 
-  // Guardar o Actualizar Regla Global
   const guardarReglaGlobal = async () => {
     if (diasReglaInput === "" || Number(diasReglaInput) < 0) {
       alert("Ingresa una cantidad válida de días.");
@@ -107,7 +116,6 @@ export default function Vacaciones() {
     alert(`Regla actualizada: Año ${ano} = ${dias} días de vacaciones.`);
   };
 
-  // Cálculo de Antigüedad basada en 365 días por año
   const calcularAntiguedad = (fechaIngresoStr) => {
     if (!fechaIngresoStr) return { anosCumplidos: 0, diasTranscurridos: 0, texto: "Sin fecha de ingreso" };
 
@@ -127,13 +135,11 @@ export default function Vacaciones() {
     };
   };
 
-  // Obtener días por ley/regla asignados automáticamente
   const obtenerDiasCorrespondientes = (fechaIngresoStr) => {
     const { anosCumplidos } = calcularAntiguedad(fechaIngresoStr);
     return Number(reglasGlobales[anosCumplidos] || 0);
   };
 
-  // Obtener resumen de vacaciones de un empleado (Totales, Tomados, Remanentes)
   const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
     const diasCorrespondientes = obtenerDiasCorrespondientes(fechaIngresoStr);
 
@@ -141,6 +147,7 @@ export default function Vacaciones() {
       (v) => String(v.empleado_id) === String(empleadoId) && v.estatus === "APROBADO"
     );
 
+    // Ambas modalidades descuentan saldo
     const diasTomados = solicitudesAprobadas.reduce(
       (acc, curr) => acc + Number(curr.dias_solicitados || 0),
       0
@@ -156,7 +163,7 @@ export default function Vacaciones() {
     };
   };
 
-  // Búsqueda Autocomplete
+  // Autocomplete
   const sugerenciasEmpleados = empleados.filter((emp) => {
     const query = busquedaTexto.toLowerCase();
     const nombre = (emp.nombre_completo || "").toLowerCase();
@@ -206,7 +213,56 @@ export default function Vacaciones() {
     setMostrarSugerencias(false);
   };
 
-  // Guardar solicitud de vacaciones
+  // Agregar desde el Modal de Kardex
+  const agregarDesdeKardex = async () => {
+    if (
+      !formKardex.fecha_inicio ||
+      !formKardex.fecha_fin ||
+      !formKardex.dias_solicitados ||
+      !formKardex.nomina_impactada
+    ) {
+      alert("Completa todos los campos obligatorios del registro.");
+      return;
+    }
+
+    const emp = modalKardexEmpleado.empleado;
+
+    const { error } = await supabase.from("vacaciones").insert([
+      {
+        empleado_id: emp.id,
+        fecha_inicio: formKardex.fecha_inicio,
+        fecha_fin: formKardex.fecha_fin,
+        dias_solicitados: Number(formKardex.dias_solicitados),
+        nomina_impactada: formKardex.nomina_impactada,
+        tipo_vacaciones: formKardex.tipo_vacaciones,
+        observaciones: formKardex.observaciones,
+        estatus: "APROBADO",
+      },
+    ]);
+
+    if (error) {
+      alert("Error al registrar: " + error.message);
+      return;
+    }
+
+    setFormKardex({
+      fecha_inicio: "",
+      fecha_fin: "",
+      dias_solicitados: "",
+      nomina_impactada: "",
+      tipo_vacaciones: "TOMADAS_Y_PAGADAS",
+      observaciones: "",
+    });
+
+    await cargarVacaciones();
+
+    // Recargar datos en el modal
+    const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
+    const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
+    setModalKardexEmpleado({ empleado: emp, antiguedad, resumen });
+  };
+
+  // Guardar solicitud general
   const guardarVacaciones = async () => {
     if (
       !form.empleado_id ||
@@ -225,6 +281,7 @@ export default function Vacaciones() {
         fecha_fin: form.fecha_fin,
         dias_solicitados: Number(form.dias_solicitados),
         nomina_impactada: form.nomina_impactada,
+        tipo_vacaciones: form.tipo_vacaciones,
         observaciones: form.observaciones,
         estatus: "PENDIENTE",
       },
@@ -241,6 +298,7 @@ export default function Vacaciones() {
       fecha_fin: "",
       dias_solicitados: "",
       nomina_impactada: "",
+      tipo_vacaciones: "TOMADAS_Y_PAGADAS",
       observaciones: "",
     });
 
@@ -266,7 +324,6 @@ export default function Vacaciones() {
     await cargarVacaciones();
   };
 
-  // KPIs
   const pendientes = vacaciones.filter((v) => v.estatus === "PENDIENTE").length;
   const aprobadas = vacaciones.filter((v) => v.estatus === "APROBADO").length;
   const rechazadas = vacaciones.filter((v) => v.estatus === "RECHAZADO").length;
@@ -280,7 +337,7 @@ export default function Vacaciones() {
         <div className="mb-8">
           <h1 className="text-4xl font-bold">🏖️ Vacaciones</h1>
           <p className="text-gray-500 mt-2">
-            Control global de prestaciones, antigüedad y registro de días consumidos por nómina
+            Control global de prestaciones, kardex individual y clasificación de nómina
           </p>
         </div>
 
@@ -289,21 +346,21 @@ export default function Vacaciones() {
           <KpiCard titulo="Pendientes" valor={pendientes} icono="⏳" color="text-amber-600" />
           <KpiCard titulo="Aprobadas" valor={aprobadas} icono="✅" color="text-green-600" />
           <KpiCard titulo="Rechazadas" valor={rechazadas} icono="❌" color="text-red-600" />
-          <KpiCard titulo="Días Totales Gozados" valor={totalDiasOtorgados} icono="🗓️" color="text-blue-600" />
+          <KpiCard titulo="Días Descontados Totales" valor={totalDiasOtorgados} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* REGLAS DE COMPORTAMIENTO GLOBALES */}
+        {/* REGLAS GLOBALES DE VACACIONES */}
         <div className="bg-slate-800 text-white rounded-2xl p-6 mb-6 shadow-xl">
           <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
             ⚙️ Reglas Globales de Vacaciones por Antigüedad
           </h2>
           <p className="text-xs text-slate-300 mb-4">
-            Ajusta aquí cuántos días le corresponden automáticamente a **todos** los trabajadores según sus años cumplidos (calculados a partir de 365 días por año).
+            Ajusta aquí cuántos días le corresponden automáticamente a los trabajadores según sus años cumplidos.
           </p>
 
           <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
             <div>
-              <label className="block text-xs mb-1 text-slate-300">Año de Antigüedad (0 a 50)</label>
+              <label className="block text-xs mb-1 text-slate-300">Año de Antigüedad</label>
               <select
                 value={anoReglaInput}
                 onChange={(e) => {
@@ -340,7 +397,6 @@ export default function Vacaciones() {
             </button>
           </div>
 
-          {/* VISTA RÁPIDA DE REGLAS CONFIGURADAS */}
           <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
             <span className="text-xs text-slate-400 self-center mr-2">Reglas activas:</span>
             {Object.keys(reglasGlobales).length === 0 ? (
@@ -412,7 +468,7 @@ export default function Vacaciones() {
           </div>
         </div>
 
-        {/* TABLA DE EMPLEADOS CON SALDOS (TOMADOS, REMANENTES, DETALLE) */}
+        {/* TABLA DE BALANCE Y ACCESO AL KARDEX */}
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <h2 className="text-xl font-bold mb-4">👥 Balance e Historial de Vacaciones por Empleado</h2>
           <div className="overflow-x-auto">
@@ -423,7 +479,7 @@ export default function Vacaciones() {
                   <th className="p-3 text-center">F. Ingreso</th>
                   <th className="p-3 text-center">Antigüedad</th>
                   <th className="p-3 text-center">Días por Ley</th>
-                  <th className="p-3 text-center">Días Tomados</th>
+                  <th className="p-3 text-center">Días Descontados</th>
                   <th className="p-3 text-center">Días Remanentes</th>
                   <th className="p-3 text-center">Acción</th>
                 </tr>
@@ -470,7 +526,7 @@ export default function Vacaciones() {
                             }
                             className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-semibold"
                           >
-                            📜 Ver Kardex / Historial
+                            📜 Ver / Capturar Kardex
                           </button>
                         </td>
                       </tr>
@@ -483,7 +539,7 @@ export default function Vacaciones() {
 
         {/* FORMULARIO NUEVA SOLICITUD DE VACACIONES */}
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">Nueva Solicitud de Vacaciones</h2>
+          <h2 className="text-xl font-bold mb-4">Nueva Solicitud / Registro de Vacaciones</h2>
 
           <div className="grid md:grid-cols-3 gap-4">
             <select
@@ -509,11 +565,20 @@ export default function Vacaciones() {
 
             <input
               type="text"
-              placeholder="Nómina / Semana Impactada (Ej. Semana 34 - 2026)"
+              placeholder="Nómina / Semana Impactada"
               value={form.nomina_impactada}
               onChange={(e) => setForm({ ...form, nomina_impactada: e.target.value })}
               className="border rounded-xl p-3"
             />
+
+            <select
+              value={form.tipo_vacaciones}
+              onChange={(e) => setForm({ ...form, tipo_vacaciones: e.target.value })}
+              className="border rounded-xl p-3 bg-slate-50 font-medium"
+            >
+              <option value="TOMADAS_Y_PAGADAS">✅ Pagadas y Tomadas</option>
+              <option value="PAGADAS_NO_TOMADAS">💰 Pagadas no Tomadas</option>
+            </select>
 
             <div className="flex flex-col">
               <label className="text-xs text-gray-500 mb-1">Fecha de Inicio</label>
@@ -540,7 +605,7 @@ export default function Vacaciones() {
               placeholder="Observaciones"
               value={form.observaciones}
               onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
-              className="border rounded-xl p-3"
+              className="border rounded-xl p-3 md:col-span-3"
             />
           </div>
 
@@ -560,6 +625,7 @@ export default function Vacaciones() {
                 <th className="p-4 text-left">Empleado</th>
                 <th className="p-4 text-center">Periodo</th>
                 <th className="p-4 text-center">Días</th>
+                <th className="p-4 text-center">Modalidad</th>
                 <th className="p-4 text-center">Nómina Impactada</th>
                 <th className="p-4 text-center">Estado</th>
                 <th className="p-4 text-center">Acciones</th>
@@ -569,8 +635,8 @@ export default function Vacaciones() {
             <tbody>
               {vacacionesFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="p-6 text-center text-gray-500">
-                    No se encontraron registros de vacaciones para la búsqueda.
+                  <td colSpan="7" className="p-6 text-center text-gray-500">
+                    No se encontraron registros de vacaciones.
                   </td>
                 </tr>
               ) : (
@@ -581,6 +647,17 @@ export default function Vacaciones() {
                       {vacacion.fecha_inicio} al {vacacion.fecha_fin}
                     </td>
                     <td className="p-4 text-center font-semibold">{vacacion.dias_solicitados}</td>
+                    <td className="p-4 text-center text-xs">
+                      {vacacion.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? (
+                        <span className="bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-full">
+                          💰 Pagadas No Tomadas
+                        </span>
+                      ) : (
+                        <span className="bg-blue-100 text-blue-700 font-bold px-2.5 py-1 rounded-full">
+                          ✅ Pagadas y Tomadas
+                        </span>
+                      )}
+                    </td>
                     <td className="p-4 text-center text-sm font-medium text-slate-700">
                       {vacacion.nomina_impactada || "—"}
                     </td>
@@ -626,10 +703,10 @@ export default function Vacaciones() {
           </table>
         </div>
 
-        {/* MODAL KARDEX / HISTORIAL DE DÍAS TOMADOS Y NÓMINA IMPACTADA */}
+        {/* MODAL KARDEX CON REGISTRO RÁPIDO */}
         {modalKardexEmpleado && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full p-6">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full p-6 my-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold text-slate-800">
                   📜 Kardex de Vacaciones - {modalKardexEmpleado.empleado.nombre_completo}
@@ -642,7 +719,7 @@ export default function Vacaciones() {
                 </button>
               </div>
 
-              {/* RESUMEN DE SALDOS */}
+              {/* SALDOS EN KARDEX */}
               <div className="bg-slate-50 p-4 rounded-xl mb-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border border-slate-200">
                 <div>
                   <span className="block text-xs text-gray-500">Antigüedad:</span>
@@ -653,7 +730,7 @@ export default function Vacaciones() {
                   <strong className="text-blue-600">{modalKardexEmpleado.resumen.diasCorrespondientes} días</strong>
                 </div>
                 <div>
-                  <span className="block text-xs text-gray-500">Días Tomados:</span>
+                  <span className="block text-xs text-gray-500">Días Descontados:</span>
                   <strong className="text-amber-600">{modalKardexEmpleado.resumen.diasTomados} días</strong>
                 </div>
                 <div>
@@ -662,20 +739,102 @@ export default function Vacaciones() {
                 </div>
               </div>
 
-              <h4 className="font-bold mb-3 text-slate-700">Historial Detallado de Períodos Tomados</h4>
+              {/* FORMULARIO AGREGAR DÍAS HISTÓRICOS AL KARDEX */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+                <h4 className="font-bold text-blue-900 text-sm mb-3">➕ Registrar Período Tomado / Pagado a este Empleado</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-gray-600 mb-1">Fecha Inicio</label>
+                    <input
+                      type="date"
+                      value={formKardex.fecha_inicio}
+                      onChange={(e) => setFormKardex({ ...formKardex, fecha_inicio: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full"
+                    />
+                  </div>
 
-              <div className="max-h-72 overflow-y-auto border rounded-xl">
+                  <div>
+                    <label className="block text-gray-600 mb-1">Fecha Fin</label>
+                    <input
+                      type="date"
+                      value={formKardex.fecha_fin}
+                      onChange={(e) => setFormKardex({ ...formKardex, fecha_fin: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1">Días a Registrar</label>
+                    <input
+                      type="number"
+                      placeholder="Ej. 6"
+                      value={formKardex.dias_solicitados}
+                      onChange={(e) => setFormKardex({ ...formKardex, dias_solicitados: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1">Nómina / Semana Impactada</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Sem 12 - 2026"
+                      value={formKardex.nomina_impactada}
+                      onChange={(e) => setFormKardex({ ...formKardex, nomina_impactada: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1">Modalidad de Vacaciones</label>
+                    <select
+                      value={formKardex.tipo_vacaciones}
+                      onChange={(e) => setFormKardex({ ...formKardex, tipo_vacaciones: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full font-semibold"
+                    >
+                      <option value="TOMADAS_Y_PAGADAS">✅ Pagadas y Tomadas</option>
+                      <option value="PAGADAS_NO_TOMADAS">💰 Pagadas no Tomadas</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1">Observaciones</label>
+                    <input
+                      type="text"
+                      placeholder="Opcional"
+                      value={formKardex.observaciones}
+                      onChange={(e) => setFormKardex({ ...formKardex, observaciones: e.target.value })}
+                      className="border rounded-lg p-2 bg-white w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 text-right">
+                  <button
+                    onClick={agregarDesdeKardex}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg text-xs"
+                  >
+                    Guardar Registro en Kardex
+                  </button>
+                </div>
+              </div>
+
+              {/* HISTORIAL DETALLADO DE REGISTROS */}
+              <h4 className="font-bold mb-3 text-slate-700">Historial Detallado del Trabajador</h4>
+
+              <div className="max-h-60 overflow-y-auto border rounded-xl">
                 {modalKardexEmpleado.resumen.solicitudesAprobadas.length === 0 ? (
                   <p className="p-6 text-center text-sm text-gray-500">
-                    No se registran días de vacaciones tomados/aprobados para este empleado.
+                    No existen registros en el historial de este empleado.
                   </p>
                 ) : (
                   <table className="w-full text-sm">
                     <thead className="bg-slate-100">
                       <tr>
-                        <th className="p-3 text-left">Fechas Gozadas</th>
-                        <th className="p-3 text-center">Días Consumidos</th>
-                        <th className="p-3 text-center">Nómina / Semana Impactada</th>
+                        <th className="p-3 text-left">Fechas</th>
+                        <th className="p-3 text-center">Días</th>
+                        <th className="p-3 text-center">Modalidad</th>
+                        <th className="p-3 text-center">Nómina Impactada</th>
                         <th className="p-3 text-left">Observaciones</th>
                       </tr>
                     </thead>
@@ -688,10 +847,19 @@ export default function Vacaciones() {
                           <td className="p-3 text-center font-bold text-amber-600">
                             {item.dias_solicitados}
                           </td>
-                          <td className="p-3 text-center">
-                            <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg text-xs font-semibold">
-                              {item.nomina_impactada || "No especificada"}
-                            </span>
+                          <td className="p-3 text-center text-xs">
+                            {item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? (
+                              <span className="bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-md">
+                                💰 Pagadas No Tomadas
+                              </span>
+                            ) : (
+                              <span className="bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">
+                                ✅ Pagadas y Tomadas
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 text-center font-medium text-slate-700">
+                            {item.nomina_impactada || "—"}
                           </td>
                           <td className="p-3 text-xs text-slate-500">
                             {item.observaciones || "—"}
@@ -708,7 +876,7 @@ export default function Vacaciones() {
                   onClick={() => setModalKardexEmpleado(null)}
                   className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-2 rounded-xl text-sm font-medium"
                 >
-                  Cerrar
+                  Cerrar Kardex
                 </button>
               </div>
             </div>

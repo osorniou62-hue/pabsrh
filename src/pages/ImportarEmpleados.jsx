@@ -34,18 +34,46 @@ export default function ImportarEmpleados() {
 
     const fechaHoy = new Date().toISOString().split("T")[0];
 
-    const { error } = await supabase.from("vacaciones").insert([
-      {
-        empleado_id: empleadoId,
-        fecha_inicio: fechaHoy,
-        fecha_fin: fechaHoy,
-        dias: empleado.dias_vacaciones,
-        estatus: "IMPORTADO",
-      },
-    ]);
+    // Verificar si ya existe un registro de vacaciones importado previamente
+    const { data: vacacionesExistentes, error: searchError } = await supabase
+      .from("vacaciones")
+      .select("id")
+      .eq("empleado_id", empleadoId)
+      .eq("estatus", "IMPORTADO")
+      .maybeSingle();
 
-    if (error) {
-      console.error("Error al actualizar vacaciones:", error.message);
+    if (searchError) {
+      console.error("Error al buscar vacaciones:", searchError.message);
+      return;
+    }
+
+    if (vacacionesExistentes) {
+      // Actualizar registro para evitar duplicados
+      const { error: updateError } = await supabase
+        .from("vacaciones")
+        .update({
+          dias: empleado.dias_vacaciones,
+        })
+        .eq("id", vacacionesExistentes.id);
+
+      if (updateError) {
+        console.error("Error al actualizar vacaciones:", updateError.message);
+      }
+    } else {
+      // Insertar si es primera vez
+      const { error: insertError } = await supabase.from("vacaciones").insert([
+        {
+          empleado_id: empleadoId,
+          fecha_inicio: fechaHoy,
+          fecha_fin: fechaHoy,
+          dias: empleado.dias_vacaciones,
+          estatus: "IMPORTADO",
+        },
+      ]);
+
+      if (insertError) {
+        console.error("Error al insertar vacaciones:", insertError.message);
+      }
     }
   };
 
@@ -67,6 +95,7 @@ export default function ImportarEmpleados() {
     }
 
     if (prestamoExistente) {
+      // Actualizar préstamo existente para evitar duplicados
       const { error: updateError } = await supabase
         .from("prestamos")
         .update({
@@ -79,6 +108,7 @@ export default function ImportarEmpleados() {
         console.error("Error al actualizar préstamo:", updateError.message);
       }
     } else {
+      // Insertar nuevo préstamo si no existe
       const { error: insertError } = await supabase.from("prestamos").insert([
         {
           empleado_id: empleadoId,
@@ -106,6 +136,11 @@ export default function ImportarEmpleados() {
       const fechaIngreso = convertirFechaExcel(fila?.[5]);
       const sueldoBase = Number(fila?.[51] || 0);
 
+      // Índices de Vacaciones y Préstamos
+      const diasVacaciones = Number(fila?.[31] || 0); // Columna AF: DIAS DE VACACIONES
+      const descuentoPrestamo = Number(fila?.[52] || 0); // Columna BA: PRESTAMO
+      const saldoPrestamo = Number(fila?.[54] || 0); // Columna BC: ADEUDOS
+
       const empleadoValido =
         typeof numeroEmpleado === "number" &&
         typeof puesto === "string" &&
@@ -121,9 +156,9 @@ export default function ImportarEmpleados() {
           departamento: departamento.trim(),
           fecha_ingreso: fechaIngreso,
           sueldo_base: sueldoBase,
-          dias_vacaciones: 0,
-          saldo_prestamo: 0,
-          descuento_prestamo: 0,
+          dias_vacaciones: diasVacaciones,
+          saldo_prestamo: saldoPrestamo,
+          descuento_prestamo: descuentoPrestamo,
         });
       }
     });
@@ -449,6 +484,12 @@ Revisa la consola (F12).`
                 <th className="p-4">Ingreso</th>
 
                 <th className="p-4">Sueldo</th>
+
+                <th className="p-4">Vacaciones</th>
+
+                <th className="p-4">Préstamo (Abono)</th>
+
+                <th className="p-4">Préstamo (Saldo)</th>
               </tr>
             </thead>
 
@@ -468,6 +509,18 @@ Revisa la consola (F12).`
                   <td className="p-3">
                     $
                     {Number(empleado.sueldo_base).toLocaleString("es-MX")}
+                  </td>
+
+                  <td className="p-3">{empleado.dias_vacaciones} días</td>
+
+                  <td className="p-3">
+                    $
+                    {Number(empleado.descuento_prestamo).toLocaleString("es-MX")}
+                  </td>
+
+                  <td className="p-3">
+                    $
+                    {Number(empleado.saldo_prestamo).toLocaleString("es-MX")}
                   </td>
                 </tr>
               ))}

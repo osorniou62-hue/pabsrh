@@ -1,479 +1,208 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { supabase } from "../services/supabase";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 
 export default function ReciboNomina() {
-
-  const { empleadoId, periodoId } =
-    useParams();
-
-  const navigate =
-    useNavigate();
-
-  const [empleado, setEmpleado] =
-    useState(null);
-
-  const [periodo, setPeriodo] =
-    useState(null);
-
-  const [nomina, setNomina] =
-    useState(null);
-
-  const [loading, setLoading] =
-    useState(true);
+  const { empleadoId, periodoId } = useParams();
+  const [datos, setDatos] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    cargarDatosRecibo();
+  }, [empleadoId, periodoId]);
 
-    cargarDatos();
+  const cargarDatosRecibo = async () => {
+    setLoading(true);
 
-  }, []);
+    // 1. Obtener la nómina generada del empleado en este período
+    const { data: nominaData, error: errNom } = await supabase
+      .from("nomina")
+      .select(`
+        *,
+        empleados (*),
+        periodos_nomina (*)
+      `)
+      .eq("empleado_id", empleadoId)
+      .eq("periodo_id", periodoId)
+      .single();
 
-  const cargarDatos =
-    async () => {
+    if (errNom || !nominaData) {
+      console.error("Error al cargar datos del recibo:", errNom);
+      setLoading(false);
+      return;
+    }
 
-      try {
+    // 2. Obtener incidencias / detalles específicos si aplican
+    const { data: incidencias } = await supabase
+      .from("incidencias")
+      .select("*")
+      .eq("empleado_id", empleadoId)
+      .eq("periodo_id", periodoId);
 
-        const { data: empleado } =
-          await supabase
-            .from("empleados")
-            .select("*")
-            .eq("id", empleadoId)
-            .single();
+    const faltasJustificadas = (incidencias || []).reduce((a, b) => a + Number(b.faltas_justificadas || 0), 0);
+    const faltasInjustificadas = (incidencias || []).reduce((a, b) => a + Number(b.faltas_injustificadas || 0), 0);
+    const ausencias = (incidencias || []).reduce((a, b) => a + Number(b.ausencias || 0), 0);
 
-        const { data: periodo } =
-          await supabase
-            .from("periodos_nomina")
-            .select("*")
-            .eq("id", periodoId)
-            .single();
-
-        const { data: nomina } =
-          await supabase
-            .from("nomina")
-            .select("*")
-            .eq(
-              "empleado_id",
-              empleadoId
-            )
-            .eq(
-              "periodo_id",
-              periodoId
-            )
-            .single();
-
-        setEmpleado(empleado);
-        setPeriodo(periodo);
-        setNomina(nomina);
-
-      } catch (error) {
-
-        console.error(error);
-
-      } finally {
-
-        setLoading(false);
-
+    setDatos({
+      nomina: nominaData,
+      empleado: nominaData.empleados,
+      periodo: nominaData.periodos_nomina,
+      incidencias: {
+        faltasJustificadas,
+        faltasInjustificadas,
+        ausencias,
       }
+    });
 
-    };
-
-  const descargarPDF =
-    async () => {
-
-      const contenido =
-        document.getElementById(
-          "recibo"
-        );
-
-      if (!contenido) return;
-
-      const canvas =
-        await html2canvas(
-          contenido,
-          {
-            scale: 2,
-          }
-        );
-
-      const imgData =
-        canvas.toDataURL(
-          "image/png"
-        );
-
-      const pdf =
-        new jsPDF(
-          "p",
-          "mm",
-          "a4"
-        );
-
-      const anchoPDF =
-        pdf.internal.pageSize.getWidth();
-
-      const altoPDF =
-        (canvas.height *
-          anchoPDF) /
-        canvas.width;
-
-      pdf.addImage(
-        imgData,
-        "PNG",
-        0,
-        0,
-        anchoPDF,
-        altoPDF
-      );
-
-      pdf.save(
-        `Recibo_${empleado.numero_empleado}.pdf`
-      );
-
-    };
+    setLoading(false);
+  };
 
   if (loading) {
-
     return (
-      <div className="p-6">
-        Cargando recibo...
+      <div className="flex h-screen items-center justify-center font-sans text-gray-600">
+        Cargando recibo de nómina...
       </div>
     );
-
   }
 
-  if (
-    !empleado ||
-    !periodo ||
-    !nomina
-  ) {
-
+  if (!datos) {
     return (
-      <div className="p-6">
-        No se encontró información.
+      <div className="flex h-screen items-center justify-center font-sans text-red-500">
+        No se encontraron datos para generar este recibo.
       </div>
     );
-
   }
+
+  const { empleado, periodo, nomina, incidencias } = datos;
 
   return (
-
-    <div className="max-w-4xl mx-auto p-6">
-
-      <div className="flex justify-between mb-6">
-
-        <h1 className="text-3xl font-bold">
-          📄 Recibo de Nómina
-        </h1>
-
-        <div className="flex gap-3">
-
-          <button
-            onClick={descargarPDF}
-            className="
-              bg-green-600
-              text-white
-              px-4
-              py-2
-              rounded
-            "
-          >
-            Descargar PDF
-          </button>
-
-          <button
-            onClick={() =>
-              navigate(-1)
-            }
-            className="
-              bg-blue-600
-              text-white
-              px-4
-              py-2
-              rounded
-            "
-          >
-            Regresar
-          </button>
-
-        </div>
-
-      </div>
-
-      <div
-        id="recibo"
-        className="
-          bg-white
-          shadow
-          rounded-lg
-          p-8
-        "
-      >
-
-        <div className="text-center mb-8">
-
-          <h2 className="text-2xl font-bold">
-            PABS RH
-          </h2>
-
-          <h3 className="text-xl">
-            RECIBO DE NÓMINA
-          </h3>
-
-        </div>
-
-        <div className="grid grid-cols-2 gap-6 mb-8">
-
-          <div>
-
-            <h4 className="font-bold mb-2">
-              Datos del Empleado
-            </h4>
-
-            <p>
-              <strong>No. Empleado:</strong>{" "}
-              {empleado.numero_empleado}
-            </p>
-
-            <p>
-              <strong>Nombre:</strong>{" "}
-              {empleado.nombre_completo}
-            </p>
-
-            <p>
-              <strong>RFC:</strong>{" "}
-              {empleado.rfc || "-"}
-            </p>
-
-            <p>
-              <strong>CURP:</strong>{" "}
-              {empleado.curp || "-"}
-            </p>
-
-          </div>
-
-          <div>
-
-            <h4 className="font-bold mb-2">
-              Periodo
-            </h4>
-
-            <p>
-              <strong>
-                Descripción:
-              </strong>{" "}
-              {periodo.descripcion}
-            </p>
-
-            <p>
-              <strong>
-                Fecha Inicio:
-              </strong>{" "}
-              {periodo.fecha_inicio}
-            </p>
-
-            <p>
-              <strong>
-                Fecha Fin:
-              </strong>{" "}
-              {periodo.fecha_fin}
-            </p>
-
-            <p>
-              <strong>Folio:</strong>{" "}
-              NOM-{nomina.id}
-            </p>
-
-          </div>
-
-        </div>
-
-        <div className="grid grid-cols-2 gap-6 mb-8">
-
-          <div>
-
-            <h4 className="font-bold mb-3 text-green-700">
-              Percepciones
-            </h4>
-
-            <table className="w-full">
-
-              <tbody>
-
-                <tr>
-
-                  <td>
-                    Sueldo Base
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.sueldo_base
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-                <tr>
-
-                  <td>
-                    Bonos
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.total_bonos
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-                <tr>
-
-                  <td>
-                    Horas Extra
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.total_horas_extra
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-                <tr className="font-bold">
-
-                  <td>
-                    Total
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.total_percepciones
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-              </tbody>
-
-            </table>
-
-          </div>
-
-          <div>
-
-            <h4 className="font-bold mb-3 text-red-700">
-              Deducciones
-            </h4>
-
-            <table className="w-full">
-
-              <tbody>
-
-                <tr>
-
-                  <td>
-                    Descuentos
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.total_descuentos
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-                <tr className="font-bold">
-
-                  <td>
-                    Total
-                  </td>
-
-                  <td className="text-right">
-                    $
-                    {Number(
-                      nomina.total_descuentos
-                    ).toFixed(2)}
-                  </td>
-
-                </tr>
-
-              </tbody>
-
-            </table>
-
-          </div>
-
-        </div>
-
-        <div className="border-t pt-6 text-center">
-
-          <div className="text-xl font-bold">
-            NETO A PAGAR
-          </div>
-
-          <div
-            className="
-              text-4xl
-              font-bold
-              text-blue-700
-              mt-2
-            "
-          >
-            $
-            {Number(
-              nomina.neto_pagar
-            ).toFixed(2)}
-          </div>
-
-        </div>
-
-        <div
-          className="
-            mt-8
-            text-xs
-            text-gray-600
-          "
+    <div className="min-h-screen bg-slate-100 p-4 md:p-8 flex flex-col items-center">
+      {/* Botón flotante para imprimir o guardar en PDF */}
+      <div className="no-print mb-6 flex gap-4">
+        <button
+          onClick={() => window.print()}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-medium shadow-md transition"
         >
-          Recibí la cantidad
-          indicada como salario
-          neto correspondiente al
-          período señalado en este
-          recibo.
-        </div>
-
-        <div className="grid grid-cols-2 gap-12 mt-16">
-
-          <div className="text-center">
-
-            <div className="border-t pt-2">
-              Empleado
-            </div>
-
-          </div>
-
-          <div className="text-center">
-
-            <div className="border-t pt-2">
-              Recursos Humanos
-            </div>
-
-          </div>
-
-        </div>
-
+          🖨️ Imprimir Recibo / Guardar PDF
+        </button>
       </div>
 
+      {/* Hoja del Recibo Estilo Excel */}
+      <div className="w-full max-w-4xl bg-white p-8 border border-gray-300 shadow-xl rounded-lg print:shadow-none print:border-none print:p-0">
+        {/* PARTE 1: RECIBO OFICIAL */}
+        <div className="border-2 border-slate-800 p-4 mb-6">
+          <div className="flex justify-between items-center border-b-2 border-slate-800 pb-2 mb-4">
+            <h1 className="text-xl font-bold tracking-wider">RECIBO DE NÓMINA</h1>
+            <div className="text-right">
+              <span className="font-semibold block">FECHA DE PAGO:</span>
+              <span>{periodo.fecha_pago || "—"}</span>
+            </div>
+          </div>
+
+          {/* Datos del Empleado */}
+          <div className="grid grid-cols-12 gap-2 mb-4 text-sm">
+            <div className="col-span-8">
+              <span className="font-bold">NOMBRE: </span>
+              <span className="uppercase">{empleado.nombre_completo}</span>
+            </div>
+            <div className="col-span-4 text-right">
+              <span className="font-bold">NO. EMPLEADO: </span>
+              <span>{empleado.numero_empleado}</span>
+            </div>
+          </div>
+
+          {/* Tabla Desglose */}
+          <div className="grid grid-cols-12 gap-4 text-sm border-t border-b border-slate-300 py-3 mb-4">
+            {/* Percepciones */}
+            <div className="col-span-7 pr-4 border-r border-slate-200">
+              <div className="flex justify-between py-1">
+                <span>SUELDO BASE</span>
+                <span className="font-medium">${Number(nomina.sueldo_base || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>SUELDO VACACIONES</span>
+                <span className="font-medium">${Number(nomina.sueldo_vacaciones || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>PRIMA VACACIONAL</span>
+                <span className="font-medium">${Number(nomina.prima_vacacional || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>AGUINALDO</span>
+                <span className="font-medium">${Number(nomina.aguinaldo || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>BONOS / COMPLEMENTOS</span>
+                <span className="font-medium">${Number(nomina.total_bonos || 0).toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Deducciones / Ausencias */}
+            <div className="col-span-5 pl-2">
+              <div className="flex justify-between py-1">
+                <span>AUSENCIAS</span>
+                <span className="font-medium">{incidencias.ausencias}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>FALTAS JUSTIFICADAS (FJ)</span>
+                <span className="font-medium">{incidencias.faltasJustificadas}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>FALTAS INJUST. (FI)</span>
+                <span className="font-medium">{incidencias.faltasInjustificadas}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span>DEDUCCIONES / PRÉSTAMOS</span>
+                <span className="font-medium">${Number(nomina.total_descuentos || 0).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Totales */}
+          <div className="grid grid-cols-12 gap-2 text-sm font-bold border-b border-slate-300 pb-3 mb-4">
+            <div className="col-span-7 flex justify-between pr-4">
+              <span>TOTAL PERCEPCIONES:</span>
+              <span className="text-green-700">${Number(nomina.total_percepciones || 0).toFixed(2)}</span>
+            </div>
+            <div className="col-span-5 flex justify-between pl-2">
+              <span>TOTAL DEDUCCIONES:</span>
+              <span className="text-red-700">${Number(nomina.total_descuentos || 0).toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center text-base font-extrabold bg-slate-50 p-2 border border-slate-200 mb-6">
+            <span>TOTAL A RECIBIR (NETO):</span>
+            <span className="text-blue-800 text-lg">${Number(nomina.neto_pagar || 0).toFixed(2)}</span>
+          </div>
+
+          {/* Pie de Recibo */}
+          <div className="text-xs text-slate-600 mb-8">
+            <p className="mb-1">
+              <strong>CORRESPONDIENTE DEL:</strong> {periodo.fecha_inicio} <strong>AL</strong> {periodo.fecha_fin}
+            </p>
+            <p>RECIBÍ DE CONFORMIDAD LA CANTIDAD ESPECIFICADA EN ESTE RECIBO COMO PAGO DE MIS SERVICIOS.</p>
+          </div>
+
+          <div className="flex justify-center pt-8">
+            <div className="border-t border-slate-800 w-64 text-center text-xs font-bold pt-1">
+              FIRMA DEL EMPLEADO
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Reglas CSS para impresión limpia en PDF */}
+      <style>{`
+        @media print {
+          .no-print {
+            display: none !important;
+          }
+          body {
+            background-color: white !important;
+            padding: 0 !important;
+          }
+        }
+      `}</style>
     </div>
-
   );
-
 }

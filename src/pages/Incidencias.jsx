@@ -28,6 +28,10 @@ export default function Incidencias() {
   const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
   const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
 
+  // --- NUEVO: ESTADO PARA EDICIÓN DE INCIDENCIA ---
+  const [modalEdicion, setModalEdicion] = useState({ abierto: false, datos: null });
+  const [guardando, setGuardando] = useState(false);
+
   // --- CARGA INICIAL ---
   useEffect(() => {
     cargarDepartamentos();
@@ -121,6 +125,34 @@ export default function Incidencias() {
     setMostrarDropdownEmpleado(false);
   };
 
+  // --- FUNCIÓN PARA GUARDAR LA EDICIÓN DE INCIDENCIA EN SUPABASE ---
+  const guardarEdicion = async (e) => {
+    e.preventDefault();
+    if (!modalEdicion.datos) return;
+
+    setGuardando(true);
+    const { id, horas_extra, horas_extra_reales, retardos, faltas } = modalEdicion.datos;
+
+    const { error } = await supabase
+      .from("incidencias")
+      .update({
+        horas_extra: Number(horas_extra) || 0,
+        horas_extra_reales: Number(horas_extra_reales) || 0,
+        retardos: Number(retardos) || 0,
+        faltas: Number(faltas) || 0,
+      })
+      .eq("id", id);
+
+    setGuardando(false);
+
+    if (error) {
+      alert("Error al actualizar la incidencia: " + error.message);
+    } else {
+      setModalEdicion({ abierto: false, datos: null });
+      cargarIncidencias(); // Recargar datos frescos
+    }
+  };
+
   // Listas filtradas locales
   const deptosFiltrados = departamentos.filter((d) =>
     d.nombre?.toLowerCase().includes(busquedaDepto.toLowerCase())
@@ -130,7 +162,7 @@ export default function Incidencias() {
     e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
   );
 
-  // --- FILTRADO DE LA TABLA DE INCIDENCIAS CON VERIFICACIÓN FLEXIBLE DE ID ---
+  // --- FILTRADO DE LA TABLA DE INCIDENCIAS ---
   const incidenciasMostrar = incidencias.filter((item) => {
     if (empleadosFiltrados.length > 0) {
       return empleadosFiltrados.some((e) => {
@@ -319,7 +351,6 @@ export default function Incidencias() {
             </button>
           </div>
 
-          {/* Si hay únicamente 1 trabajador seleccionado, mostramos su ficha técnica de información */}
           {empleadoUnico && (
             <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
               <div>
@@ -437,17 +468,27 @@ export default function Incidencias() {
                     </td>
 
                     <td className="p-3 border text-center">
-                      <button
-                        onClick={() =>
-                          setModalRecibo({
-                            abierto: true,
-                            datos: { ...item, calculo },
-                          })
-                        }
-                        className="bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-semibold hover:bg-blue-700"
-                      >
-                        📄 Ver Recibo
-                      </button>
+                      <div className="flex gap-1 justify-center">
+                        <button
+                          onClick={() => setModalEdicion({ abierto: true, datos: { ...item } })}
+                          className="bg-amber-500 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-amber-600"
+                          title="Editar Incidencia"
+                        >
+                          ✏️ Editar
+                        </button>
+                        <button
+                          onClick={() =>
+                            setModalRecibo({
+                              abierto: true,
+                              datos: { ...item, calculo },
+                            })
+                          }
+                          className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-blue-700"
+                          title="Ver Recibo"
+                        >
+                          📄
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -457,7 +498,117 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* ================= MODALES (PERMISOS, VACACIONES, RECIBO) ================= */}
+      {/* ================= MODAL DE EDICIÓN DE INCIDENCIA ================= */}
+      {modalEdicion.abierto && modalEdicion.datos && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <form
+            onSubmit={guardarEdicion}
+            className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4"
+          >
+            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
+              ✏️ Modificar Incidencia
+            </h3>
+            <p className="text-xs text-gray-500">
+              Empleado: <strong>{modalEdicion.datos.empleados?.nombre_completo}</strong>
+            </p>
+
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <label className="block font-semibold text-gray-700 mb-1">
+                  Hrs Extra Rep.
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={modalEdicion.datos.horas_extra || 0}
+                  onChange={(e) =>
+                    setModalEdicion({
+                      ...modalEdicion,
+                      datos: { ...modalEdicion.datos, horas_extra: e.target.value },
+                    })
+                  }
+                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 mb-1">
+                  Hrs Extra Real
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={modalEdicion.datos.horas_extra_reales || 0}
+                  onChange={(e) =>
+                    setModalEdicion({
+                      ...modalEdicion,
+                      datos: { ...modalEdicion.datos, horas_extra_reales: e.target.value },
+                    })
+                  }
+                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 mb-1">
+                  Retardos
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={modalEdicion.datos.retardos || 0}
+                  onChange={(e) =>
+                    setModalEdicion({
+                      ...modalEdicion,
+                      datos: { ...modalEdicion.datos, retardos: e.target.value },
+                    })
+                  }
+                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 mb-1">
+                  Faltas (Días)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={modalEdicion.datos.faltas || 0}
+                  onChange={(e) =>
+                    setModalEdicion({
+                      ...modalEdicion,
+                      datos: { ...modalEdicion.datos, faltas: e.target.value },
+                    })
+                  }
+                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <button
+                type="button"
+                onClick={() => setModalEdicion({ abierto: false, datos: null })}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded text-xs font-semibold hover:bg-gray-300"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={guardando}
+                className="bg-blue-600 text-white px-4 py-2 rounded text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300"
+              >
+                {guardando ? "Guardando..." : "Guardar Cambios"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ================= RESTO DE MODALES (PERMISOS, VACACIONES, RECIBO) ================= */}
       {modalPermisos.abierto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">

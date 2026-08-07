@@ -44,9 +44,10 @@ export default function Incidencias() {
   };
 
   const cargarEmpleadosCatalogo = async () => {
+    // Se removió 'puesto' para evitar el Error 400
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, puesto, activo")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -60,11 +61,12 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
+    // Se usa 'empleados!empleado_id' explícito y se remueve 'puesto'
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados!empleado_id ( id, nombre_completo, departamento_id, supervisor_id, puesto ),
+        empleados!empleado_id ( id, nombre_completo, departamento_id, supervisor_id ),
         periodos_nomina ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });

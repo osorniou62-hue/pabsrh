@@ -46,7 +46,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual, puesto, activo")
+      .select("id, nombre_completo, departamento_id, supervisor_id, puesto, activo")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -64,7 +64,7 @@ export default function Incidencias() {
       .from("incidencias")
       .select(`
         *,
-        empleados ( id, nombre_completo, salario_mensual, departamento_id, supervisor_id, puesto ),
+        empleados!empleado_id ( id, nombre_completo, departamento_id, supervisor_id, puesto ),
         periodos_nomina ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });
@@ -74,18 +74,14 @@ export default function Incidencias() {
   };
 
   // --- DERIVACIÓN DE DATOS (EN MEMORIA) ---
-  
-  // Lista de supervisores únicos dentro del departamento seleccionado
   const supervisoresDisponibles = deptoSeleccionado
     ? empleadosCatalogo.filter((emp) => emp.departamento_id === deptoSeleccionado.id && emp.supervisor_id)
     : [];
 
-  // Autocompletado de departamentos
   const deptosFiltrados = departamentos.filter((d) =>
     (d.nombre || "").toLowerCase().includes(busquedaDepto.toLowerCase())
   );
 
-  // Autocompletado de empleados
   const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
     (e.nombre_completo || "").toLowerCase().includes(busquedaEmpleado.toLowerCase())
   );
@@ -122,22 +118,19 @@ export default function Incidencias() {
     const emp = item.empleados;
     if (!emp) return false;
 
-    // 1. Filtro por empleado individual
     if (empleadoSeleccionado) {
       return String(emp.id) === String(empleadoSeleccionado.id);
     }
 
-    // 2. Filtro por supervisor
     if (supervisorSeleccionado) {
       return String(emp.supervisor_id) === String(supervisorSeleccionado);
     }
 
-    // 3. Filtro por departamento
     if (deptoSeleccionado) {
       return String(emp.departamento_id) === String(deptoSeleccionado.id);
     }
 
-    return true; // Si no hay filtros aplicados, muestra todas
+    return true;
   });
 
   // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
@@ -201,7 +194,6 @@ export default function Incidencias() {
 
       {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
       <div className="space-y-6">
-        
         {/* Bloque 1: Búsqueda por Departamento y Supervisor */}
         <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
           <div className="relative">
@@ -311,7 +303,6 @@ export default function Incidencias() {
             </div>
           </div>
         </div>
-
       </div>
 
       {/* DETALLE Y INFORMACIÓN DEL TRABAJADOR SELECCIONADO */}

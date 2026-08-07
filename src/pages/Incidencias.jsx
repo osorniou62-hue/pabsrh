@@ -1,527 +1,573 @@
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
+
 import { supabase } from "../services/supabase";
-import { useNavigate } from "react-router-dom";
 
-export default function Incidencias() {
-  const navigate = useNavigate();
+export default function ImportarEmpleados() {
+  const [archivo, setArchivo] = useState(null);
+  const [empleados, setEmpleados] = useState([]);
+  const [periodos, setPeriodos] = useState([]);
+  const [periodoId, setPeriodoId] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // --- ESTADOS DE CATALOGOS ---
-  const [departamentos, setDepartamentos] = useState([]);
-  const [supervisores, setSupervisores] = useState([]);
-  const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]);
-  const [empleadosFiltrados, setEmpleadosFiltrados] = useState([]);
-  const [periodos, setPeriodos] = useState([]);
-  const [incidencias, setIncidencias] = useState([]);
+  useEffect(() => {
+    cargarPeriodos();
+  }, []);
 
-  // --- ESTADOS DE FILTROS ---
-  const [busquedaDepto, setBusquedaDepto] = useState("");
-  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false);
-  const [deptoSeleccionado, setDeptoSeleccionado] = useState("");
-  const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
+  const cargarPeriodos = async () => {
+    const { data } = await supabase
+      .from("periodos_nomina")
+      .select("*")
+      .order("fecha_inicio", { ascending: false });
+    setPeriodos(data || []);
+  };
 
-  // --- ESTADO BUSCADOR POR EMPLEADO ---
-  const [busquedaEmpleado, setBusquedaEmpleado] = useState("");
-  const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
+  const esLineaMolienda = (valor) => {
+    return ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"].includes(valor);
+  };
 
-  // --- ESTADOS DE MODALES ---
-  const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
-  const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
-  const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
+  const convertirFechaExcel = (valor) => {
+    if (typeof valor !== "number") {
+      return null;
+    }
+    const fecha = new Date((valor - 25569) * 86400 * 1000);
+    if (isNaN(fecha.getTime())) {
+      return null;
+    }
+    return fecha.toISOString().split("T")[0];
+  };
 
-  // --- CARGA INICIAL ---
-  useEffect(() => {
-    cargarDepartamentos();
-    cargarEmpleadosCatalogo();
-    cargarPeriodos();
-    cargarIncidencias();
-  }, []);
+  // ========================================================
+  // LECTURA Y ANÁLISIS DINÁMICO DEL EXCEL
+  // ========================================================
 
-  // --- CONSULTAS SUPABASE ---
-  const cargarDepartamentos = async () => {
-    const { data } = await supabase.from("departamentos").select("*").order("nombre");
-    setDepartamentos(data || []);
-  };
+  const analizarNomina = (rows) => {
+    if (!rows || rows.length === 0) return;
 
-  const cargarEmpleadosCatalogo = async () => {
-    const { data } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual")
-      .eq("activo", true)
-      .order("nombre_completo");
-    setEmpleadosCatalogo(data || []);
-  };
+    let headerRowIndex = rows.findIndex((row) =>
+      row.some(
+        (cell) =>
+          typeof cell === "string" &&
+          (cell.toUpperCase().includes("NOMBRE") ||
+            cell.toUpperCase().includes("EMPLEADO") ||
+            cell.toUpperCase().includes("PUESTO"))
+      )
+    );
 
-  const cargarPeriodos = async () => {
-    const { data } = await supabase.from("periodos_nomina").select("*").eq("estatus", "ABIERTO");
-    setPeriodos(data || []);
-  };
+    if (headerRowIndex === -1) headerRowIndex = 0;
 
-  const cargarIncidencias = async () => {
-    const { data, error } = await supabase
-      .from("incidencias")
-      .select(`
-        *,
-        empleados (
-          id,
-          nombre_completo,
-          salario_mensual,
-          departamento_id,
-          supervisor_id
-        ),
-        periodos_nomina (
-          descripcion,
-          dias_periodo
-        )
-      `)
-      .order("created_at", { ascending: false });
+    const headers = rows[headerRowIndex].map((h) =>
+      String(h || "").trim().toUpperCase()
+    );
 
-    if (error) console.error("Error al cargar incidencias:", error.message);
-    else setIncidencias(data || []);
-  };
+    const getColIndex = (keywords) => {
+      return headers.findIndex((h) =>
+        keywords.some((kw) => h.includes(kw.toUpperCase()))
+      );
+    };
 
-  // --- MANEJO DE FILTROS EN CADENA (DEPTO -> SUPERVISOR) ---
-  const handleSeleccionarDepto = async (depto) => {
-    setBusquedaDepto(depto.nombre);
-    setDeptoSeleccionado(depto.id);
-    setSupervisorSeleccionado("");
-    setEmpleadosFiltrados([]);
-    setMostrarDropdownDepto(false);
+    const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
+    const idxPuesto = getColIndex(["PUESTO"]);
+    const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
+    const idxNombre = getColIndex(["NOMBRE"]);
+    const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
+    const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
 
-    const { data } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, salario_mensual")
-      .eq("departamento_id", depto.id)
-      .eq("es_supervisor", true)
-      .eq("activo", true);
+    const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
+    const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
+    const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
+    const idxFaltasInjust = getColIndex(["INJUSTIFICADA", "FALTA", "F.INJUST"]);
+    const idxDescAusencias = getColIndex(["AUSENCIA", "DESC. AUSENCIA"]);
+    const idxBono = getColIndex(["BONO"]);
+    const idxDescVarios = getColIndex(["VARIOS", "DESC. VARIOS", "OTROS DESC"]);
+    const idxDescPrestamo = getColIndex(["PRESTAMO", "DESC. PRESTAMO"]);
+    const idxSaldoPrestamo = getColIndex(["ADEUDO", "SALDO"]);
 
-    setSupervisores(data || []);
-  };
+    const encontrados = [];
+    const dataRows = rows.slice(headerRowIndex + 1);
 
-  const handleSeleccionarSupervisor = async (supervisorId) => {
-    setSupervisorSeleccionado(supervisorId);
-    if (!supervisorId) {
-      setEmpleadosFiltrados([]);
-      return;
-    }
+    dataRows.forEach((fila) => {
+      const numeroEmpleado = fila[idxNumEmpleado !== -1 ? idxNumEmpleado : 0];
+      const puesto = fila[idxPuesto !== -1 ? idxPuesto : 1];
+      const departamento = fila[idxDepto !== -1 ? idxDepto : 2];
+      const nombre = fila[idxNombre !== -1 ? idxNombre : 3];
+      const fechaIngreso = convertirFechaExcel(
+        fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]
+      );
+      const sueldoBase = Number(
+        (idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0
+      );
 
-    const { data } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, salario_mensual")
-      .eq("supervisor_id", supervisorId)
-      .eq("activo", true);
+      const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
+      const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
+      const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
+      const faltasInjustificadas = Number((idxFaltasInjust !== -1 ? fila[idxFaltasInjust] : 0) || 0);
+      const descuentoAusencias = Number((idxDescAusencias !== -1 ? fila[idxDescAusencias] : 0) || 0);
+      const bono = Number((idxBono !== -1 ? fila[idxBono] : 0) || 0);
+      const descuentoVarios = Number((idxDescVarios !== -1 ? fila[idxDescVarios] : 0) || 0);
+      const descuentoPrestamo = Number((idxDescPrestamo !== -1 ? fila[idxDescPrestamo] : 0) || 0);
+      const saldoPrestamo = Number((idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0) || 0);
 
-    setEmpleadosFiltrados(data || []);
-  };
+      const empleadoValido =
+        (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
+        String(numeroEmpleado).trim() !== "" &&
+        typeof nombre === "string" &&
+        nombre.trim() !== "";
 
-  // --- SELECCIÓN DIRECTA DE EMPLEADO ---
-  const handleSeleccionarEmpleadoDirecto = (emp) => {
-    setBusquedaEmpleado(emp.nombre_completo);
-    setEmpleadosFiltrados([emp]);
-    setMostrarDropdownEmpleado(false);
-  };
+      if (empleadoValido) {
+        encontrados.push({
+          numero_empleado: String(numeroEmpleado).trim(),
+          nombre_completo: nombre.trim(),
+          puesto: typeof puesto === "string" ? puesto.trim() : "",
+          departamento: typeof departamento === "string" ? departamento.trim() : "",
+          fecha_ingreso: fechaIngreso,
+          sueldo_base: sueldoBase,
+          dias_vacaciones: diasVacaciones,
+          horas_extra: horasExtra,
+          faltas_justificadas: faltasJustificadas,
+          faltas_injustificadas: faltasInjustificadas,
+          descuento_ausencias: descuentoAusencias,
+          bono: bono,
+          descuento_varios: descuentoVarios,
+          saldo_prestamo: saldoPrestamo,
+          descuento_prestamo: descuentoPrestamo,
+        });
+      }
+    });
 
-  // Listas filtradas locales
-  const deptosFiltrados = departamentos.filter((d) =>
-    d.nombre?.toLowerCase().includes(busquedaDepto.toLowerCase())
-  );
+    console.log("EMPLEADOS DETECTADOS:", encontrados.length);
+    if (encontrados.length > 0) {
+      console.log("PRIMER EMPLEADO DETECTADO:", encontrados[0]);
+    }
 
-  const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
-    e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
-  );
+    setEmpleados(encontrados);
+  };
 
-  // --- FILTRADO DE LA TABLA DE INCIDENCIAS ---
-  const incidenciasMostrar = incidencias.filter((item) => {
-    if (empleadosFiltrados.length > 0) {
-      const empIdItem = String(item.empleados?.id || item.empleado_id || "");
-      return empleadosFiltrados.some((e) => String(e.id) === empIdItem);
-    }
-    return true;
-  });
+  const leerArchivo = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-  // --- CÁLCULO FINANCIERO ---
-  const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
-    const salarioMensual = empleado?.salario_mensual || 0;
-    const salarioDiario = salarioMensual / 30;
-    const valorHora = salarioDiario / 8;
+    setArchivo(file);
+    const reader = new FileReader();
 
-    const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
-    const pagoHorasExtra = hrsReales * (valorHora * 2);
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+        analizarNomina(rows);
+      } catch (error) {
+        console.error(error);
+        alert("Error leyendo el archivo Excel");
+      }
+    };
 
-    const descuentoFaltas = (Number(incidencia.faltas) || 0) * salarioDiario;
-    const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
+    reader.readAsBinaryString(file);
+  };
 
-    const sueldoBaseSemanal = salarioDiario * diasPeriodo;
-    const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
+  // ========================================================
+  // FUNCIONES DE PERSISTENCIA EN SUPABASE (OPCIÓN B: DECIMALES)
+  // ========================================================
 
-    return {
-      salarioDiario,
-      sueldoBaseSemanal,
-      pagoHorasExtra,
-      descuentoFaltas,
-      descuentoRetardos,
-      montoFinalSemanal: montoFinalSemanal < 0 ? 0 : montoFinalSemanal,
-    };
-  };
+  const actualizarIncidencias = async (empleadoId, empleado, pId) => {
+    if (!pId) return;
 
-  return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8">
-      <h1 className="text-3xl font-bold text-gray-800">
-        📋 Control de Incidencias y Nómina Semanal
-      </h1>
+    const payload = {
+      empleado_id: empleadoId,
+      periodo_id: Number(pId),
+      // Mantiene el valor decimal exacto que viene del Excel
+      horas_extra: Number(empleado.horas_extra || 0),
+      faltas_justificadas: Number(empleado.faltas_justificadas || 0),
+      faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
+      dias_vacaciones: Number(empleado.dias_vacaciones || 0),
+      descuento_ausencias: Number(empleado.descuento_ausencias || 0),
+    };
 
-      {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
-      <div className="space-y-6">
-        
-        {/* Bloque 1: Departamento y Supervisor */}
-        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
-          <div className="relative">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              1. Buscar Departamento
-            </label>
-            <input
-              type="text"
-              placeholder="Escribe el nombre del departamento..."
-              value={busquedaDepto}
-              onFocus={() => setMostrarDropdownDepto(true)}
-              onChange={(e) => {
-                setBusquedaDepto(e.target.value);
-                setMostrarDropdownDepto(true);
-                if (!e.target.value) {
-                  setDeptoSeleccionado("");
-                  setSupervisores([]);
-                }
-              }}
-              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-            />
+    const { error } = await supabase.from("incidencias").upsert([payload], {
+      onConflict: "empleado_id, periodo_id",
+    });
 
-            {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-              <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-                {deptosFiltrados.map((d) => (
-                  <li
-                    key={d.id}
-                    onClick={() => handleSeleccionarDepto(d)}
-                    className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
-                  >
-                    {d.nombre}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+    if (error) console.error("Error guardando incidencias:", error.message);
+  };
 
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              2. Seleccionar Supervisor
-            </label>
-            <select
-              disabled={!deptoSeleccionado}
-              value={supervisorSeleccionado}
-              onChange={(e) => handleSeleccionarSupervisor(e.target.value)}
-              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
-            >
-              <option value="">
-                {!deptoSeleccionado
-                  ? "Selecciona primero un departamento"
-                  : "Seleccionar supervisor..."}
-              </option>
-              {supervisores.map((sup) => (
-                <option key={sup.id} value={sup.id}>
-                  {sup.nombre_completo}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+  const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
+    if (!pId) return;
 
-        {/* Bloque 2: Búsqueda Directa por Empleado */}
-        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100">
-          <div className="relative">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              🔍 O Buscar Directamente por Nombre de Empleado
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Escribe el nombre del empleado..."
-                  value={busquedaEmpleado}
-                  onFocus={() => setMostrarDropdownEmpleado(true)}
-                  onChange={(e) => {
-                    setBusquedaEmpleado(e.target.value);
-                    setMostrarDropdownEmpleado(true);
-                    if (!e.target.value) setEmpleadosFiltrados([]);
-                  }}
-                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+    if (Number(empleado.bono || 0) > 0) {
+      await supabase
+        .from("bonos_empleado")
+        .delete()
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", Number(pId));
 
-                {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
-                  <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-                    {empleadosBusquedaFiltrados.map((emp) => (
-                      <li
-                        key={emp.id}
-                        onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
-                        className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
-                      >
-                        <span>{emp.nombre_completo}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+      const { error: bonoError } = await supabase
+        .from("bonos_empleado")
+        .insert([
+          {
+            empleado_id: empleadoId,
+            periodo_id: Number(pId),
+            tipo_bono_id: 1,
+            concepto: "BONO IMPORTADO",
+            importe: Number(empleado.bono),
+          },
+        ]);
 
-              {busquedaEmpleado && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBusquedaEmpleado("");
-                    setMostrarDropdownEmpleado(false);
-                    setEmpleadosFiltrados([]);
-                  }}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
-                >
-                  Limpiar
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+      if (bonoError) console.error("Error guardando bono:", bonoError.message);
+    }
 
-      </div>
+    if (Number(empleado.descuento_varios || 0) > 0) {
+      await supabase
+        .from("descuentos_empleado")
+        .delete()
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", Number(pId));
 
-      {/* LISTADO DE EMPLEADOS FILTRADOS */}
-      {empleadosFiltrados.length > 0 && (
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 flex justify-between items-center">
-          <div>
-            <h3 className="font-semibold text-blue-900 mb-1">
-              👥 Filtro Activo ({empleadosFiltrados.length} empleado/s seleccionado/s):
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {empleadosFiltrados.map((emp) => (
-                <span key={emp.id} className="bg-white px-3 py-1 rounded-full text-xs font-medium border text-gray-700">
-                  {emp.nombre_completo}
-                </span>
-              ))}
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              setEmpleadosFiltrados([]);
-              setBusquedaEmpleado("");
-              setDeptoSeleccionado("");
-              setSupervisorSeleccionado("");
-              setBusquedaDepto("");
-            }}
-            className="text-xs text-red-600 hover:underline font-semibold"
-          >
-            Quitar Filtros
-          </button>
-        </div>
-      )}
+      const { error: descError } = await supabase
+        .from("descuentos_empleado")
+        .insert([
+          {
+            empleado_id: empleadoId,
+            periodo_id: Number(pId),
+            concepto: "DESCUENTOS VARIOS",
+            importe: Number(empleado.descuento_varios),
+          },
+        ]);
 
-      {/* ================= TABLA PRINCIPAL DE INCIDENCIAS ================= */}
-      <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 overflow-x-auto">
-        <h2 className="text-xl font-bold mb-4 text-gray-800">
-          Historial y Resumen de Ajustes
-        </h2>
+      if (descError) console.error("Error guardando descuento:", descError.message);
+    }
+  };
 
-        <table className="w-full text-left border-collapse text-xs md:text-sm">
-          <thead>
-            <tr className="bg-gray-100 border-b text-gray-700 font-bold">
-              <th className="p-3 border">Empleado</th>
-              <th className="p-3 border">Periodo</th>
-              <th className="p-3 border text-center">Hrs Extra Rep.</th>
-              <th className="p-3 border text-center">Hrs Extra Real</th>
-              <th className="p-3 border text-center">Retardos</th>
-              <th className="p-3 border text-center">Faltas</th>
-              <th className="p-3 border text-right">Monto Hrs Extra</th>
-              <th className="p-3 border text-right">Desc. Faltas</th>
-              <th className="p-3 border text-center">Permisos</th>
-              <th className="p-3 border text-center">Vacaciones</th>
-              <th className="p-3 border text-right bg-green-50">Monto Final Semanal</th>
-              <th className="p-3 border text-center">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {incidenciasMostrar.length === 0 ? (
-              <tr>
-                <td colSpan="12" className="text-center p-6 text-gray-500">
-                  No hay datos de incidencias que coincidan con la búsqueda.
-                </td>
-              </tr>
-            ) : (
-              incidenciasMostrar.map((item) => {
-                const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0);
-                const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0);
-                const calculo = calcularNominaIncidencia(item.empleados, item, 7);
+  const actualizarVacaciones = async (empleadoId, empleado) => {
+    if (empleado.dias_vacaciones <= 0) return;
+    const fechaHoy = new Date().toISOString().split("T")[0];
 
-                return (
-                  <tr key={item.id} className="hover:bg-gray-50 border-b">
-                    <td className="p-3 border font-medium">
-                      {item.empleados?.nombre_completo || "N/A"}
-                    </td>
-                    <td className="p-3 border">
-                      {item.periodos_nomina?.descripcion || "N/A"}
-                    </td>
-                    <td className="p-3 border text-center">{item.horas_extra || 0}h</td>
-                    <td className="p-3 border text-center font-semibold text-blue-600">
-                      {item.horas_extra_reales || item.horas_extra || 0}h
-                    </td>
-                    <td className="p-3 border text-center">{item.retardos || 0}</td>
-                    <td className="p-3 border text-center text-red-600 font-semibold">
-                      {item.faltas || 0}d
-                    </td>
-                    <td className="p-3 border text-right text-green-600 font-medium">
-                      +${calculo.pagoHorasExtra.toFixed(2)}
-                    </td>
-                    <td className="p-3 border text-right text-red-600 font-medium">
-                      -${calculo.descuentoFaltas.toFixed(2)}
-                    </td>
+    const { data: vacacionesExistentes } = await supabase
+      .from("vacaciones")
+      .select("id")
+      .eq("empleado_id", empleadoId)
+      .eq("estatus", "IMPORTADO")
+      .maybeSingle();
 
-                    <td className="p-3 border text-center">
-                      {tienePermisos ? (
-                        <button
-                          onClick={() => setModalPermisos({ abierto: true, datos: item })}
-                          className="bg-amber-100 text-amber-800 px-2.5 py-1 rounded font-bold text-xs hover:bg-amber-200"
-                        >
-                          SÍ 👁️
-                        </button>
-                      ) : (
-                        <span className="text-gray-400">NO</span>
-                      )}
-                    </td>
+    if (vacacionesExistentes) {
+      await supabase
+        .from("vacaciones")
+        .update({ dias: Number(empleado.dias_vacaciones) })
+        .eq("id", vacacionesExistentes.id);
+    } else {
+      await supabase.from("vacaciones").insert([
+        {
+          empleado_id: empleadoId,
+          fecha_inicio: fechaHoy,
+          fecha_fin: fechaHoy,
+          dias: Number(empleado.dias_vacaciones),
+          estatus: "IMPORTADO",
+        },
+      ]);
+    }
+  };
 
-                    <td className="p-3 border text-center">
-                      {tieneVacaciones ? (
-                        <button
-                          onClick={() => setModalVacaciones({ abierto: true, datos: item })}
-                          className="bg-purple-100 text-purple-800 px-2.5 py-1 rounded font-bold text-xs hover:bg-purple-200"
-                        >
-                          SÍ 🏖️
-                        </button>
-                      ) : (
-                        <span className="text-gray-400">NO</span>
-                      )}
-                    </td>
+  const actualizarPrestamo = async (empleadoId, empleado) => {
+    const saldo = Number(empleado.saldo_prestamo || 0);
+    const descuento = Number(empleado.descuento_prestamo || 0);
 
-                    <td className="p-3 border text-right font-bold bg-green-50 text-green-800 text-base">
-                      ${calculo.montoFinalSemanal.toFixed(2)}
-                    </td>
+    if (saldo === 0 && descuento === 0) return;
 
-                    <td className="p-3 border text-center">
-                      <button
-                        onClick={() =>
-                          setModalRecibo({
-                            abierto: true,
-                            datos: { ...item, calculo },
-                          })
-                        }
-                        className="bg-blue-600 text-white px-2.5 py-1 rounded text-xs font-semibold hover:bg-blue-700"
-                      >
-                        📄 Ver Recibo
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+    const { data: prestamoExistente } = await supabase
+      .from("prestamos")
+      .select("id")
+      .eq("empleado_id", empleadoId)
+      .maybeSingle();
 
-      {/* ================= MODALES ================= */}
-      {modalPermisos.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
-            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
-              📋 Detalle de Permiso - {modalPermisos.datos?.empleados?.nombre_completo}
-            </h3>
-            <div className="space-y-2 text-sm text-gray-600">
-              <p><strong>Periodo:</strong> {modalPermisos.datos?.periodos_nomina?.descripcion}</p>
-              <p><strong>Días Totales:</strong> {modalPermisos.datos?.permisos || 1} día(s)</p>
-            </div>
-            <div className="flex justify-between items-center pt-4 border-t">
-              <button
-                onClick={() => {
-                  setModalPermisos({ abierto: false, datos: null });
-                  navigate("/solicitudes");
-                }}
-                className="bg-gray-800 text-white text-xs px-4 py-2 rounded hover:bg-black font-semibold"
-              >
-                📜 Ver Historial Completo
-              </button>
-              <button
-                onClick={() => setModalPermisos({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 text-xs px-4 py-2 rounded hover:bg-gray-300 font-semibold"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    if (prestamoExistente) {
+      await supabase
+        .from("prestamos")
+        .update({
+          saldo_actual: saldo,
+          descuento_periodo: descuento,
+        })
+        .eq("id", prestamoExistente.id);
+    } else {
+      await supabase.from("prestamos").insert([
+        {
+          empleado_id: empleadoId,
+          importe_total: saldo,
+          saldo_actual: saldo,
+          descuento_periodo: descuento,
+          estatus: "ACTIVO",
+        },
+      ]);
+    }
+  };
 
-      {modalVacaciones.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
-            <h3 className="text-lg font-bold text-purple-900 border-b pb-2">
-              🏖️ Registro Integrado de Vacaciones
-            </h3>
-            <div className="space-y-2 text-sm text-gray-600">
-              <p><strong>Empleado:</strong> {modalVacaciones.datos?.empleados?.nombre_completo}</p>
-              <p><strong>Días Solicitados:</strong> {modalVacaciones.datos?.vacaciones} día(s)</p>
-            </div>
-            <div className="flex justify-between items-center pt-4 border-t">
-              <button
-                onClick={() => {
-                  const empId = modalVacaciones.datos?.empleados?.id;
-                  setModalVacaciones({ abierto: false, datos: null });
-                  navigate(`/vacaciones?empleado_id=${empId}`);
-                }}
-                className="bg-purple-700 text-white text-xs px-4 py-2 rounded hover:bg-purple-800 font-semibold"
-              >
-                ➡️ Ir a Pantalla Vacaciones
-              </button>
-              <button
-                onClick={() => setModalVacaciones({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 text-xs px-4 py-2 rounded hover:bg-gray-300 font-semibold"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  // ========================================================
+  // PROCESO DE IMPORTACIÓN A SUPABASE
+  // ========================================================
 
-      {modalRecibo.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-xl w-full p-6 shadow-2xl relative space-y-4 border-2 border-dashed border-gray-400">
-            <div className="bg-amber-100 text-amber-900 text-center text-xs font-bold py-1 rounded">
-              ⚠️ VISTA PREVIA / EJEMPLO SIN VALOR OFICIAL
-            </div>
-            <div className="flex justify-between items-start border-b pb-3">
-              <div>
-                <h2 className="font-bold text-lg text-gray-800">RECIBO DE NÓMINA (SEMANAL)</h2>
-                <p className="text-xs text-gray-500">Periodo: {modalRecibo.datos?.periodos_nomina?.descripcion}</p>
-              </div>
-              <div className="text-right text-xs">
-                <p className="font-bold text-gray-700">EMPRESA S.A. DE C.V.</p>
-              </div>
-            </div>
-            <div className="flex justify-between items-center font-bold text-base pt-2">
-              <span>NETO ESTIMADO A PAGAR:</span>
-              <span className="text-green-800">${modalRecibo.datos?.calculo?.montoFinalSemanal?.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-end pt-4">
-              <button
-                onClick={() => setModalRecibo({ abierto: false, datos: null })}
-                className="bg-gray-800 text-white text-xs px-5 py-2 rounded hover:bg-black font-semibold"
-              >
-                Cerrar Vista Previa
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const importarEmpleados = async () => {
+    if (empleados.length === 0) {
+      alert("No hay empleados para importar");
+      return;
+    }
+
+    if (!periodoId) {
+      alert("⚠️ Por favor selecciona un Período antes de importar");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const { data: departamentos } = await supabase.from("departamentos").select("*");
+      const { data: puestos } = await supabase.from("puestos").select("*");
+      const { data: lineas } = await supabase.from("lineas").select("*");
+
+      let insertados = 0;
+      let actualizados = 0;
+      const errores = [];
+
+      for (const empleado of empleados) {
+        let nombreDepartamento = empleado.departamento?.trim()?.toUpperCase();
+
+        const equivalencias = {
+          "MTTO NAVE 3": "MTTO",
+          "AYU CHOFER": "LOGISTICA INTERNA",
+          CHOFER: "LOGISTICA INTERNA",
+        };
+
+        if (equivalencias[nombreDepartamento]) {
+          nombreDepartamento = equivalencias[nombreDepartamento];
+        }
+
+        let lineaId = null;
+
+        if (esLineaMolienda(nombreDepartamento)) {
+          const linea = lineas.find((l) => l.nombre === nombreDepartamento);
+          if (linea) lineaId = linea.id;
+          nombreDepartamento = "MOLIENDA";
+        }
+
+        const departamento = departamentos.find(
+          (d) => d.nombre?.trim()?.toUpperCase() === nombreDepartamento
+        );
+
+        if (!departamento) {
+          errores.push({
+            numero: empleado.numero_empleado,
+            nombre: empleado.nombre_completo,
+            motivo: `Departamento no encontrado: ${empleado.departamento}`,
+          });
+          continue;
+        }
+
+        let puesto = puestos.find(
+          (p) =>
+            p.nombre?.trim()?.toUpperCase() === empleado.puesto?.trim()?.toUpperCase() &&
+            p.departamento_id === departamento.id
+        );
+
+        if (!puesto) {
+          const { data: nuevoPuesto, error: puestoError } = await supabase
+            .from("puestos")
+            .insert([
+              {
+                nombre: empleado.puesto,
+                departamento_id: departamento.id,
+                activo: true,
+              },
+            ])
+            .select()
+            .single();
+
+          if (puestoError) {
+            errores.push({
+              numero: empleado.numero_empleado,
+              nombre: empleado.nombre_completo,
+              motivo: puestoError.message,
+            });
+            continue;
+          }
+
+          puesto = nuevoPuesto;
+          puestos.push(nuevoPuesto);
+        }
+
+        const { data: existente } = await supabase
+          .from("empleados")
+          .select("id")
+          .eq("numero_empleado", empleado.numero_empleado)
+          .maybeSingle();
+
+        let empId = null;
+
+        if (existente) {
+          empId = existente.id;
+          await supabase
+            .from("empleados")
+            .update({
+              nombre_completo: empleado.nombre_completo,
+              fecha_ingreso: empleado.fecha_ingreso,
+              sueldo_base: empleado.sueldo_base,
+              departamento_id: departamento.id,
+              puesto_id: puesto.id,
+              linea_id: lineaId,
+              activo: true,
+            })
+            .eq("id", empId);
+
+          actualizados++;
+        } else {
+          const { data: empleadoGuardado } = await supabase
+            .from("empleados")
+            .insert([
+              {
+                numero_empleado: empleado.numero_empleado,
+                nombre_completo: empleado.nombre_completo,
+                fecha_ingreso: empleado.fecha_ingreso,
+                sueldo_base: empleado.sueldo_base,
+                departamento_id: departamento.id,
+                puesto_id: puesto.id,
+                linea_id: lineaId,
+                activo: true,
+              },
+            ])
+            .select()
+            .single();
+
+          if (empleadoGuardado) {
+            empId = empleadoGuardado.id;
+            insertados++;
+          }
+        }
+
+        if (empId) {
+          await actualizarVacaciones(empId, empleado);
+          await actualizarPrestamo(empId, empleado);
+          await actualizarIncidencias(empId, empleado, periodoId);
+          await actualizarDescuentosYBonos(empId, empleado, periodoId);
+        }
+      }
+
+      alert(
+        `Importación Exitosa!\n\nInsertados: ${insertados}\nActualizados: ${actualizados}\nErrores: ${errores.length}`
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Error durante la importación");
+    }
+
+    setLoading(false);
+  };
+
+  return (
+    <Layout>
+      <div>
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
+          <p className="text-gray-500 mt-2">
+            Carga masiva e Incidencias desde NOMINA.xlsx
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+          <KpiCard
+            titulo="Archivo"
+            valor={archivo ? "Cargado" : "Sin archivo"}
+            icono="📄"
+            color="text-blue-600"
+          />
+          <KpiCard
+            titulo="Detectados"
+            valor={empleados.length}
+            icono="👥"
+            color="text-green-600"
+          />
+          <KpiCard
+            titulo="Listos"
+            valor={empleados.length}
+            icono="✅"
+            color="text-purple-600"
+          />
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+          <div className="flex flex-col gap-4">
+            <label className="font-semibold text-gray-700">
+              1. Selecciona el Período para asignar las incidencias:
+            </label>
+            <select
+              value={periodoId}
+              onChange={(e) => setPeriodoId(e.target.value)}
+              className="border rounded-xl p-3 bg-slate-50"
+            >
+              <option value="">-- Selecciona Período --</option>
+              {periodos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.descripcion}
+                </option>
+              ))}
+            </select>
+
+            <label className="font-semibold text-gray-700 mt-2">
+              2. Carga el archivo Excel:
+            </label>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={leerArchivo}
+              className="border rounded-xl p-3 w-full"
+            />
+
+            <button
+              onClick={importarEmpleados}
+              disabled={loading || empleados.length === 0}
+              className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium"
+            >
+              {loading ? "Importando..." : "🚀 Importar Empleados e Incidencias"}
+            </button>
+          </div>
+        </div>
+
+        {/* Tabla de previsualización */}
+        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100">
+              <tr>
+                <th className="p-3">#</th>
+                <th className="p-3">Nombre</th>
+                <th className="p-3">Departamento</th>
+                <th className="p-3 text-right">Sueldo</th>
+                <th className="p-3 text-center">Vacaciones</th>
+                <th className="p-3 text-center">H. Extra</th>
+                <th className="p-3 text-right">Bono</th>
+                <th className="p-3 text-right">Prestamo (Saldo)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {empleados.map((empleado, index) => (
+                <tr key={index} className="border-t hover:bg-slate-50">
+                  <td className="p-3">{empleado.numero_empleado}</td>
+                  <td className="p-3 font-medium">{empleado.nombre_completo}</td>
+                  <td className="p-3">{empleado.departamento}</td>
+                  <td className="p-3 text-right">
+                    ${Number(empleado.sueldo_base).toLocaleString("es-MX")}
+                  </td>
+                  <td className="p-3 text-center">{empleado.dias_vacaciones} d</td>
+                  <td className="p-3 text-center">{empleado.horas_extra} hrs</td>
+                  <td className="p-3 text-right">
+                    ${Number(empleado.bono).toLocaleString("es-MX")}
+                  </td>
+                  <td className="p-3 text-right">
+                    ${Number(empleado.saldo_prestamo).toLocaleString("es-MX")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Layout>
+  );
 }

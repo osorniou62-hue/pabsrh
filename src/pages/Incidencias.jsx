@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 export default function Incidencias() {
   const navigate = useNavigate();
 
-  // --- ESTADOS DE CATALOGOS ---
+  // --- ESTADOS DE CATÁLOGOS Y DATOS ---
   const [departamentos, setDepartamentos] = useState([]);
   const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]);
   const [periodos, setPeriodos] = useState([]);
@@ -44,7 +44,7 @@ export default function Incidencias() {
   };
 
   const cargarEmpleadosCatalogo = async () => {
-    // Se removió 'puesto' para evitar el Error 400
+    // Solo seleccionamos columnas existentes en la tabla 'empleados'
     const { data, error } = await supabase
       .from("empleados")
       .select("id, nombre_completo, departamento_id, supervisor_id, activo")
@@ -61,18 +61,21 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
-    // Se usa 'empleados!empleado_id' explícito y se remueve 'puesto'
+    // Al haber una sola FK activa, podemos hacer la relación limpia de empleados
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados!empleado_id ( id, nombre_completo, departamento_id, supervisor_id ),
+        empleados ( id, nombre_completo, departamento_id, supervisor_id ),
         periodos_nomina ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });
 
-    if (error) console.error("❌ Error al cargar incidencias:", error.message);
-    else setIncidencias(data || []);
+    if (error) {
+      console.error("❌ Error al cargar incidencias:", error.message);
+    } else {
+      setIncidencias(data || []);
+    }
   };
 
   // --- DERIVACIÓN DE DATOS (EN MEMORIA) ---
@@ -307,7 +310,7 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* DETALLE Y INFORMACIÓN DEL TRABAJADOR SELECCIONADO */}
+      {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
       {empleadoSeleccionado && (
         <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
           <div className="flex justify-between items-center">
@@ -326,10 +329,6 @@ export default function Incidencias() {
             <div>
               <span className="text-gray-500 block">Nombre del Trabajador:</span>
               <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Puesto / Cargo:</span>
-              <span className="font-semibold text-gray-700">{empleadoSeleccionado.puesto || "No registrado"}</span>
             </div>
             <div>
               <span className="text-gray-500 block">Salario Mensual:</span>
@@ -374,7 +373,7 @@ export default function Incidencias() {
             {incidenciasMostrar.length === 0 ? (
               <tr>
                 <td colSpan="12" className="text-center p-6 text-gray-500">
-                  No hay datos de incidencias registrados para el trabajador o filtro seleccionado.
+                  No hay datos de incidencias registrados para el filtro seleccionado.
                 </td>
               </tr>
             ) : (

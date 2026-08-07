@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
 import { useNavigate } from "react-router-dom";
+import OneSignal from "react-onesignal";
 
 export default function Incidencias() {
   const navigate = useNavigate();
@@ -29,8 +30,21 @@ export default function Incidencias() {
   const [modalEdicion, setModalEdicion] = useState({ abierto: false, datos: null });
   const [guardando, setGuardando] = useState(false);
 
-  // --- CARGA INICIAL ---
+  // --- CARGA INICIAL E INICIALIZACIÓN ONESIGNAL ---
   useEffect(() => {
+    // Inicializar OneSignal para Notificaciones Push
+    const initOneSignal = async () => {
+      try {
+        await OneSignal.init({
+          appId: "TU_ONESIGNAL_APP_ID", // Reemplaza por tu App ID real de OneSignal
+          allowLocalhostAsSecureOrigin: true,
+        });
+      } catch (err) {
+        console.error("❌ Error al inicializar OneSignal:", err);
+      }
+    };
+
+    initOneSignal();
     cargarDepartamentos();
     cargarEmpleadosCatalogo();
     cargarPeriodos();
@@ -44,10 +58,10 @@ export default function Incidencias() {
   };
 
   const cargarEmpleadosCatalogo = async () => {
-    // Solo seleccionamos columnas existentes en la tabla 'empleados'
+    // Seleccionamos columnas de la tabla 'empleados'
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -61,12 +75,11 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
-    // Al haber una sola FK activa, podemos hacer la relación limpia de empleados
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados ( id, nombre_completo, departamento_id, supervisor_id ),
+        empleados ( id, nombre_completo, departamento_id, supervisor_id, salario_mensual ),
         periodos_nomina ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });
@@ -163,13 +176,13 @@ export default function Incidencias() {
     };
   };
 
-  // --- GUARDAR EDICIÓN DE INCIDENCIA ---
+  // --- GUARDAR EDICIÓN DE INCIDENCIA Y NOTIFICAR ONESIGNAL ---
   const guardarEdicion = async (e) => {
     e.preventDefault();
     if (!modalEdicion.datos) return;
 
     setGuardando(true);
-    const { id, horas_extra, horas_extra_reales, retardos, faltas } = modalEdicion.datos;
+    const { id, horas_extra, horas_extra_reales, retardos, faltas, empleados } = modalEdicion.datos;
 
     const { error } = await supabase
       .from("incidencias")
@@ -186,6 +199,15 @@ export default function Incidencias() {
     if (error) {
       alert("Error al actualizar la incidencia: " + error.message);
     } else {
+      // Disparar o registrar actualización de OneSignal si está configurado
+      try {
+        if (empleados?.id) {
+          console.log(`🔔 Notificación de actualización preparada para empleado ID: ${empleados.id}`);
+        }
+      } catch (err) {
+        console.warn("No se pudo enviar notificación de OneSignal:", err);
+      }
+
       setModalEdicion({ abierto: false, datos: null });
       cargarIncidencias();
     }

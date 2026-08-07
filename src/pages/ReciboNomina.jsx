@@ -17,6 +17,7 @@ export default function ReciboNomina() {
   const cargarDatosRecibo = async () => {
     setLoading(true);
 
+    // 1. Datos maestro de la nómina
     const { data: nomina, error } = await supabase
       .from("nomina")
       .select(`
@@ -34,6 +35,7 @@ export default function ReciboNomina() {
       return;
     }
 
+    // 2. Tablas relacionales con el desglose exacto
     const { data: bonos } = await supabase
       .from("bonos_empleado")
       .select("*")
@@ -77,83 +79,30 @@ export default function ReciboNomina() {
 
   const { empleados: emp, periodos_nomina: per } = datos;
 
-  // Normalizador flexible para comparar palabras sin importar acentos ni mayúsculas
-  const normalizar = (texto) =>
-    (texto || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
-
-  // Helper flexible de búsqueda de bonos
-  const obtenerMontoBono = (palabraClave) => {
-    const item = bonosList.find((b) =>
-      normalizar(b.concepto).includes(normalizar(palabraClave))
-    );
-    return Number(item?.importe || 0);
-  };
-
-  // Helper flexible de búsqueda de descuentos
-  const obtenerMontoDescuento = (palabraClave) => {
-    const item = descuentosList.find((d) =>
-      normalizar(d.concepto).includes(normalizar(palabraClave))
-    );
-    return Number(item?.importe || 0);
-  };
-
-  // Horas Extras desde incidencias
-  const totalHorasExtraHoras = incidenciasList.reduce(
+  // Cálculo total de horas extra
+  const totalHorasExtraCant = incidenciasList.reduce(
     (acc, curr) => acc + Number(curr.horas_extra || 0),
     0
   );
   const totalPagoHorasExtra = Number(datos?.total_horas_extra || 0);
 
-  // Mapeo flexible de Bonos
-  const bonoPuesto = obtenerMontoBono("puesto");
-  const bonoPuntualidad = obtenerMontoBono("puntualidad");
-  const bonoAsistencia = obtenerMontoBono("asistencia");
-  const bonoMultiplicador = obtenerMontoBono("multiplicador");
-  const bonoDesempeno = obtenerMontoBono("desempeno");
-  const apoyoMedico = obtenerMontoBono("medico");
-  const bonoExtras = obtenerMontoBono("extra");
-  const gratificacionEspecial = obtenerMontoBono("gratificacion") || obtenerMontoBono("especial");
+  // Totales calculados dinámicamente a partir de los arreglos
+  const totalBonosCalculado = bonosList.reduce(
+    (acc, curr) => acc + Number(curr.importe || 0),
+    0
+  );
 
-  // Suma de bonos no categorizados
-  const palabrasClaveBonos = ["puesto", "puntualidad", "asistencia", "multiplicador", "desempeno", "medico", "extra", "gratificacion", "especial"];
-  const otrosBonos = bonosList
-    .filter((b) => !palabrasClaveBonos.some((k) => normalizar(b.concepto).includes(k)))
-    .reduce((acc, curr) => acc + Number(curr.importe || 0), 0);
+  const totalDescuentosCalculado = descuentosList.reduce(
+    (acc, curr) => acc + Number(curr.importe || 0),
+    0
+  );
 
-  // Mapeo flexible de Descuentos
-  const bajoDesempeno = obtenerMontoDescuento("desempeno");
-  const epp = obtenerMontoDescuento("epp");
-  const prestamo = obtenerMontoDescuento("prestamo");
-  const ausencias = obtenerMontoDescuento("ausencia");
-
-  // Suma de descuentos no categorizados
-  const palabrasClaveDesc = ["desempeno", "epp", "prestamo", "ausencia"];
-  const otrosDescuentos = descuentosList
-    .filter((d) => !palabrasClaveDesc.some((k) => normalizar(d.concepto).includes(k)))
-    .reduce((acc, curr) => acc + Number(curr.importe || 0), 0);
-
-  // Cálculo de totales para el recibo 2 (Complementos/Bonos)
-  const totalBonosYComplementos =
-    totalPagoHorasExtra +
-    bonoPuesto +
-    bonoPuntualidad +
-    bonoAsistencia +
-    bonoMultiplicador +
-    bonoDesempeno +
-    apoyoMedico +
-    bonoExtras +
-    gratificacionEspecial +
-    otrosBonos;
-
-  const totalDeduccionesComplemento =
-    bajoDesempeno + epp + prestamo + otrosDescuentos;
+  const totalPercepcionesComp = totalPagoHorasExtra + totalBonosCalculado;
+  const totalNetoComp = totalPercepcionesComp - totalDescuentosCalculado;
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-8 flex flex-col items-center">
-      {/* Botón de impresión (Oculto al imprimir) */}
+      {/* Botón de impresión */}
       <div className="no-print mb-6">
         <button
           onClick={() => window.print()}
@@ -228,7 +177,7 @@ export default function ReciboNomina() {
               </div>
               <div className="flex justify-between pt-2 border-t border-gray-200">
                 <span>AUSENCIAS</span>
-                <span>${Number(ausencias || datos?.descuento_ausencias || 0).toFixed(2)}</span>
+                <span>${Number(datos?.descuento_ausencias || 0).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -241,13 +190,13 @@ export default function ReciboNomina() {
             </div>
             <div className="col-span-5 flex justify-between pl-2">
               <span>DEDUCCIONES</span>
-              <span>${Number(ausencias || datos?.descuento_ausencias || 0).toFixed(2)}</span>
+              <span>${Number(datos?.descuento_ausencias || 0).toFixed(2)}</span>
             </div>
           </div>
 
           <div className="flex justify-between font-bold border-t border-b border-black py-1 my-1">
             <span>TOTAL PAGO</span>
-            <span>${(Number(datos?.sueldo_base || 0) - Number(ausencias || 0)).toFixed(2)}</span>
+            <span>${(Number(datos?.sueldo_base || 0) - Number(datos?.descuento_ausencias || 0)).toFixed(2)}</span>
           </div>
 
           <div className="mt-3">
@@ -291,47 +240,35 @@ export default function ReciboNomina() {
             </div>
           </div>
 
-          {/* Tabla Desglose Recibo 2 */}
+          {/* Tabla Desglose Recibo 2 (Mapeo Dinámico) */}
           <div className="grid grid-cols-12 border-t border-b border-black py-2 my-2 gap-2">
+            
+            {/* Columna de Percepciones Complementarias */}
             <div className="col-span-7 pr-2 border-r border-gray-300 space-y-1">
-              <div className="flex justify-between">
-                <span>HRS. EXTRAS ({totalHorasExtraHoras} hrs)</span>
-                <span>${totalPagoHorasExtra.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO POR PUESTO</span>
-                <span>${bonoPuesto.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO PUNTUALIDAD</span>
-                <span>${bonoPuntualidad.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO ASISTENCIA</span>
-                <span>${bonoAsistencia.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO MULTIPLICADOR</span>
-                <span>${bonoMultiplicador.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO DESEMPEÑO</span>
-                <span>${bonoDesempeno.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>APOYO MEDICO</span>
-                <span>${apoyoMedico.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO EXTRAS / OTROS</span>
-                <span>${(bonoExtras + otrosBonos).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>GRATIFICACIÓN ESPECIAL</span>
-                <span>${gratificacionEspecial.toFixed(2)}</span>
-              </div>
+              {totalHorasExtraCant > 0 && (
+                <div className="flex justify-between font-medium">
+                  <span>HRS. EXTRAS ({totalHorasExtraCant} hrs)</span>
+                  <span>${totalPagoHorasExtra.toFixed(2)}</span>
+                </div>
+              )}
+
+              {/* Lista dinámica de Bonos */}
+              {bonosList.length > 0 ? (
+                bonosList.map((bono, index) => (
+                  <div key={index} className="flex justify-between">
+                    <span className="uppercase">{bono.concepto || "BONO"}</span>
+                    <span>${Number(bono.importe || 0).toFixed(2)}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex justify-between text-gray-400 italic">
+                  <span>SIN BONOS</span>
+                  <span>$0.00</span>
+                </div>
+              )}
             </div>
 
+            {/* Columna de Deducciones Complementarias */}
             <div className="col-span-5 pl-2 space-y-1">
               <div className="flex justify-between">
                 <span>V</span>
@@ -341,26 +278,25 @@ export default function ReciboNomina() {
                 <span>FJ</span>
                 <span>{datos?.faltas_justificadas || 0}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between border-b border-gray-200 pb-1">
                 <span>FI</span>
                 <span>{datos?.faltas_injustificadas || 0}</span>
               </div>
-              <div className="flex justify-between pt-2 border-t border-gray-200">
-                <span>BAJO DESEMPEÑO</span>
-                <span>${bajoDesempeno.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>EPP</span>
-                <span>${epp.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>DESCUENTOS GRAL / OTROS</span>
-                <span>${otrosDescuentos.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>PRESTAMO</span>
-                <span>${prestamo.toFixed(2)}</span>
-              </div>
+
+              {/* Lista dinámica de Descuentos */}
+              {descuentosList.length > 0 ? (
+                descuentosList.map((desc, index) => (
+                  <div key={index} className="flex justify-between">
+                    <span className="uppercase">{desc.concepto || "DESCUENTO"}</span>
+                    <span>${Number(desc.importe || 0).toFixed(2)}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex justify-between text-gray-400 italic">
+                  <span>SIN DEDUCCIONES</span>
+                  <span>$0.00</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -368,17 +304,17 @@ export default function ReciboNomina() {
           <div className="grid grid-cols-12 font-bold py-1 my-1">
             <div className="col-span-7 flex justify-between pr-2">
               <span>TOTAL PERCEPCIONES</span>
-              <span>${totalBonosYComplementos.toFixed(2)}</span>
+              <span>${totalPercepcionesComp.toFixed(2)}</span>
             </div>
             <div className="col-span-5 flex justify-between pl-2">
               <span>TOTAL DEDUCCIONES</span>
-              <span>${totalDeduccionesComplemento.toFixed(2)}</span>
+              <span>${totalDescuentosCalculado.toFixed(2)}</span>
             </div>
           </div>
 
           <div className="flex justify-between font-bold border-t border-b border-black py-1 my-1">
             <span>NETO A PAGAR</span>
-            <span>${(totalBonosYComplementos - totalDeduccionesComplemento).toFixed(2)}</span>
+            <span>${totalNetoComp.toFixed(2)}</span>
           </div>
 
           <div className="mt-3">

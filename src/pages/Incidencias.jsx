@@ -60,14 +60,13 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
-    // Se añade !incidencias_periodo_id_fkey para deshacer la ambigüedad de FKs
-    // Nota: Reemplaza 'incidencias_periodo_id_fkey' si tu constraint de FK tiene otro nombre exacto en Supabase
+    // Usamos explícitamente los nombres de los FKs confirmados
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados ( id, nombre_completo, departamento_id, supervisor_id ),
-        periodos_nomina!incidencias_periodo_id_fkey ( descripcion, dias_periodo )
+        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id ),
+        periodos_nomina!incidencias_periodo_fk ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });
 

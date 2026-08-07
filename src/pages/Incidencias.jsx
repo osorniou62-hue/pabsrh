@@ -8,7 +8,7 @@ export default function Incidencias() {
   // --- ESTADOS DE CATALOGOS ---
   const [departamentos, setDepartamentos] = useState([]);
   const [supervisores, setSupervisores] = useState([]);
-  const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]); // 👈 Todos los empleados para el buscador directo
+  const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]);
   const [empleadosFiltrados, setEmpleadosFiltrados] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
@@ -19,11 +19,11 @@ export default function Incidencias() {
   const [deptoSeleccionado, setDeptoSeleccionado] = useState("");
   const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
 
-  // --- NUEVO: ESTADO BUSCADOR POR EMPLEADO ---
+  // --- ESTADO BUSCADOR POR EMPLEADO ---
   const [busquedaEmpleado, setBusquedaEmpleado] = useState("");
   const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
 
-  // --- ESTADOS DE MODALES / POPUPS ---
+  // --- ESTADOS DE MODALES ---
   const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
   const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
   const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
@@ -45,7 +45,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id")
+      .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual")
       .eq("activo", true)
       .order("nombre_completo");
     setEmpleadosCatalogo(data || []);
@@ -92,7 +92,7 @@ export default function Incidencias() {
 
     const { data } = await supabase
       .from("empleados")
-      .select("id, nombre_completo")
+      .select("id, nombre_completo, salario_mensual")
       .eq("departamento_id", deptoId)
       .eq("es_supervisor", true)
       .eq("activo", true);
@@ -120,7 +120,7 @@ export default function Incidencias() {
   const handleSeleccionarEmpleadoDirecto = (emp) => {
     setBusquedaEmpleado(emp.nombre_completo);
     setMostrarDropdownEmpleado(false);
-    setEmpleadosFiltrados([emp]); // Muestra únicamente al empleado seleccionado
+    setEmpleadosFiltrados([emp]);
   };
 
   // Listas filtradas locales
@@ -132,15 +132,17 @@ export default function Incidencias() {
     e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
   );
 
-  // Filtro de la tabla de incidencias según las selecciones activas
+  // --- FILTRADO DE LA TABLA DE INCIDENCIAS (CORREGIDO) ---
   const incidenciasMostrar = incidencias.filter((item) => {
     if (empleadosFiltrados.length > 0) {
-      return empleadosFiltrados.some((e) => e.id === item.empleados?.id);
+      // Normalización a String para evitar fallos de ID de numérico vs texto
+      const empIdItem = String(item.empleados?.id || item.empleado_id || "");
+      return empleadosFiltrados.some((e) => String(e.id) === empIdItem);
     }
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
+  // --- CÁLCULO FINANCIERO ---
   const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
     const salarioMensual = empleado?.salario_mensual || 0;
     const salarioDiario = salarioMensual / 30;
@@ -174,9 +176,8 @@ export default function Incidencias() {
       {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
       <div className="space-y-6">
         
-        {/* Bloque 1: Búsqueda por Departamento y Supervisor */}
+        {/* Bloque 1: Departamento y Supervisor */}
         <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
-          {/* Búsqueda 1: Departamento */}
           <div className="relative">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               1. Buscar Departamento
@@ -213,7 +214,6 @@ export default function Incidencias() {
             )}
           </div>
 
-          {/* Búsqueda 2: Supervisor */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               2. Seleccionar Supervisor
@@ -238,7 +238,7 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* Bloque 2: NUEVO - Búsqueda Directa por Empleado */}
+        {/* Bloque 2: Búsqueda Directa por Empleado */}
         <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100">
           <div className="relative">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -432,7 +432,7 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* ================= MODALES (PERMISOS, VACACIONES, RECIBO) ================= */}
+      {/* ================= MODALES ================= */}
       {modalPermisos.abierto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">

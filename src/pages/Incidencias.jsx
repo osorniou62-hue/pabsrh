@@ -8,15 +8,20 @@ export default function Incidencias() {
   // --- ESTADOS DE CATALOGOS ---
   const [departamentos, setDepartamentos] = useState([]);
   const [supervisores, setSupervisores] = useState([]);
+  const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]); // 👈 Todos los empleados para el buscador directo
   const [empleadosFiltrados, setEmpleadosFiltrados] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
 
   // --- ESTADOS DE FILTROS ---
   const [busquedaDepto, setBusquedaDepto] = useState("");
-  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false); // 👈 Control de visibilidad
+  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false);
   const [deptoSeleccionado, setDeptoSeleccionado] = useState("");
   const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
+
+  // --- NUEVO: ESTADO BUSCADOR POR EMPLEADO ---
+  const [busquedaEmpleado, setBusquedaEmpleado] = useState("");
+  const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
 
   // --- ESTADOS DE MODALES / POPUPS ---
   const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
@@ -26,6 +31,7 @@ export default function Incidencias() {
   // --- CARGA INICIAL ---
   useEffect(() => {
     cargarDepartamentos();
+    cargarEmpleadosCatalogo();
     cargarPeriodos();
     cargarIncidencias();
   }, []);
@@ -34,6 +40,15 @@ export default function Incidencias() {
   const cargarDepartamentos = async () => {
     const { data } = await supabase.from("departamentos").select("*").order("nombre");
     setDepartamentos(data || []);
+  };
+
+  const cargarEmpleadosCatalogo = async () => {
+    const { data } = await supabase
+      .from("empleados")
+      .select("id, nombre_completo, departamento_id, supervisor_id")
+      .eq("activo", true)
+      .order("nombre_completo");
+    setEmpleadosCatalogo(data || []);
   };
 
   const cargarPeriodos = async () => {
@@ -64,7 +79,7 @@ export default function Incidencias() {
     else setIncidencias(data || []);
   };
 
-  // --- MANEJO DE FILTROS EN CADENA ---
+  // --- MANEJO DE FILTROS EN CADENA (DEPTO -> SUPERVISOR) ---
   const handleSeleccionarDepto = async (deptoId) => {
     setDeptoSeleccionado(deptoId);
     setSupervisorSeleccionado("");
@@ -101,9 +116,29 @@ export default function Incidencias() {
     setEmpleadosFiltrados(data || []);
   };
 
+  // --- SELECCIÓN DIRECTA DE EMPLEADO ---
+  const handleSeleccionarEmpleadoDirecto = (emp) => {
+    setBusquedaEmpleado(emp.nombre_completo);
+    setMostrarDropdownEmpleado(false);
+    setEmpleadosFiltrados([emp]); // Muestra únicamente al empleado seleccionado
+  };
+
+  // Listas filtradas locales
   const deptosFiltrados = departamentos.filter((d) =>
     d.nombre?.toLowerCase().includes(busquedaDepto.toLowerCase())
   );
+
+  const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
+    e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
+  );
+
+  // Filtro de la tabla de incidencias según las selecciones activas
+  const incidenciasMostrar = incidencias.filter((item) => {
+    if (empleadosFiltrados.length > 0) {
+      return empleadosFiltrados.some((e) => e.id === item.empleados?.id);
+    }
+    return true;
+  });
 
   // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
   const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
@@ -136,88 +171,158 @@ export default function Incidencias() {
         📋 Control de Incidencias y Nómina Semanal
       </h1>
 
-      {/* ================= 1. BUSCADORES EN CADENA ================= */}
-      <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
+      {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
+      <div className="space-y-6">
         
-        {/* Búsqueda 1: Departamento con autocompletado */}
-        <div className="relative">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            1. Buscar Departamento
-          </label>
-          <input
-            type="text"
-            placeholder="Escribe el nombre del departamento..."
-            value={busquedaDepto}
-            onFocus={() => setMostrarDropdownDepto(true)}
-            onChange={(e) => {
-              setBusquedaDepto(e.target.value);
-              setMostrarDropdownDepto(true);
-              if (!e.target.value) handleSeleccionarDepto("");
-            }}
-            className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-          />
+        {/* Bloque 1: Búsqueda por Departamento y Supervisor */}
+        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
+          {/* Búsqueda 1: Departamento */}
+          <div className="relative">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              1. Buscar Departamento
+            </label>
+            <input
+              type="text"
+              placeholder="Escribe el nombre del departamento..."
+              value={busquedaDepto}
+              onFocus={() => setMostrarDropdownDepto(true)}
+              onChange={(e) => {
+                setBusquedaDepto(e.target.value);
+                setMostrarDropdownDepto(true);
+                if (!e.target.value) handleSeleccionarDepto("");
+              }}
+              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            />
 
-          {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-            <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-              {deptosFiltrados.map((d) => (
-                <li
-                  key={d.id}
-                  onClick={() => {
-                    setBusquedaDepto(d.nombre);
-                    handleSeleccionarDepto(d.id);
-                    setMostrarDropdownDepto(false); // 👈 Cierra la lista
-                  }}
-                  className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
-                >
-                  {d.nombre}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+            {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
+              <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                {deptosFiltrados.map((d) => (
+                  <li
+                    key={d.id}
+                    onClick={() => {
+                      setBusquedaDepto(d.nombre);
+                      handleSeleccionarDepto(d.id);
+                      setMostrarDropdownDepto(false);
+                    }}
+                    className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
+                  >
+                    {d.nombre}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
-        {/* Búsqueda 2: Supervisor */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            2. Seleccionar Supervisor
-          </label>
-          <select
-            disabled={!deptoSeleccionado}
-            value={supervisorSeleccionado}
-            onChange={(e) => handleSeleccionarSupervisor(e.target.value)}
-            className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
-          >
-            <option value="">
-              {!deptoSeleccionado
-                ? "Selecciona primero un departamento"
-                : "Seleccionar supervisor..."}
-            </option>
-            {supervisores.map((sup) => (
-              <option key={sup.id} value={sup.id}>
-                {sup.nombre_completo}
+          {/* Búsqueda 2: Supervisor */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              2. Seleccionar Supervisor
+            </label>
+            <select
+              disabled={!deptoSeleccionado}
+              value={supervisorSeleccionado}
+              onChange={(e) => handleSeleccionarSupervisor(e.target.value)}
+              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
+            >
+              <option value="">
+                {!deptoSeleccionado
+                  ? "Selecciona primero un departamento"
+                  : "Seleccionar supervisor..."}
               </option>
-            ))}
-          </select>
+              {supervisores.map((sup) => (
+                <option key={sup.id} value={sup.id}>
+                  {sup.nombre_completo}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {/* Bloque 2: NUEVO - Búsqueda Directa por Empleado */}
+        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100">
+          <div className="relative">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              🔍 O Buscar Directamente por Nombre de Empleado
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Escribe el nombre del empleado..."
+                  value={busquedaEmpleado}
+                  onFocus={() => setMostrarDropdownEmpleado(true)}
+                  onChange={(e) => {
+                    setBusquedaEmpleado(e.target.value);
+                    setMostrarDropdownEmpleado(true);
+                    if (!e.target.value) setEmpleadosFiltrados([]);
+                  }}
+                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+
+                {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
+                  <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                    {empleadosBusquedaFiltrados.map((emp) => (
+                      <li
+                        key={emp.id}
+                        onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
+                        className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
+                      >
+                        <span>{emp.nombre_completo}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {busquedaEmpleado && (
+                <button
+                  onClick={() => {
+                    setBusquedaEmpleado("");
+                    setMostrarDropdownEmpleado(false);
+                    setEmpleadosFiltrados([]);
+                  }}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
+                >
+                  Limpiar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* LISTADO DE EMPLEADOS A CARGO */}
+      {/* LISTADO DE EMPLEADOS FILTRADOS */}
       {empleadosFiltrados.length > 0 && (
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
-          <h3 className="font-semibold text-blue-900 mb-2">
-            👥 Empleados bajo la supervisión seleccionada ({empleadosFiltrados.length}):
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {empleadosFiltrados.map((emp) => (
-              <span key={emp.id} className="bg-white px-3 py-1 rounded-full text-xs font-medium border text-gray-700">
-                {emp.nombre_completo}
-              </span>
-            ))}
+        <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 flex justify-between items-center">
+          <div>
+            <h3 className="font-semibold text-blue-900 mb-1">
+              👥 Filtro Activo ({empleadosFiltrados.length} empleado/s seleccionado/s):
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {empleadosFiltrados.map((emp) => (
+                <span key={emp.id} className="bg-white px-3 py-1 rounded-full text-xs font-medium border text-gray-700">
+                  {emp.nombre_completo}
+                </span>
+              ))}
+            </div>
           </div>
+          <button
+            onClick={() => {
+              setEmpleadosFiltrados([]);
+              setBusquedaEmpleado("");
+              setDeptoSeleccionado("");
+              setSupervisorSeleccionado("");
+              setBusquedaDepto("");
+            }}
+            className="text-xs text-red-600 hover:underline font-semibold"
+          >
+            Quitar Filtros
+          </button>
         </div>
       )}
 
-      {/* ================= 2. TABLA PRINCIPAL DE INCIDENCIAS ================= */}
+      {/* ================= TABLA PRINCIPAL DE INCIDENCIAS ================= */}
       <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 overflow-x-auto">
         <h2 className="text-xl font-bold mb-4 text-gray-800">
           Historial y Resumen de Ajustes
@@ -241,14 +346,14 @@ export default function Incidencias() {
             </tr>
           </thead>
           <tbody>
-            {incidencias.length === 0 ? (
+            {incidenciasMostrar.length === 0 ? (
               <tr>
                 <td colSpan="12" className="text-center p-6 text-gray-500">
-                  No hay datos de incidencias registrados.
+                  No hay datos de incidencias que coincidan con la búsqueda.
                 </td>
               </tr>
             ) : (
-              incidencias.map((item) => {
+              incidenciasMostrar.map((item) => {
                 const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0);
                 const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0);
                 const calculo = calcularNominaIncidencia(item.empleados, item, 7);

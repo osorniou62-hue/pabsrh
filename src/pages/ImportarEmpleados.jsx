@@ -41,6 +41,142 @@ export default function ImportarEmpleados() {
   };
 
   // ========================================================
+  // LECTURA Y ANÁLISIS DINÁMICO DEL EXCEL
+  // ========================================================
+
+  const analizarNomina = (rows) => {
+    if (!rows || rows.length === 0) return;
+
+    // 1. Encontrar la fila de encabezados que contenga "NOMBRE" o "EMPLEADO"
+    let headerRowIndex = rows.findIndex((row) =>
+      row.some(
+        (cell) =>
+          typeof cell === "string" &&
+          (cell.toUpperCase().includes("NOMBRE") ||
+            cell.toUpperCase().includes("EMPLEADO") ||
+            cell.toUpperCase().includes("PUESTO"))
+      )
+    );
+
+    // Si no encuentra la fila de encabezados por texto, asume que es la primera (0)
+    if (headerRowIndex === -1) headerRowIndex = 0;
+
+    const headers = rows[headerRowIndex].map((h) =>
+      String(h || "").trim().toUpperCase()
+    );
+
+    // 2. Función auxiliar para obtener el índice de la columna mediante palabras clave
+    const getColIndex = (keywords) => {
+      return headers.findIndex((h) =>
+        keywords.some((kw) => h.includes(kw.toUpperCase()))
+      );
+    };
+
+    // Mapeo dinámico por palabras clave del encabezado
+    const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
+    const idxPuesto = getColIndex(["PUESTO"]);
+    const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
+    const idxNombre = getColIndex(["NOMBRE"]);
+    const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
+    const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
+
+    // Incidencias y conceptos adicionales
+    const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
+    const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
+    const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
+    const idxFaltasInjust = getColIndex(["INJUSTIFICADA", "FALTA", "F.INJUST"]);
+    const idxDescAusencias = getColIndex(["AUSENCIA", "DESC. AUSENCIA"]);
+    const idxBono = getColIndex(["BONO"]);
+    const idxDescVarios = getColIndex(["VARIOS", "DESC. VARIOS", "OTROS DESC"]);
+    const idxDescPrestamo = getColIndex(["PRESTAMO", "DESC. PRESTAMO"]);
+    const idxSaldoPrestamo = getColIndex(["ADEUDO", "SALDO"]);
+
+    const encontrados = [];
+
+    // 3. Recorrer las filas a partir de la posterior a los encabezados
+    const dataRows = rows.slice(headerRowIndex + 1);
+
+    dataRows.forEach((fila) => {
+      const numeroEmpleado = fila[idxNumEmpleado !== -1 ? idxNumEmpleado : 0];
+      const puesto = fila[idxPuesto !== -1 ? idxPuesto : 1];
+      const departamento = fila[idxDepto !== -1 ? idxDepto : 2];
+      const nombre = fila[idxNombre !== -1 ? idxNombre : 3];
+      const fechaIngreso = convertirFechaExcel(
+        fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]
+      );
+      const sueldoBase = Number(
+        (idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0
+      );
+
+      // Lectura de incidencias mediante los índices dinámicos encontrados
+      const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
+      const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
+      const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
+      const faltasInjustificadas = Number((idxFaltasInjust !== -1 ? fila[idxFaltasInjust] : 0) || 0);
+      const descuentoAusencias = Number((idxDescAusencias !== -1 ? fila[idxDescAusencias] : 0) || 0);
+      const bono = Number((idxBono !== -1 ? fila[idxBono] : 0) || 0);
+      const descuentoVarios = Number((idxDescVarios !== -1 ? fila[idxDescVarios] : 0) || 0);
+      const descuentoPrestamo = Number((idxDescPrestamo !== -1 ? fila[idxDescPrestamo] : 0) || 0);
+      const saldoPrestamo = Number((idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0) || 0);
+
+      const empleadoValido =
+        (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
+        String(numeroEmpleado).trim() !== "" &&
+        typeof nombre === "string" &&
+        nombre.trim() !== "";
+
+      if (empleadoValido) {
+        encontrados.push({
+          numero_empleado: String(numeroEmpleado).trim(),
+          nombre_completo: nombre.trim(),
+          puesto: typeof puesto === "string" ? puesto.trim() : "",
+          departamento: typeof departamento === "string" ? departamento.trim() : "",
+          fecha_ingreso: fechaIngreso,
+          sueldo_base: sueldoBase,
+          dias_vacaciones: diasVacaciones,
+          horas_extra: horasExtra,
+          faltas_justificadas: faltasJustificadas,
+          faltas_injustificadas: faltasInjustificadas,
+          descuento_ausencias: descuentoAusencias,
+          bono: bono,
+          descuento_varios: descuentoVarios,
+          saldo_prestamo: saldoPrestamo,
+          descuento_prestamo: descuentoPrestamo,
+        });
+      }
+    });
+
+    console.log("EMPLEADOS DETECTADOS:", encontrados.length);
+    if (encontrados.length > 0) {
+      console.log("PRIMER EMPLEADO DETECTADO:", encontrados[0]);
+    }
+
+    setEmpleados(encontrados);
+  };
+
+  const leerArchivo = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setArchivo(file);
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+        analizarNomina(rows);
+      } catch (error) {
+        console.error(error);
+        alert("Error leyendo el archivo Excel");
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  // ========================================================
   // FUNCIONES AUXILIARES DE GUARDADO EN SUPABASE
   // ========================================================
 
@@ -67,7 +203,7 @@ export default function ImportarEmpleados() {
   const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
-    // 1. Guardar Bono mediante DELETE + INSERT (evita errores 400 por clave UNIQUE)
+    // 1. Guardar Bono mediante DELETE + INSERT
     if (Number(empleado.bono || 0) > 0) {
       await supabase
         .from("bonos_empleado")
@@ -175,84 +311,8 @@ export default function ImportarEmpleados() {
   };
 
   // ========================================================
-  // LECTURA Y ANALISIS DEL EXCEL
+  // PROCESO DE IMPORTACIÓN A SUPABASE
   // ========================================================
-
-  const analizarNomina = (rows) => {
-    const encontrados = [];
-
-    rows.forEach((fila) => {
-      const numeroEmpleado = fila?.[0];
-      const puesto = fila?.[1];
-      const departamento = fila?.[2];
-      const nombre = fila?.[3];
-      const fechaIngreso = convertirFechaExcel(fila?.[5]);
-      const sueldoBase = Number(fila?.[51] || 0);
-
-      // --- ÍNDICES DE COLUMNA DE TU EXCEL ---
-      const diasVacaciones = Number(fila?.[31] || 0); 
-      const horasExtra = Number(fila?.[35] || 0); 
-      const faltasJustificadas = Number(fila?.[36] || 0); 
-      const faltasInjustificadas = Number(fila?.[37] || 0); 
-      const descuentoAusencias = Number(fila?.[38] || 0); 
-      const bono = Number(fila?.[40] || 0); 
-      const descuentoVarios = Number(fila?.[50] || 0); 
-      const descuentoPrestamo = Number(fila?.[52] || 0); 
-      const saldoPrestamo = Number(fila?.[54] || 0); 
-
-      const empleadoValido =
-        typeof numeroEmpleado === "number" &&
-        typeof puesto === "string" &&
-        typeof departamento === "string" &&
-        typeof nombre === "string" &&
-        nombre.trim() !== "";
-
-      if (empleadoValido) {
-        encontrados.push({
-          numero_empleado: String(numeroEmpleado),
-          nombre_completo: nombre.trim(),
-          puesto: puesto.trim(),
-          departamento: departamento.trim(),
-          fecha_ingreso: fechaIngreso,
-          sueldo_base: sueldoBase,
-          dias_vacaciones: diasVacaciones,
-          horas_extra: horasExtra,
-          faltas_justificadas: faltasJustificadas,
-          faltas_injustificadas: faltasInjustificadas,
-          descuento_ausencias: descuentoAusencias,
-          bono: bono,
-          descuento_varios: descuentoVarios,
-          saldo_prestamo: saldoPrestamo,
-          descuento_prestamo: descuentoPrestamo,
-        });
-      }
-    });
-
-    console.log("EMPLEADOS DETECTADOS:", encontrados.length);
-    setEmpleados(encontrados);
-  };
-
-  const leerArchivo = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setArchivo(file);
-    const reader = new FileReader();
-
-    reader.onload = (e) => {
-      try {
-        const workbook = XLSX.read(e.target.result, { type: "binary" });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
-        analizarNomina(rows);
-      } catch (error) {
-        console.error(error);
-        alert("Error leyendo Excel");
-      }
-    };
-
-    reader.readAsBinaryString(file);
-  };
 
   const importarEmpleados = async () => {
     if (empleados.length === 0) {
@@ -391,7 +451,7 @@ export default function ImportarEmpleados() {
         }
 
         // ========================================================
-        // PROCESAR TABLAS SECUNDARIAS (INCIDENCIAS, BONOS, DESCUENTOS)
+        // PROCESAR TABLAS SECUNDARIAS
         // ========================================================
         if (empId) {
           await actualizarVacaciones(empId, empleado);

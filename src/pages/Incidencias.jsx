@@ -7,20 +7,19 @@ export default function Incidencias() {
 
   // --- ESTADOS DE CATALOGOS ---
   const [departamentos, setDepartamentos] = useState([]);
-  const [supervisores, setSupervisores] = useState([]);
   const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]);
-  const [empleadosFiltrados, setEmpleadosFiltrados] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
 
   // --- ESTADOS DE FILTROS ---
   const [busquedaDepto, setBusquedaDepto] = useState("");
-  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false);
-  const [deptoSeleccionado, setDeptoSeleccionado] = useState("");
+  const [deptoSeleccionado, setDeptoSeleccionado] = useState(null);
   const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
+  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false);
 
   // --- ESTADO BUSCADOR POR EMPLEADO ---
   const [busquedaEmpleado, setBusquedaEmpleado] = useState("");
+  const [empleadoSeleccionado, setEmpleadoSeleccionado] = useState(null);
   const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
 
   // --- ESTADOS DE MODALES ---
@@ -38,7 +37,6 @@ export default function Incidencias() {
     cargarIncidencias();
   }, []);
 
-  // --- CONSULTAS SUPABASE CON DIAGNÓSTICO DE ERRORES ---
   const cargarDepartamentos = async () => {
     const { data, error } = await supabase.from("departamentos").select("*").order("nombre");
     if (error) console.error("❌ Error al cargar departamentos:", error.message);
@@ -46,18 +44,13 @@ export default function Incidencias() {
   };
 
   const cargarEmpleadosCatalogo = async () => {
-    // Nota: Removimos temporalmente .eq("activo", true) por si hay nulos en tu BD
     const { data, error } = await supabase
       .from("empleados")
       .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual, puesto, activo")
       .order("nombre_completo");
 
-    if (error) {
-      console.error("❌ ERROR SUPABASE (Empleados Catálogo):", error.message, error.details);
-    } else {
-      console.log("✅ Empleados cargados correctamente:", data?.length || 0, "registros");
-      setEmpleadosCatalogo(data || []);
-    }
+    if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
+    else setEmpleadosCatalogo(data || []);
   };
 
   const cargarPeriodos = async () => {
@@ -71,18 +64,8 @@ export default function Incidencias() {
       .from("incidencias")
       .select(`
         *,
-        empleados (
-          id,
-          nombre_completo,
-          salario_mensual,
-          departamento_id,
-          supervisor_id,
-          puesto
-        ),
-        periodos_nomina (
-          descripcion,
-          dias_periodo
-        )
+        empleados ( id, nombre_completo, salario_mensual, departamento_id, supervisor_id, puesto ),
+        periodos_nomina ( descripcion, dias_periodo )
       `)
       .order("created_at", { ascending: false });
 
@@ -90,44 +73,96 @@ export default function Incidencias() {
     else setIncidencias(data || []);
   };
 
-  // --- MANEJO DE FILTROS EN CADENA (DEPTO -> SUPERVISOR) ---
-  const handleSeleccionarDepto = async (depto) => {
+  // --- DERIVACIÓN DE DATOS (EN MEMORIA) ---
+  
+  // Lista de supervisores únicos dentro del departamento seleccionado
+  const supervisoresDisponibles = deptoSeleccionado
+    ? empleadosCatalogo.filter((emp) => emp.departamento_id === deptoSeleccionado.id && emp.supervisor_id)
+    : [];
+
+  // Autocompletado de departamentos
+  const deptosFiltrados = departamentos.filter((d) =>
+    (d.nombre || "").toLowerCase().includes(busquedaDepto.toLowerCase())
+  );
+
+  // Autocompletado de empleados
+  const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
+    (e.nombre_completo || "").toLowerCase().includes(busquedaEmpleado.toLowerCase())
+  );
+
+  // --- MANEJO DE SELECCIONES ---
+  const handleSeleccionarDepto = (depto) => {
     setBusquedaDepto(depto.nombre);
-    setDeptoSeleccionado(depto.id);
+    setDeptoSeleccionado(depto);
     setSupervisorSeleccionado("");
-    setEmpleadosFiltrados([]);
+    setEmpleadoSeleccionado(null);
+    setBusquedaEmpleado("");
     setMostrarDropdownDepto(false);
-
-    const { data, error } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, salario_mensual, puesto")
-      .eq("departamento_id", depto.id);
-
-    if (error) console.error("❌ Error al cargar supervisores:", error.message);
-    else setSupervisores(data || []);
   };
 
-  const handleSeleccionarSupervisor = async (supervisorId) => {
-    setSupervisorSeleccionado(supervisorId);
-    if (!supervisorId) {
-      setEmpleadosFiltrados([]);
-      return;
+  const handleSeleccionarEmpleadoDirecto = (emp) => {
+    setEmpleadoSeleccionado(emp);
+    setBusquedaEmpleado(emp.nombre_completo || "");
+    setDeptoSeleccionado(null);
+    setBusquedaDepto("");
+    setSupervisorSeleccionado("");
+    setMostrarDropdownEmpleado(false);
+  };
+
+  const limpiarFiltros = () => {
+    setDeptoSeleccionado(null);
+    setBusquedaDepto("");
+    setSupervisorSeleccionado("");
+    setEmpleadoSeleccionado(null);
+    setBusquedaEmpleado("");
+  };
+
+  // --- FILTRADO FINAL DE LA TABLA DE INCIDENCIAS ---
+  const incidenciasMostrar = incidencias.filter((item) => {
+    const emp = item.empleados;
+    if (!emp) return false;
+
+    // 1. Filtro por empleado individual
+    if (empleadoSeleccionado) {
+      return String(emp.id) === String(empleadoSeleccionado.id);
     }
 
-    const { data, error } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, salario_mensual, puesto")
-      .eq("supervisor_id", supervisorId);
+    // 2. Filtro por supervisor
+    if (supervisorSeleccionado) {
+      return String(emp.supervisor_id) === String(supervisorSeleccionado);
+    }
 
-    if (error) console.error("❌ Error al cargar empleados por supervisor:", error.message);
-    else setEmpleadosFiltrados(data || []);
-  };
+    // 3. Filtro por departamento
+    if (deptoSeleccionado) {
+      return String(emp.departamento_id) === String(deptoSeleccionado.id);
+    }
 
-  // --- SELECCIÓN DIRECTA DE EMPLEADO ---
-  const handleSeleccionarEmpleadoDirecto = (emp) => {
-    setBusquedaEmpleado(emp.nombre_completo || "");
-    setEmpleadosFiltrados([emp]);
-    setMostrarDropdownEmpleado(false);
+    return true; // Si no hay filtros aplicados, muestra todas
+  });
+
+  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
+  const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
+    const salarioMensual = empleado?.salario_mensual || 0;
+    const salarioDiario = salarioMensual / 30;
+    const valorHora = salarioDiario / 8;
+
+    const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
+    const pagoHorasExtra = hrsReales * (valorHora * 2);
+
+    const descuentoFaltas = (Number(incidencia.faltas) || 0) * salarioDiario;
+    const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
+
+    const sueldoBaseSemanal = salarioDiario * diasPeriodo;
+    const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
+
+    return {
+      salarioDiario,
+      sueldoBaseSemanal,
+      pagoHorasExtra,
+      descuentoFaltas,
+      descuentoRetardos,
+      montoFinalSemanal: montoFinalSemanal < 0 ? 0 : montoFinalSemanal,
+    };
   };
 
   // --- GUARDAR EDICIÓN DE INCIDENCIA ---
@@ -158,54 +193,6 @@ export default function Incidencias() {
     }
   };
 
-  // Listas filtradas locales con protección contra valores nulos
-  const deptosFiltrados = departamentos.filter((d) =>
-    (d.nombre || "").toLowerCase().includes(busquedaDepto.toLowerCase())
-  );
-
-  const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
-    (e.nombre_completo || "").toLowerCase().includes(busquedaEmpleado.toLowerCase())
-  );
-
-  // --- FILTRADO DE LA TABLA DE INCIDENCIAS ---
-  const incidenciasMostrar = incidencias.filter((item) => {
-    if (empleadosFiltrados.length > 0) {
-      return empleadosFiltrados.some((e) => {
-        const idBuscado = String(e.id);
-        const idIncidenciaEmp = String(item.empleados?.id || item.empleado_id || "");
-        return idBuscado === idIncidenciaEmp;
-      });
-    }
-    return true;
-  });
-
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
-  const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
-    const salarioMensual = empleado?.salario_mensual || 0;
-    const salarioDiario = salarioMensual / 30;
-    const valorHora = salarioDiario / 8;
-
-    const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
-    const pagoHorasExtra = hrsReales * (valorHora * 2);
-
-    const descuentoFaltas = (Number(incidencia.faltas) || 0) * salarioDiario;
-    const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
-
-    const sueldoBaseSemanal = salarioDiario * diasPeriodo;
-    const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
-
-    return {
-      salarioDiario,
-      sueldoBaseSemanal,
-      pagoHorasExtra,
-      descuentoFaltas,
-      descuentoRetardos,
-      montoFinalSemanal: montoFinalSemanal < 0 ? 0 : montoFinalSemanal,
-    };
-  };
-
-  const empleadoUnico = empleadosFiltrados.length === 1 ? empleadosFiltrados[0] : null;
-
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-8">
       <h1 className="text-3xl font-bold text-gray-800">
@@ -226,25 +213,23 @@ export default function Incidencias() {
               placeholder="Escribe el nombre del departamento..."
               value={busquedaDepto}
               onFocus={() => setMostrarDropdownDepto(true)}
-              onBlur={() => setTimeout(() => setMostrarDropdownDepto(false), 200)}
               onChange={(e) => {
                 setBusquedaDepto(e.target.value);
                 setMostrarDropdownDepto(true);
                 if (!e.target.value) {
-                  setDeptoSeleccionado("");
-                  setSupervisores([]);
+                  setDeptoSeleccionado(null);
+                  setSupervisorSeleccionado("");
                 }
               }}
               className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
             />
 
             {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-              <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+              <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                 {deptosFiltrados.map((d) => (
                   <li
                     key={d.id}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleSeleccionarDepto(d)}
+                    onMouseDown={() => handleSeleccionarDepto(d)}
                     className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
                   >
                     {d.nombre}
@@ -261,15 +246,15 @@ export default function Incidencias() {
             <select
               disabled={!deptoSeleccionado}
               value={supervisorSeleccionado}
-              onChange={(e) => handleSeleccionarSupervisor(e.target.value)}
+              onChange={(e) => setSupervisorSeleccionado(e.target.value)}
               className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
             >
               <option value="">
                 {!deptoSeleccionado
                   ? "Selecciona primero un departamento"
-                  : "Seleccionar supervisor..."}
+                  : "Todos los supervisores"}
               </option>
-              {supervisores.map((sup) => (
+              {supervisoresDisponibles.map((sup) => (
                 <option key={sup.id} value={sup.id}>
                   {sup.nombre_completo}
                 </option>
@@ -291,22 +276,20 @@ export default function Incidencias() {
                   placeholder="Escribe el nombre del empleado..."
                   value={busquedaEmpleado}
                   onFocus={() => setMostrarDropdownEmpleado(true)}
-                  onBlur={() => setTimeout(() => setMostrarDropdownEmpleado(false), 200)}
                   onChange={(e) => {
                     setBusquedaEmpleado(e.target.value);
                     setMostrarDropdownEmpleado(true);
-                    if (!e.target.value) setEmpleadosFiltrados([]);
+                    if (!e.target.value) setEmpleadoSeleccionado(null);
                   }}
                   className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                 />
 
                 {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
-                  <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                  <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                     {empleadosBusquedaFiltrados.map((emp) => (
                       <li
                         key={emp.id}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
+                        onMouseDown={() => handleSeleccionarEmpleadoDirecto(emp)}
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
                         <span>{emp.nombre_completo || "Sin Nombre"}</span>
@@ -316,17 +299,13 @@ export default function Incidencias() {
                 )}
               </div>
 
-              {busquedaEmpleado && (
+              {(busquedaEmpleado || deptoSeleccionado || supervisorSeleccionado) && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setBusquedaEmpleado("");
-                    setMostrarDropdownEmpleado(false);
-                    setEmpleadosFiltrados([]);
-                  }}
+                  onClick={limpiarFiltros}
                   className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
                 >
-                  Limpiar
+                  Limpiar Filtros
                 </button>
               )}
             </div>
@@ -336,57 +315,49 @@ export default function Incidencias() {
       </div>
 
       {/* DETALLE Y INFORMACIÓN DEL TRABAJADOR SELECCIONADO */}
-      {empleadosFiltrados.length > 0 && (
+      {empleadoSeleccionado && (
         <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
           <div className="flex justify-between items-center">
             <h3 className="font-semibold text-blue-900 text-base">
-              👥 Filtro Activo ({empleadosFiltrados.length} empleado/s seleccionado/s):
+              👤 Detalle del Trabajador Seleccionado:
             </h3>
             <button
-              onClick={() => {
-                setEmpleadosFiltrados([]);
-                setBusquedaEmpleado("");
-                setDeptoSeleccionado("");
-                setSupervisorSeleccionado("");
-                setBusquedaDepto("");
-              }}
+              onClick={limpiarFiltros}
               className="text-xs text-red-600 hover:underline font-bold"
             >
-              Quitar Filtros
+              Quitar Filtro
             </button>
           </div>
 
-          {empleadoUnico && (
-            <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
-              <div>
-                <span className="text-gray-500 block">Nombre del Trabajador:</span>
-                <span className="font-bold text-gray-800">{empleadoUnico.nombre_completo}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Puesto / Cargo:</span>
-                <span className="font-semibold text-gray-700">{empleadoUnico.puesto || "No registrado"}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Salario Mensual:</span>
-                <span className="font-semibold text-green-700">
-                  {empleadoUnico.salario_mensual ? `$${Number(empleadoUnico.salario_mensual).toFixed(2)}` : "No asignado"}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Salario Diario (Base):</span>
-                <span className="font-semibold text-gray-700">
-                  {empleadoUnico.salario_mensual ? `$${(Number(empleadoUnico.salario_mensual) / 30).toFixed(2)}` : "N/A"}
-                </span>
-              </div>
+          <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
+            <div>
+              <span className="text-gray-500 block">Nombre del Trabajador:</span>
+              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
             </div>
-          )}
+            <div>
+              <span className="text-gray-500 block">Puesto / Cargo:</span>
+              <span className="font-semibold text-gray-700">{empleadoSeleccionado.puesto || "No registrado"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">Salario Mensual:</span>
+              <span className="font-semibold text-green-700">
+                {empleadoSeleccionado.salario_mensual ? `$${Number(empleadoSeleccionado.salario_mensual).toFixed(2)}` : "No asignado"}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">Salario Diario (Base):</span>
+              <span className="font-semibold text-gray-700">
+                {empleadoSeleccionado.salario_mensual ? `$${(Number(empleadoSeleccionado.salario_mensual) / 30).toFixed(2)}` : "N/A"}
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
       {/* ================= TABLA PRINCIPAL DE INCIDENCIAS ================= */}
       <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 overflow-x-auto">
         <h2 className="text-xl font-bold mb-4 text-gray-800">
-          Historial y Resumen de Ajustes
+          Historial y Resumen de Ajustes ({incidenciasMostrar.length} registros)
         </h2>
 
         <table className="w-full text-left border-collapse text-xs md:text-sm">
@@ -479,7 +450,7 @@ export default function Incidencias() {
                           className="bg-amber-500 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-amber-600"
                           title="Editar Incidencia"
                         >
-                          ✏️ Editar
+                          ✏️
                         </button>
                         <button
                           onClick={() =>

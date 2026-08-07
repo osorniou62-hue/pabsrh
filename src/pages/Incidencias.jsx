@@ -195,14 +195,11 @@ export default function Incidencias() {
             />
 
             {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-              <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+              <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                 {deptosFiltrados.map((d) => (
                   <li
                     key={d.id}
-                    onMouseDown={(e) => {
-                      e.preventDefault(); // Evita que pierda el foco antes de seleccionar
-                      handleSeleccionarDepto(d);
-                    }}
+                    onClick={() => handleSeleccionarDepto(d)}
                     className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
                   >
                     {d.nombre}
@@ -258,14 +255,11 @@ export default function Incidencias() {
                 />
 
                 {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
-                  <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                  <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                     {empleadosBusquedaFiltrados.map((emp) => (
                       <li
                         key={emp.id}
-                        onMouseDown={(e) => {
-                          e.preventDefault(); // Evita que se cancele el evento de selección
-                          handleSeleccionarEmpleadoDirecto(emp);
-                        }}
+                        onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
                         <span>{emp.nombre_completo}</span>

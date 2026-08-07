@@ -10,6 +10,9 @@ export default function Puestos() {
   const [busqueda, setBusqueda] = useState("");
   const [editandoId, setEditandoId] = useState(null);
 
+  // Estado para detectar scroll y mostrar accesos rápidos
+  const [mostrarBotonFlotante, setMostrarBotonFlotante] = useState(false);
+
   // Modal para Crear Departamento
   const [mostrarModalDepto, setMostrarModalDepto] = useState(false);
   const [nuevoDeptoNombre, setNuevoDeptoNombre] = useState("");
@@ -27,6 +30,18 @@ export default function Puestos() {
   useEffect(() => {
     cargarPuestos();
     cargarDepartamentos();
+
+    // Event listener para detectar el scroll en la ventana
+    const handleScroll = () => {
+      if (window.scrollY > 200) {
+        setMostrarBotonFlotante(true);
+      } else {
+        setMostrarBotonFlotante(false);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   const cargarPuestos = async () => {
@@ -130,17 +145,13 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // EDITAR PUESTO: Carga datos, hace scroll y despliega el Pop-Up de Perfil
-  const editarPuesto = async (puesto) => {
+  // Método original: Carga datos y solo hace scroll arriba
+  const editarPuesto = (puesto) => {
     setEditandoId(puesto.id);
     setNombre(puesto.nombre);
     setDepartamentoId(puesto.departamento_id || "");
 
-    // Scroll suave hacia la parte superior
     window.scrollTo({ top: 0, behavior: "smooth" });
-
-    // Abrir también el modal/pop-up de Perfil para modificación completa
-    await abrirPerfilPuesto(puesto);
   };
 
   const cancelarEdicion = () => {
@@ -168,7 +179,6 @@ export default function Puestos() {
   const abrirPerfilPuesto = async (puesto) => {
     setPuestoSeleccionado(puesto);
 
-    // Consulta en tiempo real de empleados asignados a este puesto
     const { count, error: errCount } = await supabase
       .from("empleados")
       .select("*", { count: "exact", head: true })
@@ -227,6 +237,9 @@ export default function Puestos() {
 
     return coincidePuesto || coincideDepto;
   });
+
+  // Encuentra el objeto completo del puesto que se está editando en ese momento
+  const puestoEnEdicion = puestos.find((p) => p.id === editandoId);
 
   return (
     <div className="max-w-6xl mx-auto p-6">
@@ -297,6 +310,37 @@ export default function Puestos() {
             </button>
           )}
         </div>
+
+        {/* BOTONES DIRECTOS ABAJO DE GUARDAR/ACTUALIZAR AL HACER SCROLL */}
+        {mostrarBotonFlotante && (
+          <div className="mt-4 pt-3 border-t flex flex-wrap items-center gap-3 bg-blue-50 p-3 rounded-lg border border-blue-200 animate-fade-in">
+            <span className="text-sm font-semibold text-blue-900">
+              ⚡ Accesos Rápidos:
+            </span>
+
+            {puestoEnEdicion ? (
+              <>
+                <button
+                  onClick={() => abrirPerfilPuesto(puestoEnEdicion)}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 font-medium shadow-sm"
+                >
+                  👁️ Modificar Perfil de ({puestoEnEdicion.nombre})
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-blue-700">
+                Selecciona un puesto de la tabla de abajo para editar o ver su perfil.
+              </p>
+            )}
+
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+              className="ml-auto text-xs text-blue-600 hover:underline font-medium"
+            >
+              ⬆️ Subir al inicio
+            </button>
+          </div>
+        )}
       </div>
 
       {/* BUSCADOR DE PUESTOS Y DEPARTAMENTOS */}
@@ -358,14 +402,14 @@ export default function Puestos() {
                         <button
                           onClick={() => abrirPerfilPuesto(puesto)}
                           className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 font-medium"
-                          title="Ver perfil completo"
+                          title="Ver o editar perfil completo"
                         >
                           👁️ Perfil
                         </button>
                         <button
                           onClick={() => editarPuesto(puesto)}
                           className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600 font-medium"
-                          title="Editar puesto y abrir perfil extendido"
+                          title="Editar nombre y departamento"
                         >
                           ✏️ Editar
                         </button>

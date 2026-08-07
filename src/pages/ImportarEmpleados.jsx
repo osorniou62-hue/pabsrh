@@ -47,7 +47,7 @@ export default function ImportarEmpleados() {
   const analizarNomina = (rows) => {
     if (!rows || rows.length === 0) return;
 
-    // 1. Encontrar la fila de encabezados que contenga "NOMBRE" o "EMPLEADO"
+    // 1. Encontrar la fila de encabezados por coincidencia de texto
     let headerRowIndex = rows.findIndex((row) =>
       row.some(
         (cell) =>
@@ -58,21 +58,20 @@ export default function ImportarEmpleados() {
       )
     );
 
-    // Si no encuentra la fila de encabezados por texto, asume que es la primera (0)
     if (headerRowIndex === -1) headerRowIndex = 0;
 
     const headers = rows[headerRowIndex].map((h) =>
       String(h || "").trim().toUpperCase()
     );
 
-    // 2. Función auxiliar para obtener el índice de la columna mediante palabras clave
+    // 2. Función auxiliar para encontrar índices por palabra clave
     const getColIndex = (keywords) => {
       return headers.findIndex((h) =>
         keywords.some((kw) => h.includes(kw.toUpperCase()))
       );
     };
 
-    // Mapeo dinámico por palabras clave del encabezado
+    // Mapeo dinámico por nombres de columna
     const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
     const idxPuesto = getColIndex(["PUESTO"]);
     const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
@@ -80,7 +79,7 @@ export default function ImportarEmpleados() {
     const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
     const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
 
-    // Incidencias y conceptos adicionales
+    // Incidencias y percepciones/deducciones
     const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
     const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
     const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
@@ -93,7 +92,7 @@ export default function ImportarEmpleados() {
 
     const encontrados = [];
 
-    // 3. Recorrer las filas a partir de la posterior a los encabezados
+    // 3. Extraer datos a partir de la fila siguiente a los encabezados
     const dataRows = rows.slice(headerRowIndex + 1);
 
     dataRows.forEach((fila) => {
@@ -108,7 +107,7 @@ export default function ImportarEmpleados() {
         (idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0
       );
 
-      // Lectura de incidencias mediante los índices dinámicos encontrados
+      // Lectura limpia de valores numéricos
       const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
       const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
       const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
@@ -177,7 +176,7 @@ export default function ImportarEmpleados() {
   };
 
   // ========================================================
-  // FUNCIONES AUXILIARES DE GUARDADO EN SUPABASE
+  // FUNCIONES DE PERSISTENCIA EN SUPABASE
   // ========================================================
 
   const actualizarIncidencias = async (empleadoId, empleado, pId) => {
@@ -203,7 +202,7 @@ export default function ImportarEmpleados() {
   const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
-    // 1. Guardar Bono mediante DELETE + INSERT
+    // 1. Guardar Bono (DELETE + INSERT) incluyendo tipo_bono_id
     if (Number(empleado.bono || 0) > 0) {
       await supabase
         .from("bonos_empleado")
@@ -217,6 +216,7 @@ export default function ImportarEmpleados() {
           {
             empleado_id: empleadoId,
             periodo_id: Number(pId),
+            tipo_bono_id: 1, // 👈 Se agrega para cumplir con NOT NULL constraint
             concepto: "BONO IMPORTADO",
             importe: Number(empleado.bono),
           },
@@ -225,7 +225,7 @@ export default function ImportarEmpleados() {
       if (bonoError) console.error("Error guardando bono:", bonoError.message);
     }
 
-    // 2. Guardar Descuentos mediante DELETE + INSERT
+    // 2. Guardar Descuentos (DELETE + INSERT)
     if (Number(empleado.descuento_varios || 0) > 0) {
       await supabase
         .from("descuentos_empleado")
@@ -451,7 +451,7 @@ export default function ImportarEmpleados() {
         }
 
         // ========================================================
-        // PROCESAR TABLAS SECUNDARIAS
+        // GUARDAR TABLAS RELACIONADAS
         // ========================================================
         if (empId) {
           await actualizarVacaciones(empId, empleado);
@@ -552,6 +552,7 @@ export default function ImportarEmpleados() {
                 <th className="p-3 text-right">Sueldo</th>
                 <th className="p-3 text-center">Vacaciones</th>
                 <th className="p-3 text-center">H. Extra</th>
+                <th className="p-3 text-right">Bono</th>
                 <th className="p-3 text-right">Prestamo (Saldo)</th>
               </tr>
             </thead>
@@ -566,6 +567,9 @@ export default function ImportarEmpleados() {
                   </td>
                   <td className="p-3 text-center">{empleado.dias_vacaciones} d</td>
                   <td className="p-3 text-center">{empleado.horas_extra} hrs</td>
+                  <td className="p-3 text-right">
+                    ${Number(empleado.bono).toLocaleString("es-MX")}
+                  </td>
                   <td className="p-3 text-right">
                     ${Number(empleado.saldo_prestamo).toLocaleString("es-MX")}
                   </td>

@@ -5,6 +5,9 @@ import { supabase } from "../services/supabase";
 export default function ReciboNomina() {
   const { empleadoId, periodoId } = useParams();
   const [datos, setDatos] = useState(null);
+  const [bonosList, setBonosList] = useState([]);
+  const [descuentosList, setDescuentosList] = useState([]);
+  const [incidenciasList, setIncidenciasList] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,7 +17,7 @@ export default function ReciboNomina() {
   const cargarDatosRecibo = async () => {
     setLoading(true);
 
-    // Consulta la nómina calculada del empleado en el período seleccionado
+    // 1. Consulta la nómina calculada del empleado en el período seleccionado
     const { data: nomina, error } = await supabase
       .from("nomina")
       .select(`
@@ -32,7 +35,31 @@ export default function ReciboNomina() {
       return;
     }
 
+    // 2. Consultar desglose de Bonos
+    const { data: bonos } = await supabase
+      .from("bonos_empleado")
+      .select("*")
+      .eq("empleado_id", empleadoId)
+      .eq("periodo_id", periodoId);
+
+    // 3. Consultar desglose de Descuentos
+    const { data: descuentos } = await supabase
+      .from("descuentos_empleado")
+      .select("*")
+      .eq("empleado_id", empleadoId)
+      .eq("periodo_id", periodoId);
+
+    // 4. Consultar Incidencias (Horas Extra y Faltas/Incapacidad)
+    const { data: incidencias } = await supabase
+      .from("incidencias")
+      .select("*")
+      .eq("empleado_id", empleadoId)
+      .eq("periodo_id", periodoId);
+
     setDatos(nomina);
+    setBonosList(bonos || []);
+    setDescuentosList(descuentos || []);
+    setIncidenciasList(incidencias || []);
     setLoading(false);
   };
 
@@ -54,6 +81,65 @@ export default function ReciboNomina() {
 
   const { empleados: emp, periodos_nomina: per } = datos;
 
+  // Helper para buscar monto de bono por palabra clave en su concepto
+  const obtenerMontoBono = (palabraClave) => {
+    const item = bonosList.find((b) =>
+      b.concepto?.toLowerCase().includes(palabraClave.toLowerCase())
+    );
+    return Number(item?.importe || 0);
+  };
+
+  // Helper para buscar monto de descuento por palabra clave
+  const obtenerMontoDescuento = (palabraClave) => {
+    const item = descuentosList.find((d) =>
+      d.concepto?.toLowerCase().includes(palabraClave.toLowerCase())
+    );
+    return Number(item?.importe || 0);
+  };
+
+  // Cálculo total de horas extras desde incidencias
+  const totalHorasExtraHoras = incidenciasList.reduce(
+    (acc, curr) => acc + Number(curr.horas_extra || 0),
+    0
+  );
+  const totalPagoHorasExtra = Number(datos?.total_horas_extra || 0);
+
+  // Bonos específicos detectados
+  const bonoPuesto = obtenerMontoBono("puesto");
+  const bonoPuntualidad = obtenerMontoBono("puntualidad");
+  const bonoAsistencia = obtenerMontoBono("asistencia");
+  const bonoMultiplicador = obtenerMontoBono("multiplicador");
+  const bonoDesempeno = obtenerMontoBono("desempeño") || obtenerMontoBono("desempeno");
+  const apoyoMedico = obtenerMontoBono("medico") || obtenerMontoBono("médico");
+  const bonoExtras = obtenerMontoBono("extra");
+  const gratificacionEspecial = obtenerMontoBono("gratificacion") || obtenerMontoBono("especial");
+
+  // Si hay otros bonos que no entraron en los específicos anteriores, los agrupamos
+  const otrosBonos = bonosList
+    .filter(
+      (b) =>
+        !["puesto", "puntualidad", "asistencia", "multiplicador", "desempeño", "desempeno", "medico", "médico", "extra", "gratificacion", "especial"].some((k) =>
+          b.concepto?.toLowerCase().includes(k)
+        )
+    )
+    .reduce((acc, curr) => acc + Number(curr.importe || 0), 0);
+
+  // Descuentos específicos
+  const bajoDesempeno = obtenerMontoDescuento("bajo desempeño") || obtenerMontoDescuento("desempeño");
+  const epp = obtenerMontoDescuento("epp");
+  const prestamo = obtenerMontoDescuento("prestamo") || obtenerMontoDescuento("préstamo");
+  const ausencias = obtenerMontoDescuento("ausencia");
+
+  // Otros descuentos no especificados
+  const otrosDescuentos = descuentosList
+    .filter(
+      (d) =>
+        !["bajo desempeño", "desempeño", "epp", "prestamo", "préstamo", "ausencia"].some((k) =>
+          d.concepto?.toLowerCase().includes(k)
+        )
+    )
+    .reduce((acc, curr) => acc + Number(curr.importe || 0), 0);
+
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-8 flex flex-col items-center">
       {/* Botón de impresión (Oculto al imprimir) */}
@@ -66,7 +152,7 @@ export default function ReciboNomina() {
         </button>
       </div>
 
-      {/* Contenedor Hoja Completa (Estilo Hoja de Excel) */}
+      {/* Contenedor Hoja Completa */}
       <div className="w-full max-w-3xl bg-white p-6 border border-gray-300 shadow-xl font-sans text-xs text-black print:shadow-none print:border-none print:p-0">
         
         {/* ==========================================
@@ -74,7 +160,7 @@ export default function ReciboNomina() {
            ========================================== */}
         <div className="border border-black p-4 mb-6">
           <div className="flex justify-between items-center font-bold border-b border-black pb-1 mb-2 text-sm">
-            <span>RECIBO</span>
+            <span>RECIBO OFICIAL</span>
             <div>
               <span>FECHA DE PAGO: </span>
               <span className="font-normal">{per?.fecha_pago || "—"}</span>
@@ -96,7 +182,7 @@ export default function ReciboNomina() {
             {/* Percepciones Base */}
             <div className="col-span-7 pr-2 border-r border-gray-300 space-y-1">
               <div className="flex justify-between">
-                <span>SUELDO</span>
+                <span>SUELDO BASE</span>
                 <span>${Number(datos?.sueldo_base || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
@@ -133,7 +219,7 @@ export default function ReciboNomina() {
               </div>
               <div className="flex justify-between pt-2 border-t border-gray-200">
                 <span>AUSENCIAS</span>
-                <span>${Number(datos?.descuento_ausencias || 0).toFixed(2)}</span>
+                <span>${Number(ausencias || datos?.descuento_ausencias || 0).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -142,17 +228,17 @@ export default function ReciboNomina() {
           <div className="grid grid-cols-12 font-bold py-1 my-1">
             <div className="col-span-7 flex justify-between pr-2">
               <span>PERCEPCIONES</span>
-              <span>${Number(datos?.percepciones_oficial || datos?.sueldo_base || 0).toFixed(2)}</span>
+              <span>${Number(datos?.sueldo_base || 0).toFixed(2)}</span>
             </div>
             <div className="col-span-5 flex justify-between pl-2">
               <span>DEDUCCIONES</span>
-              <span>${Number(datos?.deducciones_oficial || 0).toFixed(2)}</span>
+              <span>${Number(ausencias || datos?.descuento_ausencias || 0).toFixed(2)}</span>
             </div>
           </div>
 
           <div className="flex justify-between font-bold border-t border-b border-black py-1 my-1">
             <span>TOTAL PAGO</span>
-            <span>${Number(datos?.total_pago_oficial || datos?.sueldo_base || 0).toFixed(2)}</span>
+            <span>${(Number(datos?.sueldo_base || 0) - Number(ausencias || 0)).toFixed(2)}</span>
           </div>
 
           {/* Pie del Recibo 1 */}
@@ -180,7 +266,7 @@ export default function ReciboNomina() {
            ========================================== */}
         <div className="border border-black p-4">
           <div className="flex justify-between items-center font-bold border-b border-black pb-1 mb-2 text-sm">
-            <span>RECIBO</span>
+            <span>RECIBO COMPLEMENTARIO / BONOS</span>
             <div>
               <span>FECHA DE PAGO: </span>
               <span className="font-normal">{per?.fecha_pago || "—"}</span>
@@ -206,56 +292,40 @@ export default function ReciboNomina() {
                 <span>${Number(datos?.sueldo_base || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span>HRS. EXTRAS</span>
-                <span>${Number(datos?.horas_extras || 0).toFixed(2)}</span>
+                <span>HRS. EXTRAS ({totalHorasExtraHoras} hrs)</span>
+                <span>${totalPagoHorasExtra.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>BONO POR PUESTO</span>
-                <span>${Number(datos?.bono_puesto || 0).toFixed(2)}</span>
+                <span>${bonoPuesto.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>BONO PUNTUALIDAD</span>
-                <span>${Number(datos?.bono_puntualidad || 0).toFixed(2)}</span>
+                <span>${bonoPuntualidad.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>BONO ASISTENCIA</span>
-                <span>${Number(datos?.bono_asistencia || 0).toFixed(2)}</span>
+                <span>${bonoAsistencia.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>BONO MULTIPLICADOR</span>
-                <span>${Number(datos?.bono_multiplicador || 0).toFixed(2)}</span>
+                <span>${bonoMultiplicador.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>BONO DESEMPEÑO</span>
-                <span>${Number(datos?.bono_desempeno || 0).toFixed(2)}</span>
+                <span>${bonoDesempeno.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>APOYO MEDICO</span>
-                <span>${Number(datos?.apoyo_medico || 0).toFixed(2)}</span>
+                <span>${apoyoMedico.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span>VACACIONES</span>
-                <span>${Number(datos?.vacaciones_complemento || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>PRIMA VACACIONAL</span>
-                <span>${Number(datos?.prima_vacacional_comp || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>BONO EXTRAS</span>
-                <span>${Number(datos?.bono_extras || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>AGUINALDO</span>
-                <span>${Number(datos?.aguinaldo_comp || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>PTU</span>
-                <span>${Number(datos?.ptu_comp || 0).toFixed(2)}</span>
+                <span>BONO EXTRAS / OTROS</span>
+                <span>${(bonoExtras + otrosBonos).toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>GRATIFICACIÓN ESPECIAL</span>
-                <span>${Number(datos?.gratificacion_especial || 0).toFixed(2)}</span>
+                <span>${gratificacionEspecial.toFixed(2)}</span>
               </div>
             </div>
 
@@ -275,27 +345,23 @@ export default function ReciboNomina() {
               </div>
               <div className="flex justify-between pt-2 border-t border-gray-200">
                 <span>BAJO DESEMPEÑO</span>
-                <span>${Number(datos?.bajo_desempeno || 0).toFixed(2)}</span>
+                <span>${bajoDesempeno.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>EPP</span>
-                <span>${Number(datos?.epp || 0).toFixed(2)}</span>
+                <span>${epp.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span>DESCUENTOS GRAL</span>
-                <span>${Number(datos?.descuentos_gral || 0).toFixed(2)}</span>
+                <span>DESCUENTOS GRAL / OTROS</span>
+                <span>${otrosDescuentos.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>PRESTAMO</span>
-                <span>${Number(datos?.prestamo || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>OTRAS DEDUCCIONES</span>
-                <span>${Number(datos?.otras_deducciones || 0).toFixed(2)}</span>
+                <span>${prestamo.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>AUSENCIAS</span>
-                <span>${Number(datos?.descuento_ausencias || 0).toFixed(2)}</span>
+                <span>${ausencias.toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -303,17 +369,17 @@ export default function ReciboNomina() {
           {/* Totales Recibo 2 */}
           <div className="grid grid-cols-12 font-bold py-1 my-1">
             <div className="col-span-7 flex justify-between pr-2">
-              <span>PERCEPCIONES</span>
-              <span>${Number(datos?.total_percepciones_complemento || datos?.neto_pagar || 0).toFixed(2)}</span>
+              <span>TOTAL PERCEPCIONES</span>
+              <span>${Number(datos?.total_percepciones || 0).toFixed(2)}</span>
             </div>
             <div className="col-span-5 flex justify-between pl-2">
-              <span>DEDUCCIONES</span>
-              <span>${Number(datos?.total_deducciones_complemento || 0).toFixed(2)}</span>
+              <span>TOTAL DEDUCCIONES</span>
+              <span>${Number(datos?.total_descuentos || 0).toFixed(2)}</span>
             </div>
           </div>
 
           <div className="flex justify-between font-bold border-t border-b border-black py-1 my-1">
-            <span>TOTAL PAGO</span>
+            <span>NETO A PAGAR</span>
             <span>${Number(datos?.neto_pagar || 0).toFixed(2)}</span>
           </div>
 

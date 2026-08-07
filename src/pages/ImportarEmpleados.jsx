@@ -47,7 +47,6 @@ export default function ImportarEmpleados() {
   const analizarNomina = (rows) => {
     if (!rows || rows.length === 0) return;
 
-    // 1. Encontrar la fila de encabezados por coincidencia de texto
     let headerRowIndex = rows.findIndex((row) =>
       row.some(
         (cell) =>
@@ -64,14 +63,12 @@ export default function ImportarEmpleados() {
       String(h || "").trim().toUpperCase()
     );
 
-    // 2. Función auxiliar para encontrar índices por palabra clave
     const getColIndex = (keywords) => {
       return headers.findIndex((h) =>
         keywords.some((kw) => h.includes(kw.toUpperCase()))
       );
     };
 
-    // Mapeo dinámico por nombres de columna
     const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
     const idxPuesto = getColIndex(["PUESTO"]);
     const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
@@ -79,7 +76,6 @@ export default function ImportarEmpleados() {
     const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
     const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
 
-    // Incidencias y percepciones/deducciones
     const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
     const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
     const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
@@ -91,8 +87,6 @@ export default function ImportarEmpleados() {
     const idxSaldoPrestamo = getColIndex(["ADEUDO", "SALDO"]);
 
     const encontrados = [];
-
-    // 3. Extraer datos a partir de la fila siguiente a los encabezados
     const dataRows = rows.slice(headerRowIndex + 1);
 
     dataRows.forEach((fila) => {
@@ -107,7 +101,6 @@ export default function ImportarEmpleados() {
         (idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0
       );
 
-      // Lectura limpia de valores numéricos
       const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
       const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
       const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
@@ -176,7 +169,7 @@ export default function ImportarEmpleados() {
   };
 
   // ========================================================
-  // FUNCIONES DE PERSISTENCIA EN SUPABASE
+  // FUNCIONES DE PERSISTENCIA EN SUPABASE (OPCIÓN B: DECIMALES)
   // ========================================================
 
   const actualizarIncidencias = async (empleadoId, empleado, pId) => {
@@ -185,6 +178,7 @@ export default function ImportarEmpleados() {
     const payload = {
       empleado_id: empleadoId,
       periodo_id: Number(pId),
+      // Mantiene el valor decimal exacto que viene del Excel
       horas_extra: Number(empleado.horas_extra || 0),
       faltas_justificadas: Number(empleado.faltas_justificadas || 0),
       faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
@@ -202,7 +196,6 @@ export default function ImportarEmpleados() {
   const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
-    // 1. Guardar Bono (DELETE + INSERT) incluyendo tipo_bono_id
     if (Number(empleado.bono || 0) > 0) {
       await supabase
         .from("bonos_empleado")
@@ -216,7 +209,7 @@ export default function ImportarEmpleados() {
           {
             empleado_id: empleadoId,
             periodo_id: Number(pId),
-            tipo_bono_id: 1, // 👈 Se agrega para cumplir con NOT NULL constraint
+            tipo_bono_id: 1,
             concepto: "BONO IMPORTADO",
             importe: Number(empleado.bono),
           },
@@ -225,7 +218,6 @@ export default function ImportarEmpleados() {
       if (bonoError) console.error("Error guardando bono:", bonoError.message);
     }
 
-    // 2. Guardar Descuentos (DELETE + INSERT)
     if (Number(empleado.descuento_varios || 0) > 0) {
       await supabase
         .from("descuentos_empleado")
@@ -262,7 +254,7 @@ export default function ImportarEmpleados() {
     if (vacacionesExistentes) {
       await supabase
         .from("vacaciones")
-        .update({ dias: empleado.dias_vacaciones })
+        .update({ dias: Number(empleado.dias_vacaciones) })
         .eq("id", vacacionesExistentes.id);
     } else {
       await supabase.from("vacaciones").insert([
@@ -270,7 +262,7 @@ export default function ImportarEmpleados() {
           empleado_id: empleadoId,
           fecha_inicio: fechaHoy,
           fecha_fin: fechaHoy,
-          dias: empleado.dias_vacaciones,
+          dias: Number(empleado.dias_vacaciones),
           estatus: "IMPORTADO",
         },
       ]);
@@ -450,9 +442,6 @@ export default function ImportarEmpleados() {
           }
         }
 
-        // ========================================================
-        // GUARDAR TABLAS RELACIONADAS
-        // ========================================================
         if (empId) {
           await actualizarVacaciones(empId, empleado);
           await actualizarPrestamo(empId, empleado);

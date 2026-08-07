@@ -80,20 +80,17 @@ export default function Incidencias() {
   };
 
   // --- MANEJO DE FILTROS EN CADENA (DEPTO -> SUPERVISOR) ---
-  const handleSeleccionarDepto = async (deptoId) => {
-    setDeptoSeleccionado(deptoId);
+  const handleSeleccionarDepto = async (depto) => {
+    setBusquedaDepto(depto.nombre);
+    setDeptoSeleccionado(depto.id);
     setSupervisorSeleccionado("");
     setEmpleadosFiltrados([]);
-
-    if (!deptoId) {
-      setSupervisores([]);
-      return;
-    }
+    setMostrarDropdownDepto(false);
 
     const { data } = await supabase
       .from("empleados")
       .select("id, nombre_completo, salario_mensual")
-      .eq("departamento_id", deptoId)
+      .eq("departamento_id", depto.id)
       .eq("es_supervisor", true)
       .eq("activo", true);
 
@@ -119,8 +116,8 @@ export default function Incidencias() {
   // --- SELECCIÓN DIRECTA DE EMPLEADO ---
   const handleSeleccionarEmpleadoDirecto = (emp) => {
     setBusquedaEmpleado(emp.nombre_completo);
-    setMostrarDropdownEmpleado(false);
     setEmpleadosFiltrados([emp]);
+    setMostrarDropdownEmpleado(false);
   };
 
   // Listas filtradas locales
@@ -132,10 +129,9 @@ export default function Incidencias() {
     e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
   );
 
-  // --- FILTRADO DE LA TABLA DE INCIDENCIAS (CORREGIDO) ---
+  // --- FILTRADO DE LA TABLA DE INCIDENCIAS ---
   const incidenciasMostrar = incidencias.filter((item) => {
     if (empleadosFiltrados.length > 0) {
-      // Normalización a String para evitar fallos de ID de numérico vs texto
       const empIdItem = String(item.empleados?.id || item.empleado_id || "");
       return empleadosFiltrados.some((e) => String(e.id) === empIdItem);
     }
@@ -190,20 +186,22 @@ export default function Incidencias() {
               onChange={(e) => {
                 setBusquedaDepto(e.target.value);
                 setMostrarDropdownDepto(true);
-                if (!e.target.value) handleSeleccionarDepto("");
+                if (!e.target.value) {
+                  setDeptoSeleccionado("");
+                  setSupervisores([]);
+                }
               }}
               className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
             />
 
             {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-              <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+              <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                 {deptosFiltrados.map((d) => (
                   <li
                     key={d.id}
-                    onClick={() => {
-                      setBusquedaDepto(d.nombre);
-                      handleSeleccionarDepto(d.id);
-                      setMostrarDropdownDepto(false);
+                    onMouseDown={(e) => {
+                      e.preventDefault(); // Evita que pierda el foco antes de seleccionar
+                      handleSeleccionarDepto(d);
                     }}
                     className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
                   >
@@ -260,11 +258,14 @@ export default function Incidencias() {
                 />
 
                 {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
-                  <ul className="absolute z-10 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                  <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
                     {empleadosBusquedaFiltrados.map((emp) => (
                       <li
                         key={emp.id}
-                        onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
+                        onMouseDown={(e) => {
+                          e.preventDefault(); // Evita que se cancele el evento de selección
+                          handleSeleccionarEmpleadoDirecto(emp);
+                        }}
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
                         <span>{emp.nombre_completo}</span>
@@ -276,6 +277,7 @@ export default function Incidencias() {
 
               {busquedaEmpleado && (
                 <button
+                  type="button"
                   onClick={() => {
                     setBusquedaEmpleado("");
                     setMostrarDropdownEmpleado(false);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+ import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase";
 import { Link } from "react-router-dom";
 
@@ -6,100 +6,58 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 export default function Dashboard() {
-
-  const [activos, setActivos] =
-    useState(0);
-
-  const [bajas, setBajas] =
-    useState(0);
-
-  const [departamentos, setDepartamentos] =
-    useState(0);
-
-  const [puestos, setPuestos] =
-    useState(0);
+  const [activos, setActivos] = useState(0);
+  const [bajas, setBajas] = useState(0);
+  const [departamentos, setDepartamentos] = useState(0);
+  const [puestos, setPuestos] = useState(0);
 
   useEffect(() => {
-
     cargarIndicadores();
-
   }, []);
 
-  const cargarIndicadores =
-    async () => {
+  const cargarIndicadores = async () => {
+    const { count: empleadosActivos } = await supabase
+      .from("empleados")
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .eq("activo", true);
 
-      const {
-        count: empleadosActivos,
-      } = await supabase
-        .from("empleados")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("activo", true);
+    const { count: empleadosBaja } = await supabase
+      .from("empleados")
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .eq("activo", false);
 
-      const {
-        count: empleadosBaja,
-      } = await supabase
-        .from("empleados")
-        .select("*", {
-          count: "exact",
-          head: true,
-        })
-        .eq("activo", false);
+    const { count: totalDepartamentos } = await supabase
+      .from("departamentos")
+      .select("*", {
+        count: "exact",
+        head: true,
+      });
 
-      const {
-        count: totalDepartamentos,
-      } = await supabase
-        .from("departamentos")
-        .select("*", {
-          count: "exact",
-          head: true,
-        });
+    const { count: totalPuestos } = await supabase
+      .from("puestos")
+      .select("*", {
+        count: "exact",
+        head: true,
+      });
 
-      const {
-        count: totalPuestos,
-      } = await supabase
-        .from("puestos")
-        .select("*", {
-          count: "exact",
-          head: true,
-        });
+    setActivos(empleadosActivos || 0);
+    setBajas(empleadosBaja || 0);
+    setDepartamentos(totalDepartamentos || 0);
+    setPuestos(totalPuestos || 0);
+  };
 
-      setActivos(
-        empleadosActivos || 0
-      );
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/";
+  };
 
-      setBajas(
-        empleadosBaja || 0
-      );
-
-      setDepartamentos(
-        totalDepartamentos || 0
-      );
-
-      setPuestos(
-        totalPuestos || 0
-      );
-
-    };
-
-  const cerrarSesion =
-    async () => {
-
-      await supabase.auth.signOut();
-
-      window.location.href = "/";
-
-    };
-
-  const Modulo = ({
-    titulo,
-    descripcion,
-    ruta,
-    icono,
-  }) => (
-
+  const Modulo = ({ titulo, descripcion, ruta, icono }) => (
     <Link
       to={ruta}
       className="
@@ -111,50 +69,20 @@ export default function Dashboard() {
         transition
       "
     >
-
-      <div className="text-4xl mb-3">
-        {icono}
-      </div>
-
-      <h3
-        className="
-          text-xl
-          font-bold
-          mb-2
-        "
-      >
-        {titulo}
-      </h3>
-
-      <p className="text-gray-500">
-        {descripcion}
-      </p>
-
+      <div className="text-4xl mb-3">{icono}</div>
+      <h3 className="text-xl font-bold mb-2">{titulo}</h3>
+      <p className="text-gray-500">{descripcion}</p>
     </Link>
-
   );
 
   return (
-
     <Layout>
-
       <div className="flex justify-between items-center mb-8">
-
         <div>
-
-          <h1
-            className="
-              text-4xl
-              font-bold
-            "
-          >
-            Dashboard
-          </h1>
-
+          <h1 className="text-4xl font-bold">Dashboard</h1>
           <p className="text-gray-500 mt-2">
             Bienvenido al Sistema RH y Nómina
           </p>
-
         </div>
 
         <button
@@ -171,67 +99,38 @@ export default function Dashboard() {
         >
           Cerrar Sesión
         </button>
-
       </div>
 
-      <div
-        className="
-          grid
-          md:grid-cols-4
-          gap-6
-          mb-10
-        "
-      >
-
+      <div className="grid md:grid-cols-4 gap-6 mb-10">
         <KpiCard
           titulo="Activos"
           valor={activos}
           icono="👥"
           color="text-green-600"
         />
-
         <KpiCard
           titulo="Bajas"
           valor={bajas}
           icono="🚫"
           color="text-red-600"
         />
-
         <KpiCard
           titulo="Departamentos"
           valor={departamentos}
           icono="🏢"
           color="text-blue-600"
         />
-
         <KpiCard
           titulo="Puestos"
           valor={puestos}
           icono="💼"
           color="text-purple-600"
         />
-
       </div>
 
-      <h2
-        className="
-          text-2xl
-          font-bold
-          mb-6
-        "
-      >
-        Módulos
-      </h2>
+      <h2 className="text-2xl font-bold mb-6">Módulos</h2>
 
-      <div
-        className="
-          grid
-          md:grid-cols-3
-          xl:grid-cols-4
-          gap-6
-        "
-      >
-
+      <div className="grid md:grid-cols-3 xl:grid-cols-4 gap-6">
         <Modulo
           icono="👥"
           titulo="Empleados"
@@ -258,6 +157,14 @@ export default function Dashboard() {
           titulo="Periodos"
           descripcion="Periodos de nómina."
           ruta="/periodos"
+        />
+
+        {/* MÓDULO DE INCIDENCIAS AGREGADO */}
+        <Modulo
+          icono="📝"
+          titulo="Incidencias"
+          descripcion="Horas extra, faltas y novedades."
+          ruta="/incidencias"
         />
 
         <Modulo
@@ -336,11 +243,7 @@ export default function Dashboard() {
           descripcion="Datos corporativos."
           ruta="/configuracion"
         />
-
       </div>
-
     </Layout>
-
   );
-
 }

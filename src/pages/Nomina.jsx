@@ -50,6 +50,7 @@ export default function Nomina() {
         total_descuentos,
         total_horas_extra,
         total_percepciones,
+        descuento_ausencias,
         neto_pagar,
         empleados (
           numero_empleado,
@@ -65,18 +66,23 @@ export default function Nomina() {
     }
 
     if (data && data.length > 0) {
-      const formateado = data.map((item) => ({
-        id: item.id, // ID único del registro en la tabla nomina
-        empleado_id: item.empleado_id,
-        numero_empleado: item.empleados?.numero_empleado,
-        nombre_completo: item.empleados?.nombre_completo,
-        sueldo_base: Number(item.sueldo_base || 0),
-        bonos: Number(item.total_bonos || 0),
-        horas_extra: Number(item.total_horas_extra || 0),
-        descuentos: Number(item.total_descuentos || 0),
-        percepciones: Number(item.total_percepciones || 0),
-        neto: Number(item.neto_pagar || 0),
-      }));
+      const formateado = data.map((item) => {
+        const descGen = Number(item.total_descuentos || 0);
+        const descAus = Number(item.descuento_ausencias || 0);
+        
+        return {
+          id: item.id,
+          empleado_id: item.empleado_id,
+          numero_empleado: item.empleados?.numero_empleado,
+          nombre_completo: item.empleados?.nombre_completo,
+          sueldo_base: Number(item.sueldo_base || 0),
+          bonos: Number(item.total_bonos || 0),
+          horas_extra: Number(item.total_horas_extra || 0),
+          descuentos: descGen + descAus,
+          percepciones: Number(item.total_percepciones || 0),
+          neto: Number(item.neto_pagar || 0),
+        };
+      });
       setNomina(formateado);
     } else {
       setNomina([]);
@@ -124,6 +130,7 @@ export default function Nomina() {
         .eq("empleado_id", empleado.id)
         .eq("periodo_id", periodoId);
 
+      // 1. Suma de Bonos y Descuentos
       const totalBonos = (bonos || []).reduce(
         (acum, item) => acum + Number(item.importe || 0),
         0
@@ -134,17 +141,41 @@ export default function Nomina() {
         0
       );
 
+      // 2. Extracción de Incidencias (Horas extra, Faltas y Vacaciones)
       const horasExtra = (incidencias || []).reduce(
         (acum, item) => acum + Number(item.horas_extra || 0),
         0
       );
 
-      const pagoHorasExtra = horasExtra * 100;
-      const sueldoBase = Number(empleado.sueldo_base || 0);
-      const percepciones = sueldoBase + totalBonos + pagoHorasExtra;
-      const neto = percepciones - totalDescuentos;
+      const faltasJustificadas = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.faltas_justificadas || 0),
+        0
+      );
 
-      // Upsert y retorno de la fila guardada
+      const faltasInjustificadas = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.faltas_injustificadas || 0),
+        0
+      );
+
+      const diasVacaciones = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.dias_vacaciones || 0),
+        0
+      );
+
+      const descuentoAusencias = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.descuento_ausencias || 0),
+        0
+      );
+
+      // 3. Cálculos Finales
+      const pagoHorasExtra = horasExtra * 100; // Multiplicador base (ajustar si manejas tarifa por hora en empleado)
+      const sueldoBase = Number(empleado.sueldo_base || 0);
+
+      const percepciones = sueldoBase + totalBonos + pagoHorasExtra;
+      const deduccionesTotales = totalDescuentos + descuentoAusencias;
+      const neto = percepciones - deduccionesTotales;
+
+      // 4. Upsert y retorno de la fila guardada
       const { data: nominaGuardada, error: errUpsert } = await supabase
         .from("nomina")
         .upsert(
@@ -157,6 +188,10 @@ export default function Nomina() {
               total_descuentos: totalDescuentos,
               total_horas_extra: pagoHorasExtra,
               total_percepciones: percepciones,
+              descuento_ausencias: descuentoAusencias,
+              faltas_justificadas: faltasJustificadas,
+              faltas_injustificadas: faltasInjustificadas,
+              dias_vacaciones: diasVacaciones,
               neto_pagar: neto,
               estatus: "GENERADA",
             },
@@ -179,7 +214,7 @@ export default function Nomina() {
         sueldo_base: sueldoBase,
         bonos: totalBonos,
         horas_extra: pagoHorasExtra,
-        descuentos: totalDescuentos,
+        descuentos: deduccionesTotales,
         percepciones,
         neto,
       });
@@ -305,7 +340,6 @@ export default function Nomina() {
                     ${registro.neto.toFixed(2)}
                   </td>
                   <td className="p-4 text-center">
-                    {/* Atributos target="_blank" y rel para abrir en nueva pestaña de forma segura */}
                     <Link
                       to={`/nomina/recibo/${registro.empleado_id}/${periodoId}`}
                       target="_blank"

@@ -130,13 +130,17 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  const editarPuesto = (puesto) => {
+  // EDITAR PUESTO: Carga datos, hace scroll y despliega el Pop-Up de Perfil
+  const editarPuesto = async (puesto) => {
     setEditandoId(puesto.id);
     setNombre(puesto.nombre);
     setDepartamentoId(puesto.departamento_id || "");
 
-    // Scroll suave hacia la sección superior del formulario
+    // Scroll suave hacia la parte superior
     window.scrollTo({ top: 0, behavior: "smooth" });
+
+    // Abrir también el modal/pop-up de Perfil para modificación completa
+    await abrirPerfilPuesto(puesto);
   };
 
   const cancelarEdicion = () => {
@@ -203,7 +207,7 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // Filtro resiliente (Puesto o Departamento)
+  // Filtro inteligente (Puesto o Departamento)
   const puestosFiltrados = puestos.filter((puesto) => {
     if (!busqueda.trim()) return true;
 
@@ -295,7 +299,7 @@ export default function Puestos() {
         </div>
       </div>
 
-      {/* BUSCADOR */}
+      {/* BUSCADOR DE PUESTOS Y DEPARTAMENTOS */}
       <div className="bg-white shadow rounded p-4 mb-6">
         <input
           type="text"
@@ -306,7 +310,7 @@ export default function Puestos() {
         />
       </div>
 
-      {/* TABLA RESULTADOS */}
+      {/* TABLA DE RESULTADOS */}
       <div className="bg-white shadow rounded p-4 overflow-x-auto">
         <table className="w-full border text-left">
           <thead>
@@ -354,15 +358,16 @@ export default function Puestos() {
                         <button
                           onClick={() => abrirPerfilPuesto(puesto)}
                           className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 font-medium"
-                          title="Ver perfil completo y actualizar detalles"
+                          title="Ver perfil completo"
                         >
                           👁️ Perfil
                         </button>
                         <button
                           onClick={() => editarPuesto(puesto)}
                           className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600 font-medium"
+                          title="Editar puesto y abrir perfil extendido"
                         >
-                          Editar
+                          ✏️ Editar
                         </button>
                         {puesto.activo && (
                           <button

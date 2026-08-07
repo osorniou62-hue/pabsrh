@@ -12,6 +12,9 @@ export default function ImportarEmpleados() {
   const [periodos, setPeriodos] = useState([]);
   const [periodoId, setPeriodoId] = useState("");
   const [loading, setLoading] = useState(false);
+  
+  // Nuevo estado para almacenar el resumen de la importación
+  const [resumen, setResumen] = useState(null);
 
   useEffect(() => {
     cargarPeriodos();
@@ -39,10 +42,6 @@ export default function ImportarEmpleados() {
     }
     return fecha.toISOString().split("T")[0];
   };
-
-  // ========================================================
-  // LECTURA Y ANÁLISIS DINÁMICO DEL EXCEL
-  // ========================================================
 
   const analizarNomina = (rows) => {
     if (!rows || rows.length === 0) return;
@@ -138,11 +137,7 @@ export default function ImportarEmpleados() {
       }
     });
 
-    console.log("EMPLEADOS DETECTADOS:", encontrados.length);
-    if (encontrados.length > 0) {
-      console.log("PRIMER EMPLEADO DETECTADO:", encontrados[0]);
-    }
-
+    setResumen(null); // Limpia el resumen previo si vuelve a cargar un archivo
     setEmpleados(encontrados);
   };
 
@@ -168,17 +163,12 @@ export default function ImportarEmpleados() {
     reader.readAsBinaryString(file);
   };
 
-  // ========================================================
-  // FUNCIONES DE PERSISTENCIA EN SUPABASE (OPCIÓN B: DECIMALES)
-  // ========================================================
-
   const actualizarIncidencias = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
     const payload = {
       empleado_id: empleadoId,
       periodo_id: Number(pId),
-      // Mantiene el valor decimal exacto que viene del Excel
       horas_extra: Number(empleado.horas_extra || 0),
       faltas_justificadas: Number(empleado.faltas_justificadas || 0),
       faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
@@ -301,10 +291,6 @@ export default function ImportarEmpleados() {
       ]);
     }
   };
-
-  // ========================================================
-  // PROCESO DE IMPORTACIÓN A SUPABASE
-  // ========================================================
 
   const importarEmpleados = async () => {
     if (empleados.length === 0) {
@@ -450,9 +436,15 @@ export default function ImportarEmpleados() {
         }
       }
 
-      alert(
-        `Importación Exitosa!\n\nInsertados: ${insertados}\nActualizados: ${actualizados}\nErrores: ${errores.length}`
-      );
+      // Guardar el resumen completo de la importación
+      setResumen({
+        insertados,
+        actualizados,
+        totalErrores: errores.length,
+        detallesErrores: errores,
+        periodoNombre: periodos.find((p) => String(p.id) === String(periodoId))?.descripcion || "",
+      });
+
     } catch (error) {
       console.error(error);
       alert("Error durante la importación");
@@ -464,11 +456,13 @@ export default function ImportarEmpleados() {
   return (
     <Layout>
       <div>
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
-          <p className="text-gray-500 mt-2">
-            Carga masiva e Incidencias desde NOMINA.xlsx
-          </p>
+        <div className="mb-8 flex justify-between items-center">
+          <div>
+            <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
+            <p className="text-gray-500 mt-2">
+              Carga masiva e Incidencias desde NOMINA.xlsx
+            </p>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 mb-8">
@@ -491,6 +485,66 @@ export default function ImportarEmpleados() {
             color="text-purple-600"
           />
         </div>
+
+        {/* Tarjeta del Resumen Post-Importación */}
+        {resumen && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 mb-6">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-emerald-900 flex items-[#000] gap-2">
+                  🎉 ¡Importación Finalizada!
+                </h2>
+                <p className="text-sm text-emerald-700">
+                  Período procesado: <span className="font-semibold">{resumen.periodoNombre}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setResumen(null)}
+                className="text-xs text-gray-500 hover:text-gray-800 underline"
+              >
+                Cerrar Resumen
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-4 text-center">
+              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
+                <span className="block text-2xl font-bold text-emerald-600">
+                  {resumen.insertados}
+                </span>
+                <span className="text-xs text-gray-500 font-medium">Nuevos Creados</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
+                <span className="block text-2xl font-bold text-blue-600">
+                  {resumen.actualizados}
+                </span>
+                <span className="text-xs text-gray-500 font-medium">Actualizados</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
+                <span className={`block text-2xl font-bold ${resumen.totalErrores > 0 ? "text-red-500" : "text-gray-400"}`}>
+                  {resumen.totalErrores}
+                </span>
+                <span className="text-xs text-gray-500 font-medium">Con Errores</span>
+              </div>
+            </div>
+
+            {/* Listado de incidencias/errores no procesados */}
+            {resumen.detallesErrores.length > 0 && (
+              <div className="bg-white rounded-xl border border-red-200 p-4 mt-2">
+                <h3 className="text-sm font-semibold text-red-600 mb-2">
+                  ⚠️ Registros que no pudieron importarse:
+                </h3>
+                <ul className="text-xs text-gray-600 space-y-1 max-h-36 overflow-y-auto">
+                  {resumen.detallesErrores.map((err, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="font-semibold">{err.numero} - {err.nombre}:</span>
+                      <span className="text-red-500">{err.motivo}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="flex flex-col gap-4">

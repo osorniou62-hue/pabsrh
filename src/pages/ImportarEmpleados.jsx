@@ -67,34 +67,48 @@ export default function ImportarEmpleados() {
   const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
-    // 1. Guardar Bono si existe
+    // 1. Guardar Bono mediante DELETE + INSERT (evita errores 400 por clave UNIQUE)
     if (Number(empleado.bono || 0) > 0) {
-      await supabase.from("bonos_empleado").upsert(
-        [
+      await supabase
+        .from("bonos_empleado")
+        .delete()
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", Number(pId));
+
+      const { error: bonoError } = await supabase
+        .from("bonos_empleado")
+        .insert([
           {
             empleado_id: empleadoId,
             periodo_id: Number(pId),
             concepto: "BONO IMPORTADO",
             importe: Number(empleado.bono),
           },
-        ],
-        { onConflict: "empleado_id, periodo_id" }
-      );
+        ]);
+
+      if (bonoError) console.error("Error guardando bono:", bonoError.message);
     }
 
-    // 2. Guardar Descuentos (Gafete, Equipo, Varios) si existen
+    // 2. Guardar Descuentos mediante DELETE + INSERT
     if (Number(empleado.descuento_varios || 0) > 0) {
-      await supabase.from("descuentos_empleado").upsert(
-        [
+      await supabase
+        .from("descuentos_empleado")
+        .delete()
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", Number(pId));
+
+      const { error: descError } = await supabase
+        .from("descuentos_empleado")
+        .insert([
           {
             empleado_id: empleadoId,
             periodo_id: Number(pId),
             concepto: "DESCUENTOS VARIOS",
             importe: Number(empleado.descuento_varios),
           },
-        ],
-        { onConflict: "empleado_id, periodo_id" }
-      );
+        ]);
+
+      if (descError) console.error("Error guardando descuento:", descError.message);
     }
   };
 
@@ -175,16 +189,16 @@ export default function ImportarEmpleados() {
       const fechaIngreso = convertirFechaExcel(fila?.[5]);
       const sueldoBase = Number(fila?.[51] || 0);
 
-      // --- AJUSTA LOS ÍNDICES DE COLUMNA [X] SEGÚN TU EXCEL REAL ---
+      // --- ÍNDICES DE COLUMNA DE TU EXCEL ---
       const diasVacaciones = Number(fila?.[31] || 0); 
-      const horasExtra = Number(fila?.[35] || 0);            // Ajustar número de columna si es diferente
-      const faltasJustificadas = Number(fila?.[36] || 0);    // Ajustar número de columna
-      const faltasInjustificadas = Number(fila?.[37] || 0);  // Ajustar número de columna
-      const descuentoAusencias = Number(fila?.[38] || 0);    // Ajustar número de columna
-      const bono = Number(fila?.[40] || 0);                  // Ajustar número de columna
-      const descuentoVarios = Number(fila?.[50] || 0);       // Ajustar número de columna
-      const descuentoPrestamo = Number(fila?.[52] || 0);     // Columna BA: PRESTAMO
-      const saldoPrestamo = Number(fila?.[54] || 0);         // Columna BC: ADEUDOS
+      const horasExtra = Number(fila?.[35] || 0); 
+      const faltasJustificadas = Number(fila?.[36] || 0); 
+      const faltasInjustificadas = Number(fila?.[37] || 0); 
+      const descuentoAusencias = Number(fila?.[38] || 0); 
+      const bono = Number(fila?.[40] || 0); 
+      const descuentoVarios = Number(fila?.[50] || 0); 
+      const descuentoPrestamo = Number(fila?.[52] || 0); 
+      const saldoPrestamo = Number(fila?.[54] || 0); 
 
       const empleadoValido =
         typeof numeroEmpleado === "number" &&

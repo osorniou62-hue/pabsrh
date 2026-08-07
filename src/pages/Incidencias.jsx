@@ -46,7 +46,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -60,12 +60,11 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
-    // Se removió 'dias_periodo' para evitar el error de columna inexistente
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id ),
+        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, salario_mensual ),
         periodos_nomina!incidencias_periodo_fk ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
@@ -137,16 +136,22 @@ export default function Incidencias() {
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
+  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL (AJUSTADO AL DICCIONARIO) ---
   const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
-    const salarioMensual = empleado?.salario_mensual || 0;
+    const salarioMensual = Number(empleado?.salario_mensual) || 0;
     const salarioDiario = salarioMensual / 30;
     const valorHora = salarioDiario / 8;
 
+    // Mapeo con los nombres exactos de columnas de tu base de datos / archivo:
+    // Columnas J / L -> horas_extra / HORAS EXTRAS BASE (o cálculo por horas extra reales)
     const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
-    const pagoHorasExtra = hrsReales * (valorHora * 2);
+    const pagoHorasExtra = hrsReales * (valorHora * 2); // O usando incidencia.horas_extras_base si viene directo de BD
 
-    const descuentoFaltas = (Number(incidencia.faltas) || 0) * salarioDiario;
+    // Columnas T / U -> FALTA INJUSTIFICADA / TOTAL FI (Faltas)
+    const totalFaltas = Number(incidencia.faltas) || Number(incidencia.faltas_injustificadas) || 0;
+    const descuentoFaltas = totalFaltas * salarioDiario;
+
+    // Retardos o penalizaciones adicionales
     const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
 
     const sueldoBaseSemanal = salarioDiario * diasPeriodo;
@@ -356,15 +361,15 @@ export default function Incidencias() {
             <tr className="bg-gray-100 border-b text-gray-700 font-bold">
               <th className="p-3 border">Empleado</th>
               <th className="p-3 border">Periodo</th>
-              <th className="p-3 border text-center">Hrs Extra Rep.</th>
+              <th className="p-3 border text-center">Hrs Extra Rep. (J)</th>
               <th className="p-3 border text-center">Hrs Extra Real</th>
               <th className="p-3 border text-center">Retardos</th>
-              <th className="p-3 border text-center">Faltas</th>
-              <th className="p-3 border text-right">Monto Hrs Extra</th>
-              <th className="p-3 border text-right">Desc. Faltas</th>
-              <th className="p-3 border text-center">Permisos</th>
-              <th className="p-3 border text-center">Vacaciones</th>
-              <th className="p-3 border text-right bg-green-50">Monto Final Semanal</th>
+              <th className="p-3 border text-center">Faltas (T)</th>
+              <th className="p-3 border text-right">Monto Hrs Extra (L)</th>
+              <th className="p-3 border text-right">Desc. Faltas (U)</th>
+              <th className="p-3 border text-center">Permisos (AV)</th>
+              <th className="p-3 border text-center">Vacaciones (AF)</th>
+              <th className="p-3 border text-right bg-green-50">Monto Final Semanal (AZ/BB)</th>
               <th className="p-3 border text-center">Acciones</th>
             </tr>
           </thead>
@@ -377,8 +382,8 @@ export default function Incidencias() {
               </tr>
             ) : (
               incidenciasMostrar.map((item) => {
-                const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0);
-                const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0);
+                const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0 || item.hrs_permiso > 0);
+                const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0 || item.dias_vacaciones > 0);
                 const calculo = calcularNominaIncidencia(item.empleados, item, 7);
 
                 return (
@@ -395,7 +400,7 @@ export default function Incidencias() {
                     </td>
                     <td className="p-3 border text-center">{item.retardos || 0}</td>
                     <td className="p-3 border text-center text-red-600 font-semibold">
-                      {item.faltas || 0}d
+                      {item.faltas || item.faltas_injustificadas || 0}d
                     </td>
                     <td className="p-3 border text-right text-green-600 font-medium">
                       +${calculo.pagoHorasExtra.toFixed(2)}
@@ -543,7 +548,7 @@ export default function Incidencias() {
                 <input
                   type="number"
                   min="0"
-                  value={modalEdicion.datos.faltas || 0}
+                  value={modalEdicion.datos.faltas || modalEdicion.datos.faltas_injustificadas || 0}
                   onChange={(e) =>
                     setModalEdicion({
                       ...modalEdicion,
@@ -584,7 +589,7 @@ export default function Incidencias() {
             </h3>
             <div className="space-y-2 text-sm text-gray-600">
               <p><strong>Periodo:</strong> {modalPermisos.datos?.periodos_nomina?.descripcion}</p>
-              <p><strong>Días Totales:</strong> {modalPermisos.datos?.permisos || 1} día(s)</p>
+              <p><strong>Días / Horas Totales:</strong> {modalPermisos.datos?.permisos || modalPermisos.datos?.hrs_permiso || 1} concepto(s)</p>
             </div>
             <div className="flex justify-between items-center pt-4 border-t">
               <button
@@ -616,7 +621,7 @@ export default function Incidencias() {
             </h3>
             <div className="space-y-2 text-sm text-gray-600">
               <p><strong>Empleado:</strong> {modalVacaciones.datos?.empleados?.nombre_completo}</p>
-              <p><strong>Días Solicitados:</strong> {modalVacaciones.datos?.vacaciones} día(s)</p>
+              <p><strong>Días Solicitados:</strong> {modalVacaciones.datos?.vacaciones || modalVacaciones.datos?.dias_vacaciones} día(s)</p>
             </div>
             <div className="flex justify-between items-center pt-4 border-t">
               <button

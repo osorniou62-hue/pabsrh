@@ -27,8 +27,6 @@ export default function Incidencias() {
   const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
   const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
   const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
-
-  // --- NUEVO: ESTADO PARA EDICIÓN DE INCIDENCIA ---
   const [modalEdicion, setModalEdicion] = useState({ abierto: false, datos: null });
   const [guardando, setGuardando] = useState(false);
 
@@ -40,24 +38,32 @@ export default function Incidencias() {
     cargarIncidencias();
   }, []);
 
-  // --- CONSULTAS SUPABASE ---
+  // --- CONSULTAS SUPABASE CON DIAGNÓSTICO DE ERRORES ---
   const cargarDepartamentos = async () => {
-    const { data } = await supabase.from("departamentos").select("*").order("nombre");
-    setDepartamentos(data || []);
+    const { data, error } = await supabase.from("departamentos").select("*").order("nombre");
+    if (error) console.error("❌ Error al cargar departamentos:", error.message);
+    else setDepartamentos(data || []);
   };
 
   const cargarEmpleadosCatalogo = async () => {
-    const { data } = await supabase
+    // Nota: Removimos temporalmente .eq("activo", true) por si hay nulos en tu BD
+    const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual, puesto")
-      .eq("activo", true)
+      .select("id, nombre_completo, departamento_id, supervisor_id, salario_mensual, puesto, activo")
       .order("nombre_completo");
-    setEmpleadosCatalogo(data || []);
+
+    if (error) {
+      console.error("❌ ERROR SUPABASE (Empleados Catálogo):", error.message, error.details);
+    } else {
+      console.log("✅ Empleados cargados correctamente:", data?.length || 0, "registros");
+      setEmpleadosCatalogo(data || []);
+    }
   };
 
   const cargarPeriodos = async () => {
-    const { data } = await supabase.from("periodos_nomina").select("*").eq("estatus", "ABIERTO");
-    setPeriodos(data || []);
+    const { data, error } = await supabase.from("periodos_nomina").select("*").eq("estatus", "ABIERTO");
+    if (error) console.error("❌ Error al cargar periodos:", error.message);
+    else setPeriodos(data || []);
   };
 
   const cargarIncidencias = async () => {
@@ -80,7 +86,7 @@ export default function Incidencias() {
       `)
       .order("created_at", { ascending: false });
 
-    if (error) console.error("Error al cargar incidencias:", error.message);
+    if (error) console.error("❌ Error al cargar incidencias:", error.message);
     else setIncidencias(data || []);
   };
 
@@ -92,14 +98,13 @@ export default function Incidencias() {
     setEmpleadosFiltrados([]);
     setMostrarDropdownDepto(false);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("empleados")
       .select("id, nombre_completo, salario_mensual, puesto")
-      .eq("departamento_id", depto.id)
-      .eq("es_supervisor", true)
-      .eq("activo", true);
+      .eq("departamento_id", depto.id);
 
-    setSupervisores(data || []);
+    if (error) console.error("❌ Error al cargar supervisores:", error.message);
+    else setSupervisores(data || []);
   };
 
   const handleSeleccionarSupervisor = async (supervisorId) => {
@@ -109,23 +114,23 @@ export default function Incidencias() {
       return;
     }
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("empleados")
       .select("id, nombre_completo, salario_mensual, puesto")
-      .eq("supervisor_id", supervisorId)
-      .eq("activo", true);
+      .eq("supervisor_id", supervisorId);
 
-    setEmpleadosFiltrados(data || []);
+    if (error) console.error("❌ Error al cargar empleados por supervisor:", error.message);
+    else setEmpleadosFiltrados(data || []);
   };
 
   // --- SELECCIÓN DIRECTA DE EMPLEADO ---
   const handleSeleccionarEmpleadoDirecto = (emp) => {
-    setBusquedaEmpleado(emp.nombre_completo);
+    setBusquedaEmpleado(emp.nombre_completo || "");
     setEmpleadosFiltrados([emp]);
     setMostrarDropdownEmpleado(false);
   };
 
-  // --- FUNCIÓN PARA GUARDAR LA EDICIÓN DE INCIDENCIA EN SUPABASE ---
+  // --- GUARDAR EDICIÓN DE INCIDENCIA ---
   const guardarEdicion = async (e) => {
     e.preventDefault();
     if (!modalEdicion.datos) return;
@@ -149,17 +154,17 @@ export default function Incidencias() {
       alert("Error al actualizar la incidencia: " + error.message);
     } else {
       setModalEdicion({ abierto: false, datos: null });
-      cargarIncidencias(); // Recargar datos frescos
+      cargarIncidencias();
     }
   };
 
-  // Listas filtradas locales
+  // Listas filtradas locales con protección contra valores nulos
   const deptosFiltrados = departamentos.filter((d) =>
-    d.nombre?.toLowerCase().includes(busquedaDepto.toLowerCase())
+    (d.nombre || "").toLowerCase().includes(busquedaDepto.toLowerCase())
   );
 
   const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
-    e.nombre_completo?.toLowerCase().includes(busquedaEmpleado.toLowerCase())
+    (e.nombre_completo || "").toLowerCase().includes(busquedaEmpleado.toLowerCase())
   );
 
   // --- FILTRADO DE LA TABLA DE INCIDENCIAS ---
@@ -277,7 +282,7 @@ export default function Incidencias() {
         <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100">
           <div className="relative">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
-              🔍 O Buscar Directamente por Nombre de Empleado
+              🔍 O Buscar Directamente por Nombre de Empleado ({empleadosCatalogo.length} registrados)
             </label>
             <div className="flex gap-2">
               <div className="relative flex-1">
@@ -304,7 +309,7 @@ export default function Incidencias() {
                         onClick={() => handleSeleccionarEmpleadoDirecto(emp)}
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
-                        <span>{emp.nombre_completo}</span>
+                        <span>{emp.nombre_completo || "Sin Nombre"}</span>
                       </li>
                     ))}
                   </ul>
@@ -498,7 +503,7 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* ================= MODAL DE EDICIÓN DE INCIDENCIA ================= */}
+      {/* MODAL EDICIÓN */}
       {modalEdicion.abierto && modalEdicion.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -608,7 +613,7 @@ export default function Incidencias() {
         </div>
       )}
 
-      {/* ================= RESTO DE MODALES (PERMISOS, VACACIONES, RECIBO) ================= */}
+      {/* MODAL PERMISOS */}
       {modalPermisos.abierto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
@@ -640,6 +645,7 @@ export default function Incidencias() {
         </div>
       )}
 
+      {/* MODAL VACACIONES */}
       {modalVacaciones.abierto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
@@ -672,6 +678,7 @@ export default function Incidencias() {
         </div>
       )}
 
+      {/* MODAL RECIBO */}
       {modalRecibo.abierto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-xl w-full p-6 shadow-2xl relative space-y-4 border-2 border-dashed border-gray-400">

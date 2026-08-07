@@ -22,7 +22,7 @@ import Notificaciones from "./pages/Notificaciones";
 import RecibosMasivos from "./pages/RecibosMasivos";
 import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
 import ImportarEmpleados from "./pages/ImportarEmpleados";
-import Incidencias from "./pages/Incidencias"; 
+ 
 
 
 export default function App() {
@@ -150,7 +150,6 @@ export default function App() {
   }
 />
 
-<Route path="/incidencias" element={<Incidencias />} />
 
       </Routes>
 

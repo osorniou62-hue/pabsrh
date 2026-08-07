@@ -60,13 +60,13 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
-    // Usamos explícitamente los nombres de los FKs confirmados
+    // Se removió 'dias_periodo' para evitar el error de columna inexistente
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
         empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id ),
-        periodos_nomina!incidencias_periodo_fk ( descripcion, dias_periodo )
+        periodos_nomina!incidencias_periodo_fk ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
 

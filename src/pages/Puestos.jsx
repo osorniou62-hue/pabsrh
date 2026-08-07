@@ -10,11 +10,11 @@ export default function Puestos() {
   const [busqueda, setBusqueda] = useState("");
   const [editandoId, setEditandoId] = useState(null);
 
-  // Estados para Modal de Crear Departamento
+  // Modal para Crear Departamento
   const [mostrarModalDepto, setMostrarModalDepto] = useState(false);
   const [nuevoDeptoNombre, setNuevoDeptoNombre] = useState("");
 
-  // Estados para Modal de Detalle/Perfil de Puesto
+  // Modal para Perfil/Detalle del Puesto
   const [puestoSeleccionado, setPuestoSeleccionado] = useState(null);
   const [detallePerfil, setDetallePerfil] = useState({
     horarios: "",
@@ -34,7 +34,7 @@ export default function Puestos() {
       .from("puestos")
       .select(`
         *,
-        departamentos (
+        departamentos:departamento_id (
           id,
           nombre
         ),
@@ -43,7 +43,7 @@ export default function Puestos() {
       .order("nombre");
 
     if (error) {
-      console.error(error);
+      console.error("Error al cargar puestos:", error.message);
       return;
     }
 
@@ -58,7 +58,7 @@ export default function Puestos() {
       .order("nombre");
 
     if (error) {
-      console.error(error);
+      console.error("Error al cargar departamentos:", error.message);
       return;
     }
 
@@ -77,7 +77,7 @@ export default function Puestos() {
       .select();
 
     if (error) {
-      alert(error.message);
+      alert("Error al crear departamento: " + error.message);
       return;
     }
 
@@ -85,6 +85,7 @@ export default function Puestos() {
     setNuevoDeptoNombre("");
     setMostrarModalDepto(false);
     await cargarDepartamentos();
+
     if (data && data.length > 0) {
       setDepartamentoId(data[0].id);
     }
@@ -92,7 +93,7 @@ export default function Puestos() {
 
   const guardarPuesto = async () => {
     if (!nombre.trim() || !departamentoId) {
-      alert("Completa todos los campos principales");
+      alert("Completa todos los campos obligatorios");
       return;
     }
 
@@ -109,7 +110,7 @@ export default function Puestos() {
         alert(error.message);
         return;
       }
-      alert("Puesto actualizado");
+      alert("Puesto actualizado correctamente");
     } else {
       const { error } = await supabase.from("puestos").insert([
         {
@@ -122,19 +123,26 @@ export default function Puestos() {
         alert(error.message);
         return;
       }
-      alert("Puesto creado");
+      alert("Puesto creado correctamente");
     }
 
-    setNombre("");
-    setDepartamentoId("");
-    setEditandoId(null);
+    cancelarEdicion();
     await cargarPuestos();
   };
 
   const editarPuesto = (puesto) => {
     setEditandoId(puesto.id);
     setNombre(puesto.nombre);
-    setDepartamentoId(puesto.departamento_id);
+    setDepartamentoId(puesto.departamento_id || "");
+
+    // Scroll suave hacia la sección superior del formulario
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelarEdicion = () => {
+    setNombre("");
+    setDepartamentoId("");
+    setEditandoId(null);
   };
 
   const desactivarPuesto = async (id) => {
@@ -153,11 +161,10 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // Abrir Modal de Perfil Extendido del Puesto
   const abrirPerfilPuesto = async (puesto) => {
     setPuestoSeleccionado(puesto);
 
-    // Contar total de empleados registrados en este puesto
+    // Consulta en tiempo real de empleados asignados a este puesto
     const { count, error: errCount } = await supabase
       .from("empleados")
       .select("*", { count: "exact", head: true })
@@ -196,55 +203,67 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // Filtro inteligente por Nombre de Puesto O Nombre de Departamento
+  // Filtro resiliente (Puesto o Departamento)
   const puestosFiltrados = puestos.filter((puesto) => {
-    const termino = busqueda.toLowerCase();
-    const coincideNombre = puesto.nombre?.toLowerCase().includes(termino);
-    const coincideDepto = puesto.departamentos?.nombre
-      ?.toLowerCase()
-      .includes(termino);
-    return coincideNombre || coincideDepto;
+    if (!busqueda.trim()) return true;
+
+    const termino = busqueda.trim().toLowerCase();
+
+    const coincidePuesto = puesto.nombre
+      ? puesto.nombre.toLowerCase().includes(termino)
+      : false;
+
+    const deptoNombre = Array.isArray(puesto.departamentos)
+      ? puesto.departamentos[0]?.nombre
+      : puesto.departamentos?.nombre;
+
+    const coincideDepto = deptoNombre
+      ? deptoNombre.toLowerCase().includes(termino)
+      : false;
+
+    return coincidePuesto || coincideDepto;
   });
 
   return (
     <div className="max-w-6xl mx-auto p-6">
+      {/* ENCABEZADO */}
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
         <Link
           to="/dashboard"
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
         >
           Regresar
         </Link>
       </div>
 
-      {/* SECCIÓN CREAR / EDITAR PUESTO */}
+      {/* FORMULARIO: CREAR / EDITAR PUESTO */}
       <div className="bg-white shadow rounded p-4 mb-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">
-            {editandoId ? "Editar Puesto" : "Nuevo Puesto"}
+            {editandoId ? `✏️ Editando Puesto #${editandoId}` : "➕ Nuevo Puesto"}
           </h2>
           <button
             onClick={() => setMostrarModalDepto(true)}
-            className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700"
+            className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700 font-medium"
           >
             + Crear Departamento
           </button>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-3">
+        <div className="grid md:grid-cols-4 gap-3">
           <input
             type="text"
             placeholder="Nombre del puesto"
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
-            className="border rounded p-2"
+            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
           />
 
           <select
             value={departamentoId}
             onChange={(e) => setDepartamentoId(e.target.value)}
-            className="border rounded p-2"
+            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
           >
             <option value="">Selecciona departamento</option>
             {departamentos.map((departamento) => (
@@ -256,14 +275,27 @@ export default function Puestos() {
 
           <button
             onClick={guardarPuesto}
-            className="bg-green-600 text-white rounded px-4 py-2 font-semibold hover:bg-green-700"
+            className={`text-white rounded px-4 py-2 font-semibold ${
+              editandoId
+                ? "bg-amber-600 hover:bg-amber-700"
+                : "bg-green-600 hover:bg-green-700"
+            }`}
           >
             {editandoId ? "Actualizar" : "Guardar"}
           </button>
+
+          {editandoId && (
+            <button
+              onClick={cancelarEdicion}
+              className="bg-gray-400 text-white rounded px-4 py-2 hover:bg-gray-500 font-medium"
+            >
+              Cancelar
+            </button>
+          )}
         </div>
       </div>
 
-      {/* BUSCADOR GENERAL */}
+      {/* BUSCADOR */}
       <div className="bg-white shadow rounded p-4 mb-6">
         <input
           type="text"
@@ -274,7 +306,7 @@ export default function Puestos() {
         />
       </div>
 
-      {/* TABLA DE PUESTOS */}
+      {/* TABLA RESULTADOS */}
       <div className="bg-white shadow rounded p-4 overflow-x-auto">
         <table className="w-full border text-left">
           <thead>
@@ -291,22 +323,27 @@ export default function Puestos() {
             {puestosFiltrados.length === 0 ? (
               <tr>
                 <td colSpan="6" className="text-center p-4 text-gray-500">
-                  No se encontraron resultados
+                  No se encontraron puestos ni departamentos coincidentes.
                 </td>
               </tr>
             ) : (
               puestosFiltrados.map((puesto) => {
+                const deptoNombre = Array.isArray(puesto.departamentos)
+                  ? puesto.departamentos[0]?.nombre
+                  : puesto.departamentos?.nombre;
+
                 const totalEmp = puesto.empleados?.[0]?.count || 0;
+
                 return (
                   <tr key={puesto.id} className="hover:bg-gray-50">
                     <td className="border p-2 text-center">{puesto.id}</td>
                     <td className="border p-2 font-medium">{puesto.nombre}</td>
                     <td className="border p-2">
                       <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-md text-xs font-semibold">
-                        {puesto.departamentos?.nombre || "Sin Asignar"}
+                        {deptoNombre || "Sin Departamento"}
                       </span>
                     </td>
-                    <td className="border p-2 text-center font-semibold">
+                    <td className="border p-2 text-center font-semibold text-gray-700">
                       {totalEmp}
                     </td>
                     <td className="border p-2 text-center">
@@ -316,21 +353,21 @@ export default function Puestos() {
                       <div className="flex justify-center gap-2">
                         <button
                           onClick={() => abrirPerfilPuesto(puesto)}
-                          className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
-                          title="Ver perfil completo"
+                          className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 font-medium"
+                          title="Ver perfil completo y actualizar detalles"
                         >
                           👁️ Perfil
                         </button>
                         <button
                           onClick={() => editarPuesto(puesto)}
-                          className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600"
+                          className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600 font-medium"
                         >
                           Editar
                         </button>
                         {puesto.activo && (
                           <button
                             onClick={() => desactivarPuesto(puesto.id)}
-                            className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
+                            className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700 font-medium"
                           >
                             Desactivar
                           </button>
@@ -345,7 +382,7 @@ export default function Puestos() {
         </table>
       </div>
 
-      {/* POP-UP / MODAL: CREAR DEPARTAMENTO */}
+      {/* POP-UP / MODAL: NUEVO DEPARTAMENTO */}
       {mostrarModalDepto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
@@ -355,18 +392,18 @@ export default function Puestos() {
               placeholder="Nombre del departamento"
               value={nuevoDeptoNombre}
               onChange={(e) => setNuevoDeptoNombre(e.target.value)}
-              className="w-full border rounded p-2 mb-4"
+              className="w-full border rounded p-2 mb-4 focus:ring-2 focus:ring-indigo-500 outline-none"
             />
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setMostrarModalDepto(false)}
-                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100"
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium"
               >
                 Cancelar
               </button>
               <button
                 onClick={crearDepartamento}
-                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium"
               >
                 Guardar Departamento
               </button>
@@ -387,7 +424,9 @@ export default function Puestos() {
                 <p className="text-sm text-gray-500">
                   Departamento:{" "}
                   <span className="font-semibold text-blue-600">
-                    {puestoSeleccionado.departamentos?.nombre || "Sin Asignar"}
+                    {(Array.isArray(puestoSeleccionado.departamentos)
+                      ? puestoSeleccionado.departamentos[0]?.nombre
+                      : puestoSeleccionado.departamentos?.nombre) || "Sin Asignar"}
                   </span>
                 </p>
               </div>
@@ -396,7 +435,7 @@ export default function Puestos() {
                   {detallePerfil.totalEmpleados}
                 </span>
                 <span className="text-xs font-semibold uppercase">
-                  Empleados Activos
+                  Empleados Registrados
                 </span>
               </div>
             </div>
@@ -416,7 +455,7 @@ export default function Puestos() {
                       horarios: e.target.value,
                     })
                   }
-                  className="w-full border rounded p-2"
+                  className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
 
@@ -434,18 +473,18 @@ export default function Puestos() {
                       turnos: e.target.value,
                     })
                   }
-                  className="w-full border rounded p-2"
+                  className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
             </div>
 
             <div className="mb-4">
               <label className="block text-sm font-semibold mb-1">
-                Acciones y Responsabilidades:
+                Acciones / Responsabilidades:
               </label>
               <textarea
                 rows="3"
-                placeholder="Describe las tareas y funciones del puesto..."
+                placeholder="Describe las tareas y funciones de este puesto..."
                 value={detallePerfil.acciones}
                 onChange={(e) =>
                   setDetallePerfil({
@@ -453,7 +492,7 @@ export default function Puestos() {
                     acciones: e.target.value,
                   })
                 }
-                className="w-full border rounded p-2"
+                className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
               ></textarea>
             </div>
 
@@ -463,7 +502,7 @@ export default function Puestos() {
               </label>
               <textarea
                 rows="2"
-                placeholder="Notas adicionales..."
+                placeholder="Notas o requerimientos adicionales..."
                 value={detallePerfil.comentarios}
                 onChange={(e) =>
                   setDetallePerfil({
@@ -471,14 +510,14 @@ export default function Puestos() {
                     comentarios: e.target.value,
                   })
                 }
-                className="w-full border rounded p-2"
+                className="w-full border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
               ></textarea>
             </div>
 
             <div className="flex justify-end gap-2 border-t pt-4">
               <button
                 onClick={() => setPuestoSeleccionado(null)}
-                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100"
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium"
               >
                 Cerrar
               </button>

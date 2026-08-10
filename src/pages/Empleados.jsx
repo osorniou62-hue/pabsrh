@@ -59,8 +59,8 @@ export default function Empleados() {
       const empleadosMapeados = (emps || []).map(emp => {
         return {
           ...emp,
-          departamentos: departamentosMap.get(emp.departamento_id || emp.id_departamento || emp.depto_id) || null,
-          puestos: puestosMap.get(emp.puesto_id || emp.id_puesto || emp.puestos_id) || null,
+          departamentos: departamentosMap.get(emp.departamento_id) || null,
+          puestos: puestosMap.get(emp.puesto_id) || null,
           empleado_bonos: [] 
         };
       });
@@ -76,7 +76,7 @@ export default function Empleados() {
     }
   };
 
-  // --- EXTRACCIÓN DE VALORES ADAPTADA A TUS TÍTULOS DE COLUMNAS DE EXCEL ---
+  // --- EXTRACCIÓN DE VALORES ADAPTADA A LAS COLUMNAS REALES DE SUPABASE ---
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) {
       return {
@@ -94,21 +94,18 @@ export default function Empleados() {
       };
     }
 
-    const salarioBaseSemanal = Number(
-      emp?.["SUELDO BASE"] ?? emp?.salario_base ?? emp?.sueldo_base ?? emp?.salario_semanal ?? 0
-    );
-
+    const salarioBaseSemanal = Number(emp?.sueldo_base ?? 0);
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    // Extracción usando los títulos exactos de tu estructura
-    const bonoPuesto = Number(emp?.["BONO POR PUESTO"] ?? emp?.bono_puesto ?? 0);
-    const bonoPuntualidad = Number(emp?.["BONO PUNTUALIDAD"] ?? emp?.bono_puntualidad ?? 0);
-    const bonoAsistencia = Number(emp?.["BONO ASISTENCIA"] ?? emp?.bono_asistencia ?? 0);
-    const bonoMultiplicador = Number(emp?.["BONOS MULTIPLICADOR"] ?? emp?.bono_multiplicador ?? 0);
-    const bonoDesempeno = Number(emp?.["BAJO DESEMPEÑO/SANCIÓN"] ?? emp?.["BONO DE DESEMPEÑO"] ?? emp?.bono_desempeno ?? 0);
-    const bonoExtra = Number(emp?.["BONO EXTRA"] ?? emp?.bono_extra ?? 0);
-    const apoyoMedico = Number(emp?.["APOYO MEDICO"] ?? emp?.apoyo_medico ?? 0);
-    const gratificacionEspecial = Number(emp?.["GRATIFICACIÓN ESPECIAL"] ?? emp?.gratificacion_especial ?? 0);
+    // Extracción usando exactamente los nombres de columnas confirmados en Supabase
+    const bonoPuesto = Number(emp?.bono_puesto ?? 0);
+    const bonoPuntualidad = Number(emp?.bono_puntualidad ?? 0);
+    const bonoAsistencia = Number(emp?.bono_asistencia ?? 0);
+    const bonoMultiplicador = Number(emp?.bono_multiplicador ?? 0);
+    const bonoDesempeno = Number(emp?.bono_desempeno ?? 0);
+    const bonoExtra = Number(emp?.bono_extra ?? 0);
+    const apoyoMedico = Number(emp?.apoyo_medico ?? 0);
+    const gratificacionEspecial = Number(emp?.gratificacion_especial ?? 0);
 
     const totalBonos =
       bonoPuesto +
@@ -148,8 +145,7 @@ export default function Empleados() {
       .update({
         puesto_id: d.puesto_id || null,
         activo: Boolean(d.activo),
-        salario_base: Number(d.salario_base) || 0,
-        sueldo_base: Number(d.salario_base) || 0,
+        sueldo_base: Number(d.sueldo_base) || 0,
         fecha_baja: d.activo ? null : (d.fecha_baja || new Date().toISOString().split("T")[0]),
       })
       .eq("id", d.id);
@@ -175,8 +171,8 @@ export default function Empleados() {
     const texto = busqueda.toLowerCase().trim();
 
     const coincideBusqueda =
-      (empleado.nombre_completo || empleado.NOMBRE || "").toLowerCase().includes(texto) ||
-      (empleado.numero_empleado || empleado["#"] || "").toString().toLowerCase().includes(texto) ||
+      (empleado.nombre_completo || "").toLowerCase().includes(texto) ||
+      (empleado.numero_empleado || "").toString().toLowerCase().includes(texto) ||
       (empleado.departamentos?.nombre || "").toLowerCase().includes(texto) ||
       (empleado.puestos?.nombre || "").toLowerCase().includes(texto);
 
@@ -325,9 +321,9 @@ export default function Empleados() {
 
                   return (
                     <tr key={empleado.id} className="border-t hover:bg-slate-50 transition">
-                      <td className="p-3 font-mono">{empleado.numero_empleado || empleado["#"] || "S/N"}</td>
+                      <td className="p-3 font-mono">{empleado.numero_empleado || "S/N"}</td>
                       <td className="p-3 font-semibold text-gray-800">
-                        {empleado.nombre_completo || empleado.NOMBRE || "Sin nombre"}
+                        {empleado.nombre_completo || "Sin nombre"}
                       </td>
                       <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
                       <td className="p-3">{empleado.puestos?.nombre || "Sin Asignar"}</td>
@@ -381,10 +377,10 @@ export default function Empleados() {
                                 abierto: true,
                                 datos: {
                                   id: empleado.id,
-                                  nombre_completo: empleado.nombre_completo || empleado.NOMBRE,
-                                  puesto_id: empleado.puesto_id || empleado.id_puesto || "",
+                                  nombre_completo: empleado.nombre_completo,
+                                  puesto_id: empleado.puesto_id || "",
                                   activo: estaActivo,
-                                  salario_base: salarioBaseSemanal,
+                                  sueldo_base: salarioBaseSemanal,
                                 },
                               })
                             }
@@ -494,11 +490,11 @@ export default function Empleados() {
                   type="number"
                   step="0.01"
                   min="0"
-                  value={modalEdicionRapida.datos?.salario_base ?? 0}
+                  value={modalEdicionRapida.datos?.sueldo_base ?? 0}
                   onChange={(e) =>
                     setModalEdicionRapida({
                       ...modalEdicionRapida,
-                      datos: { ...modalEdicionRapida.datos, salario_base: e.target.value },
+                      datos: { ...modalEdicionRapida.datos, sueldo_base: e.target.value },
                     })
                   }
                   className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none"

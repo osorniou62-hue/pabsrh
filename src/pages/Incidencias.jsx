@@ -45,13 +45,17 @@ export default function Incidencias() {
   };
 
   const cargarEmpleadosCatalogo = async () => {
+    // Usamos select("*") para evitar errores si una columna específica no existe en la BD
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo, sueldo_base, salario_base")
+      .select("*")
       .order("nombre_completo");
 
-    if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
-    else setEmpleadosCatalogo(data || []);
+    if (error) {
+      console.error("❌ Error al cargar catálogo de empleados:", error.message);
+    } else {
+      setEmpleadosCatalogo(data || []);
+    }
   };
 
   const cargarPeriodos = async () => {
@@ -61,12 +65,13 @@ export default function Incidencias() {
   };
 
   const cargarIncidencias = async () => {
+    // Seleccionamos la relación completa de empleados (*) para garantizar compatibilidad
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, sueldo_base, salario_base ),
-        periodos_nomina!incidencias_periodo_fk ( id, descripcion )
+        empleados!incidencias_empleado_fk ( * ),
+        periodos_nomina!incidencias_periodo_fk ( * )
       `)
       .order("created_at", { ascending: false });
 
@@ -137,12 +142,14 @@ export default function Incidencias() {
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO BASADO 100% EN SUELDO BASE SEMANAL ---
+  // --- CÁLCULO FINANCIERO CON BUSQUEDA DE SUELDO BASE ---
   const calcularNominaIncidencia = (empleado, incidencia) => {
-    // Lectura directa del Sueldo Base Semanal (comprueba varios nombres de columna comunes)
+    // Busca en cualquier campo posible donde pueda estar guardado el sueldo base semanal
     const sueldoBaseSemanal = Number(
       empleado?.sueldo_base ?? 
       empleado?.salario_base ?? 
+      empleado?.salario_semanal ?? 
+      empleado?.sueldo_semanal ?? 
       incidencia?.sueldo_base ?? 
       incidencia?.salario_base
     ) || 0;
@@ -195,13 +202,11 @@ export default function Incidencias() {
     const { error } = await supabase
       .from("incidencias")
       .update({
-        // Datos del supervisor
         horas_extra: Number(d.horas_extra) || 0,
         faltas_justificadas: Number(d.faltas_justificadas) || 0,
         faltas_injustificadas: Number(d.faltas_injustificadas) || 0,
         retardos_con_permiso: Number(d.retardos_con_permiso) || 0,
         retardos_sin_permiso: Number(d.retardos_sin_permiso) || 0,
-        // Ajustes del admin
         horas_extra_reales: Number(d.horas_extra_reales) || 0,
         faltas: Number(d.faltas) || 0,
         retardos: Number(d.retardos) || 0,
@@ -349,7 +354,12 @@ export default function Incidencias() {
 
       {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
       {empleadoSeleccionado && (() => {
-        const valSueldoBase = Number(empleadoSeleccionado.sueldo_base ?? empleadoSeleccionado.salario_base) || 0;
+        const valSueldoBase = Number(
+          empleadoSeleccionado.sueldo_base ?? 
+          empleadoSeleccionado.salario_base ?? 
+          empleadoSeleccionado.salario_semanal ?? 
+          empleadoSeleccionado.sueldo_semanal
+        ) || 0;
         return (
           <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
             <div className="flex justify-between items-center">
@@ -896,4 +906,4 @@ export default function Incidencias() {
       )}
     </div>
   );
-}
+} 

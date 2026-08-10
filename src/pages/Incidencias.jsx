@@ -47,7 +47,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo, sueldo_base, salario_base")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -65,7 +65,7 @@ export default function Incidencias() {
       .from("incidencias")
       .select(`
         *,
-        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, salario_mensual ),
+        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, sueldo_base, salario_base ),
         periodos_nomina!incidencias_periodo_fk ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
@@ -137,33 +137,35 @@ export default function Incidencias() {
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL Y REGLAS DE SUELDO DIARIO ---
-  const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
-    const salarioMensual = Number(empleado?.salario_mensual) || 0;
-    
-    // Regla de Sueldo Base Semanal (Equivalente a 7 días)
-    const sueldoBaseSemanal = (salarioMensual / 30) * diasPeriodo;
-    
-    // Regla de Sueldo Diario: Sueldo Base entre los 7 días (6 laborados + 1 descanso)
-    const sueldoDiario = sueldoBaseSemanal / 7;
-    
-    const valorHora = sueldoDiario / 8;
+  // --- CÁLCULO FINANCIERO BASADO 100% EN SUELDO BASE SEMANAL ---
+  const calcularNominaIncidencia = (empleado, incidencia) => {
+    // Lectura directa del Sueldo Base Semanal (comprueba varios nombres de columna comunes)
+    const sueldoBaseSemanal = Number(
+      empleado?.sueldo_base ?? 
+      empleado?.salario_base ?? 
+      incidencia?.sueldo_base ?? 
+      incidencia?.salario_base
+    ) || 0;
 
-    // Prioridad a ajustes de admin si existen, si no a lo reportado por supervisor
+    // Regla de Sueldo Diario: Sueldo Base Semanal entre 7 días
+    const sueldoDiario = sueldoBaseSemanal > 0 ? sueldoBaseSemanal / 7 : 0;
+    const valorHora = sueldoDiario > 0 ? sueldoDiario / 8 : 0;
+
+    // Horas Extras
     const hrsCalculo = incidencia.horas_extra_reales !== null && incidencia.horas_extra_reales !== undefined
       ? Number(incidencia.horas_extra_reales)
       : Number(incidencia.horas_extra) || 0;
 
     const pagoHorasExtra = hrsCalculo * (valorHora * 2);
 
-    // Faltas injustificadas descuentan día entero
+    // Faltas
     const totalFaltasInjust = incidencia.faltas_injustificadas !== null && incidencia.faltas_injustificadas !== undefined
       ? Number(incidencia.faltas_injustificadas)
       : Number(incidencia.faltas) || 0;
 
     const descuentoFaltas = totalFaltasInjust * sueldoDiario;
 
-    // Retardos sin permiso (o retardos generales) descuentan media hora
+    // Retardos
     const totalRetardosSinPermiso = incidencia.retardos_sin_permiso !== null && incidencia.retardos_sin_permiso !== undefined
       ? Number(incidencia.retardos_sin_permiso)
       : Number(incidencia.retardos) || 0;
@@ -346,40 +348,43 @@ export default function Incidencias() {
       </div>
 
       {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
-      {empleadoSeleccionado && (
-        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
-          <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-blue-900 text-base">
-              👤 Detalle del Trabajador Seleccionado:
-            </h3>
-            <button
-              onClick={limpiarFiltros}
-              className="text-xs text-red-600 hover:underline font-bold"
-            >
-              Quitar Filtro
-            </button>
-          </div>
+      {empleadoSeleccionado && (() => {
+        const valSueldoBase = Number(empleadoSeleccionado.sueldo_base ?? empleadoSeleccionado.salario_base) || 0;
+        return (
+          <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold text-blue-900 text-base">
+                👤 Detalle del Trabajador Seleccionado:
+              </h3>
+              <button
+                onClick={limpiarFiltros}
+                className="text-xs text-red-600 hover:underline font-bold"
+              >
+                Quitar Filtro
+              </button>
+            </div>
 
-          <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
-            <div>
-              <span className="text-gray-500 block">Nombre del Trabajador:</span>
-              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Salario Mensual:</span>
-              <span className="font-semibold text-green-700">
-                {empleadoSeleccionado.salario_mensual ? `$${Number(empleadoSeleccionado.salario_mensual).toFixed(2)}` : "No asignado"}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Salario Diario (Base):</span>
-              <span className="font-semibold text-gray-700">
-                {empleadoSeleccionado.salario_mensual ? `$${(Number(empleadoSeleccionado.salario_mensual) / 30).toFixed(2)}` : "N/A"}
-              </span>
+            <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4 text-xs md:text-sm">
+              <div>
+                <span className="text-gray-500 block">Nombre del Trabajador:</span>
+                <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Sueldo Base Semanal:</span>
+                <span className="font-semibold text-green-700">
+                  {valSueldoBase > 0 ? `$${valSueldoBase.toFixed(2)}` : "Sin Asignar"}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Sueldo Diario Calculado:</span>
+                <span className="font-semibold text-indigo-900">
+                  {valSueldoBase > 0 ? `$${(valSueldoBase / 7).toFixed(2)}` : "$0.00"}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ================= TABLA PRINCIPAL DE INCIDENCIAS ================= */}
       <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 overflow-x-auto">
@@ -392,7 +397,7 @@ export default function Incidencias() {
             <tr className="bg-gray-100 border-b text-gray-700 font-bold">
               <th className="p-3 border">Empleado</th>
               <th className="p-3 border">Periodo</th>
-              <th className="p-3 border text-right bg-blue-50">Sueldo Base</th>
+              <th className="p-3 border text-right bg-blue-50">Sueldo Base Semanal</th>
               <th className="p-3 border text-right bg-indigo-50">Sueldo Diario</th>
               <th className="p-3 border text-center">Hrs Extra Rep. (J)</th>
               <th className="p-3 border text-center">Hrs Extra Real</th>
@@ -402,7 +407,7 @@ export default function Incidencias() {
               <th className="p-3 border text-right">Desc. Faltas (U)</th>
               <th className="p-3 border text-center">Permisos (AV)</th>
               <th className="p-3 border text-center">Vacaciones (AF)</th>
-              <th className="p-3 border text-right bg-green-50">Monto Final Semanal (AZ/BB)</th>
+              <th className="p-3 border text-right bg-green-50">Monto Final Semanal</th>
               <th className="p-3 border text-center">Acciones</th>
             </tr>
           </thead>
@@ -417,7 +422,7 @@ export default function Incidencias() {
               incidenciasMostrar.map((item) => {
                 const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0 || item.hrs_permiso > 0);
                 const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0 || item.dias_vacaciones > 0);
-                const calculo = calcularNominaIncidencia(item.empleados, item, 7);
+                const calculo = calcularNominaIncidencia(item.empleados, item);
 
                 return (
                   <tr key={item.id} className="hover:bg-gray-50 border-b">
@@ -428,10 +433,18 @@ export default function Incidencias() {
                       {item.periodos_nomina?.descripcion || "N/A"}
                     </td>
                     <td className="p-3 border text-right font-semibold text-gray-800 bg-blue-50/50">
-                      ${calculo.sueldoBaseSemanal.toFixed(2)}
+                      {calculo.sueldoBaseSemanal > 0 ? (
+                        `$${calculo.sueldoBaseSemanal.toFixed(2)}`
+                      ) : (
+                        <span className="text-amber-600 font-bold">Sin Asignar</span>
+                      )}
                     </td>
                     <td className="p-3 border text-right font-semibold text-indigo-900 bg-indigo-50/50">
-                      ${calculo.sueldoDiario.toFixed(2)}
+                      {calculo.sueldoDiario > 0 ? (
+                        `$${calculo.sueldoDiario.toFixed(2)}`
+                      ) : (
+                        <span className="text-amber-600 font-bold">$0.00</span>
+                      )}
                     </td>
                     <td className="p-3 border text-center">{item.horas_extra || 0}h</td>
                     <td className="p-3 border text-center font-semibold text-blue-600">
@@ -534,10 +547,10 @@ export default function Incidencias() {
                 </p>
                 <ul className="list-disc list-inside space-y-1.5 text-indigo-900">
                   <li>
-                    <strong>Sueldo Base Semanal:</strong> Equivale a <strong>7 días</strong> de trabajo completos.
+                    <strong>Sueldo Base Semanal:</strong> Monto base acordado por semana laborada.
                   </li>
                   <li>
-                    <strong>Composición de la Semana:</strong> <strong>6 días laborados</strong> + <strong>1 día de descanso</strong>.
+                    <strong>Composición de la Semana:</strong> <strong>6 días laborados</strong> + <strong>1 día de descanso</strong> (7 días en total).
                   </li>
                   <li>
                     <strong>Fórmula del Sueldo Diario:</strong> 
@@ -549,7 +562,7 @@ export default function Incidencias() {
               </div>
 
               <p className="text-gray-500 text-xs">
-                * Este sueldo diario es la base para calcular las proporciones de horas extras, faltas e incidencias de la nómina semanal.
+                * Este sueldo diario se utiliza para obtener el costo por hora e imputar faltas o compensar horas extra.
               </p>
             </div>
 
@@ -568,7 +581,7 @@ export default function Incidencias() {
       {/* ================= MODAL EDICIÓN MULTINIVEL ================= */}
       {modalEdicion.abierto && modalEdicion.datos && (() => {
         const d = modalEdicion.datos;
-        const calculoEnv = calcularNominaIncidencia(d.empleados, d, 7);
+        const calculoEnv = calcularNominaIncidencia(d.empleados, d);
 
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">

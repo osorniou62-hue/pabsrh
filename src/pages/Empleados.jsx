@@ -35,25 +35,47 @@ export default function Empleados() {
     setLoading(true);
 
     try {
-      // Consulta con relación explícita a departamentos, puestos y la tabla relacional empleado_bonos
+      // 1. Cargar empleados con departamentos y puestos
       const { data: emps, error } = await supabase
         .from("empleados")
         .select(`
           *,
           departamentos (id, nombre),
-          puestos (id, nombre),
-          empleado_bonos (
-            bonos (id, nombre),
-            monto
-          )
+          puestos (id, nombre)
         `)
         .order("nombre_completo");
 
       if (error) throw error;
-      setEmpleados(emps || []);
+
+      // 2. Cargar todos los registros de la tabla relacional empleado_bonos
+      const { data: relBonos, error: errorBonos } = await supabase
+        .from("empleado_bonos")
+        .select(`
+          empleado_id,
+          monto,
+          bonos (id, nombre)
+        `);
+
+      if (errorBonos) {
+        console.warn("⚠️ Advertencia al consultar empleado_bonos:", errorBonos);
+      }
+
+      console.log("🔍 [DEBUG] Empleados crudos:", emps);
+      console.log("🔍 [DEBUG] Bonos relacionales crudos:", relBonos);
+
+      // 3. Vincular manualmente los bonos a cada empleado
+      const empleadosConBonos = (emps || []).map((emp) => {
+        const bonosDelEmp = (relBonos || []).filter((b) => b.empleado_id === emp.id);
+        return {
+          ...emp,
+          empleado_bonos: bonosDelEmp,
+        };
+      });
+
+      console.log("🔍 [DEBUG] Empleados finales con bonos cruzados:", empleadosConBonos);
+      setEmpleados(empleadosConBonos);
     } catch (err) {
       console.error("❌ Error al cargar empleados:", err);
-      // Fallback por si la relación falla temporalmente
       const fallback = await supabase.from("empleados").select("*").order("nombre_completo");
       setEmpleados(fallback.data || []);
     } finally {
@@ -85,7 +107,6 @@ export default function Empleados() {
 
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    // Si viene de la tabla relacional empleado_bonos
     let bonoPuesto = 0;
     let bonoPuntualidad = 0;
     let bonoAsistencia = 0;
@@ -110,7 +131,7 @@ export default function Empleados() {
         else if (nombreBono.includes("gratificacion") || nombreBono.includes("gratificación")) gratificacionEspecial += montoBono;
       });
     } else {
-      // Respaldo leyendo directamente de las columnas exactas si no usa la tabla relacional todavía
+      // Respaldo por si los datos están directamente en las columnas de la tabla empleados
       bonoPuesto = Number(emp?.bono_puesto) || 0;
       bonoPuntualidad = Number(emp?.bono_puntualidad) || 0;
       bonoAsistencia = Number(emp?.bono_asistencia) || 0;

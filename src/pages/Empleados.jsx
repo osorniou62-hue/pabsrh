@@ -35,55 +35,48 @@ export default function Empleados() {
     setLoading(true);
 
     try {
-      // 1. Cargar empleados con departamentos y puestos
-      const { data: emps, error } = await supabase
+      // 1. Cargar empleados solos sin joins conflictivos para evitar PGRST201
+      const { data: emps, error: errorEmps } = await supabase
         .from("empleados")
-        .select(`
-          *,
-          departamentos (id, nombre),
-          puestos (id, nombre)
-        `)
+        .select("*")
         .order("nombre_completo");
 
-      if (error) throw error;
-
-      // 2. Cargar todos los registros de la tabla relacional empleado_bonos
-      const { data: relBonos, error: errorBonos } = await supabase
-        .from("empleado_bonos")
-        .select(`
-          empleado_id,
-          monto,
-          bonos (id, nombre)
-        `);
-
-      if (errorBonos) {
-        console.warn("⚠️ Advertencia al consultar empleado_bonos:", errorBonos);
+      if (errorEmps) {
+        console.error("❌ Error detallado en tabla 'empleados':", JSON.stringify(errorEmps, null, 2));
+        throw errorEmps;
       }
 
-      console.log("🔍 [DEBUG] Empleados crudos:", emps);
-      console.log("🔍 [DEBUG] Bonos relacionales crudos:", relBonos);
+      // 2. Cargar departamentos y puestos de forma independiente
+      const [resDepts, resPuestos] = await Promise.all([
+        supabase.from("departamentos").select("*"),
+        supabase.from("puestos").select("*")
+      ]);
 
-      // 3. Vincular manualmente los bonos a cada empleado
-      const empleadosConBonos = (emps || []).map((emp) => {
-        const bonosDelEmp = (relBonos || []).filter((b) => b.empleado_id === emp.id);
+      const departamentosMap = new Map((resDepts.data || []).map(d => [d.id, d]));
+      const puestosMap = new Map((resPuestos.data || []).map(p => [p.id, p]));
+
+      // 3. Vincular los objetos correspondientes a cada empleado en memoria
+      const empleadosMapeados = (emps || []).map(emp => {
         return {
           ...emp,
-          empleado_bonos: bonosDelEmp,
+          departamentos: departamentosMap.get(emp.departamento_id || emp.id_departamento) || null,
+          puestos: puestosMap.get(emp.puesto_id || emp.id_puesto) || null,
+          empleado_bonos: [] // Evita errores si no existe la tabla de bonos relacionales
         };
       });
 
-      console.log("🔍 [DEBUG] Empleados finales con bonos cruzados:", empleadosConBonos);
-      setEmpleados(empleadosConBonos);
+      console.log("🔍 [DEBUG] Empleados listos y mapeados:", empleadosMapeados);
+      setEmpleados(empleadosMapeados);
+
     } catch (err) {
-      console.error("❌ Error al cargar empleados:", err);
-      const fallback = await supabase.from("empleados").select("*").order("nombre_completo");
-      setEmpleados(fallback.data || []);
+      console.error("❌ Error al cargar empleados:", err?.message || err);
+      setEmpleados([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // --- EXTRACCIÓN DE VALORES DESDE LA TABLA RELACIONAL O COLUMNAS ---
+  // --- EXTRACCIÓN DE VALORES DESDE LA TABLA O COLUMNAS DE EMPLEADOS ---
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) {
       return {
@@ -107,40 +100,15 @@ export default function Empleados() {
 
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    let bonoPuesto = 0;
-    let bonoPuntualidad = 0;
-    let bonoAsistencia = 0;
-    let bonoMultiplicador = 0;
-    let bonoDesempeno = 0;
-    let bonoExtra = 0;
-    let apoyoMedico = 0;
-    let gratificacionEspecial = 0;
-
-    if (Array.isArray(emp.empleado_bonos) && emp.empleado_bonos.length > 0) {
-      emp.empleado_bonos.forEach((item) => {
-        const nombreBono = (item.bonos?.nombre || "").toLowerCase();
-        const montoBono = Number(item.monto) || 0;
-
-        if (nombreBono.includes("puesto")) bonoPuesto += montoBono;
-        else if (nombreBono.includes("puntualidad")) bonoPuntualidad += montoBono;
-        else if (nombreBono.includes("asistencia")) bonoAsistencia += montoBono;
-        else if (nombreBono.includes("multiplicador")) bonoMultiplicador += montoBono;
-        else if (nombreBono.includes("desempeño") || nombreBono.includes("desempeno")) bonoDesempeno += montoBono;
-        else if (nombreBono.includes("extra")) bonoExtra += montoBono;
-        else if (nombreBono.includes("medico") || nombreBono.includes("médico")) apoyoMedico += montoBono;
-        else if (nombreBono.includes("gratificacion") || nombreBono.includes("gratificación")) gratificacionEspecial += montoBono;
-      });
-    } else {
-      // Respaldo por si los datos están directamente en las columnas de la tabla empleados
-      bonoPuesto = Number(emp?.bono_puesto) || 0;
-      bonoPuntualidad = Number(emp?.bono_puntualidad) || 0;
-      bonoAsistencia = Number(emp?.bono_asistencia) || 0;
-      bonoMultiplicador = Number(emp?.bono_multiplicador) || 0;
-      bonoDesempeno = Number(emp?.bono_desempeno || emp?.bono_desempeño) || 0;
-      bonoExtra = Number(emp?.bono_extra) || 0;
-      apoyoMedico = Number(emp?.apoyo_medico) || 0;
-      gratificacionEspecial = Number(emp?.gratificacion_especial) || 0;
-    }
+    // Lectura directa desde columnas de empleados por si guardas los bonos directamente ahí
+    const bonoPuesto = Number(emp?.bono_puesto) || 0;
+    const bonoPuntualidad = Number(emp?.bono_puntualidad) || 0;
+    const bonoAsistencia = Number(emp?.bono_asistencia) || 0;
+    const bonoMultiplicador = Number(emp?.bono_multiplicador) || 0;
+    const bonoDesempeno = Number(emp?.bono_desempeno || emp?.bono_desempeño) || 0;
+    const bonoExtra = Number(emp?.bono_extra) || 0;
+    const apoyoMedico = Number(emp?.apoyo_medico) || 0;
+    const gratificacionEspecial = Number(emp?.gratificacion_especial) || 0;
 
     const totalBonos =
       bonoPuesto +
@@ -447,7 +415,7 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* MODAL EDICIÓN RÁPIDA DE SUELDO Y PUESTO */}
+      {/* MODAL EDICIÓN RÁPIDA */}
       {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -533,12 +501,6 @@ export default function Empleados() {
                   }
                   className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none"
                 />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  * Sueldo diario calculado (/7 días):{" "}
-                  <strong>
-                    ${((Number(modalEdicionRapida.datos?.salario_base) || 0) / 7).toFixed(2)}
-                  </strong>
-                </p>
               </div>
             </div>
 

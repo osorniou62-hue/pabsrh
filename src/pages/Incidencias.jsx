@@ -46,7 +46,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual, puesto, fecha_ingreso, turno, rfc, curp")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -64,7 +64,10 @@ export default function Incidencias() {
       .from("incidencias")
       .select(`
         *,
-        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, salario_mensual ),
+        empleados!incidencias_empleado_fk ( 
+          id, nombre_completo, departamento_id, supervisor_id, salario_mensual, 
+          puesto, fecha_ingreso, turno, rfc, curp 
+        ),
         periodos_nomina!incidencias_periodo_fk ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
@@ -136,22 +139,18 @@ export default function Incidencias() {
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL (AJUSTADO AL DICCIONARIO) ---
+  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
   const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
     const salarioMensual = Number(empleado?.salario_mensual) || 0;
     const salarioDiario = salarioMensual / 30;
     const valorHora = salarioDiario / 8;
 
-    // Mapeo con los nombres exactos de columnas de tu base de datos / archivo:
-    // Columnas J / L -> horas_extra / HORAS EXTRAS BASE (o cálculo por horas extra reales)
     const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
-    const pagoHorasExtra = hrsReales * (valorHora * 2); // O usando incidencia.horas_extras_base si viene directo de BD
+    const pagoHorasExtra = hrsReales * (valorHora * 2);
 
-    // Columnas T / U -> FALTA INJUSTIFICADA / TOTAL FI (Faltas)
     const totalFaltas = Number(incidencia.faltas) || Number(incidencia.faltas_injustificadas) || 0;
     const descuentoFaltas = totalFaltas * salarioDiario;
 
-    // Retardos o penalizaciones adicionales
     const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
 
     const sueldoBaseSemanal = salarioDiario * diasPeriodo;
@@ -294,6 +293,7 @@ export default function Incidencias() {
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
                         <span>{emp.nombre_completo || "Sin Nombre"}</span>
+                        {emp.puesto && <span className="text-xs text-gray-400">({emp.puesto})</span>}
                       </li>
                     ))}
                   </ul>
@@ -314,12 +314,12 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
+      {/* DETALLE DEL TRABAJADOR SELECCIONADO (TARJETA PROFESIONAL) */}
       {empleadoSeleccionado && (
-        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
+        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3 shadow-sm">
           <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-blue-900 text-base">
-              👤 Detalle del Trabajador Seleccionado:
+            <h3 className="font-semibold text-blue-900 text-base flex items-center gap-2">
+              👤 Detalle del Trabajador Seleccionado
             </h3>
             <button
               onClick={limpiarFiltros}
@@ -331,8 +331,12 @@ export default function Incidencias() {
 
           <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
             <div>
-              <span className="text-gray-500 block">Nombre del Trabajador:</span>
-              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
+              <span className="text-gray-500 block">Nombre Completo:</span>
+              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo || "N/A"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">Puesto / Cargo:</span>
+              <span className="font-semibold text-gray-700">{empleadoSeleccionado.puesto || "Sin asignar"}</span>
             </div>
             <div>
               <span className="text-gray-500 block">Salario Mensual:</span>
@@ -345,6 +349,22 @@ export default function Incidencias() {
               <span className="font-semibold text-gray-700">
                 {empleadoSeleccionado.salario_mensual ? `$${(Number(empleadoSeleccionado.salario_mensual) / 30).toFixed(2)}` : "N/A"}
               </span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">Turno:</span>
+              <span className="font-semibold text-gray-700">{empleadoSeleccionado.turno || "N/A"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">Fecha de Ingreso:</span>
+              <span className="font-semibold text-gray-700">{empleadoSeleccionado.fecha_ingreso || "N/A"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">RFC:</span>
+              <span className="font-semibold text-gray-700 uppercase">{empleadoSeleccionado.rfc || "N/A"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 block">CURP:</span>
+              <span className="font-semibold text-gray-700 uppercase">{empleadoSeleccionado.curp || "N/A"}</span>
             </div>
           </div>
         </div>
@@ -470,7 +490,7 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* MODAL EDICIÓN */}
+      {/* MODAL EDICIÓN CON ENCABEZADO CONTEXTUAL */}
       {modalEdicion.abierto && modalEdicion.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -480,9 +500,19 @@ export default function Incidencias() {
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
               ✏️ Modificar Incidencia
             </h3>
-            <p className="text-xs text-gray-500">
-              Empleado: <strong>{modalEdicion.datos.empleados?.nombre_completo}</strong>
-            </p>
+
+            {/* ENCABEZADO CONTEXTUAL DEL EMPLEADO Y PERIODO */}
+            <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg text-xs space-y-1">
+              <p className="text-gray-800 font-semibold">
+                👤 Empleado: <span className="font-bold text-blue-700">{modalEdicion.datos.empleados?.nombre_completo || "N/A"}</span>
+              </p>
+              <p className="text-gray-600">
+                💼 Puesto: <span className="font-medium">{modalEdicion.datos.empleados?.puesto || "Sin especificar"}</span>
+              </p>
+              <p className="text-gray-600">
+                📅 Periodo: <span className="font-medium text-amber-700">{modalEdicion.datos.periodos_nomina?.descripcion || "N/A"}</span>
+              </p>
+            </div>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>

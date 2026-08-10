@@ -13,7 +13,7 @@ export default function ImportarEmpleados() {
   const [periodoId, setPeriodoId] = useState("");
   const [loading, setLoading] = useState(false);
   
-  // Nuevo estado para almacenar el resumen de la importación
+  // Estado para almacenar el resumen de la importación
   const [resumen, setResumen] = useState(null);
 
   useEffect(() => {
@@ -68,22 +68,33 @@ export default function ImportarEmpleados() {
       );
     };
 
+    // Índices originales
     const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
     const idxPuesto = getColIndex(["PUESTO"]);
     const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
     const idxNombre = getColIndex(["NOMBRE"]);
     const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
     const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
-
     const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
     const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
     const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
-    const idxFaltasInjust = getColIndex(["INJUSTIFICADA", "FALTA", "F.INJUST"]);
+    const idxFaltasInjust = getColIndex(["INJUSTIFICADA", "FALTA INJUSTIFICADA", "F.INJUST"]);
     const idxDescAusencias = getColIndex(["AUSENCIA", "DESC. AUSENCIA"]);
     const idxBono = getColIndex(["BONO"]);
     const idxDescVarios = getColIndex(["VARIOS", "DESC. VARIOS", "OTROS DESC"]);
     const idxDescPrestamo = getColIndex(["PRESTAMO", "DESC. PRESTAMO"]);
     const idxSaldoPrestamo = getColIndex(["ADEUDO", "SALDO"]);
+
+    // NUEVOS Índices para incidencias adicionales
+    const idxHorasExtraReales = getColIndex(["H.E REALES", "HORAS EXTRA REALES", "EXTRA REAL"]);
+    const idxRetardos = getColIndex(["RETARDO", "RETARDOS"]);
+    const idxFaltas = getColIndex(["FALTAS", "FALTA"]); // Por si viene una columna general de faltas
+    const idxPermisos = getColIndex(["PERMISO", "PERMISOS"]);
+    const idxHrsPermiso = getColIndex(["HRS PERMISO", "HORAS PERMISO"]);
+    const idxMontoHorasExtra = getColIndex(["MONTO H.E", "MONTO HORAS EXTRA", "PAGO H.E"]);
+    const idxDescuentoFaltas = getColIndex(["DESC. FALTAS", "DESCUENTO FALTAS"]);
+    const idxDescuentoRetardos = getColIndex(["DESC. RETARDOS", "DESCUENTO RETARDOS"]);
+    const idxMontoFinalSemanal = getColIndex(["MONTO FINAL", "NETO SEMANAL", "NETO PAGAR", "TOTAL PAGAR"]);
 
     const encontrados = [];
     const dataRows = rows.slice(headerRowIndex + 1);
@@ -96,10 +107,9 @@ export default function ImportarEmpleados() {
       const fechaIngreso = convertirFechaExcel(
         fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]
       );
-      const sueldoBase = Number(
-        (idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0
-      );
+      const sueldoBase = Number((idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0);
 
+      // Valores originales
       const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
       const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
       const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
@@ -109,6 +119,17 @@ export default function ImportarEmpleados() {
       const descuentoVarios = Number((idxDescVarios !== -1 ? fila[idxDescVarios] : 0) || 0);
       const descuentoPrestamo = Number((idxDescPrestamo !== -1 ? fila[idxDescPrestamo] : 0) || 0);
       const saldoPrestamo = Number((idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0) || 0);
+
+      // NUEVOS Valores de incidencias extraídas
+      const horasExtraReales = Number((idxHorasExtraReales !== -1 ? fila[idxHorasExtraReales] : 0) || 0);
+      const retardos = Number((idxRetardos !== -1 ? fila[idxRetardos] : 0) || 0);
+      const faltas = Number((idxFaltas !== -1 ? fila[idxFaltas] : 0) || 0);
+      const permisos = Number((idxPermisos !== -1 ? fila[idxPermisos] : 0) || 0);
+      const hrsPermiso = Number((idxHrsPermiso !== -1 ? fila[idxHrsPermiso] : 0) || 0);
+      const montoHorasExtra = Number((idxMontoHorasExtra !== -1 ? fila[idxMontoHorasExtra] : 0) || 0);
+      const descuentoFaltas = Number((idxDescuentoFaltas !== -1 ? fila[idxDescuentoFaltas] : 0) || 0);
+      const descuentoRetardos = Number((idxDescuentoRetardos !== -1 ? fila[idxDescuentoRetardos] : 0) || 0);
+      const montoFinalSemanal = Number((idxMontoFinalSemanal !== -1 ? fila[idxMontoFinalSemanal] : 0) || 0);
 
       const empleadoValido =
         (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
@@ -124,6 +145,8 @@ export default function ImportarEmpleados() {
           departamento: typeof departamento === "string" ? departamento.trim() : "",
           fecha_ingreso: fechaIngreso,
           sueldo_base: sueldoBase,
+          
+          // Originales
           dias_vacaciones: diasVacaciones,
           horas_extra: horasExtra,
           faltas_justificadas: faltasJustificadas,
@@ -133,11 +156,22 @@ export default function ImportarEmpleados() {
           descuento_varios: descuentoVarios,
           saldo_prestamo: saldoPrestamo,
           descuento_prestamo: descuentoPrestamo,
+
+          // Nuevos para Upsert de Incidencias
+          horas_extra_reales: horasExtraReales,
+          retardos: retardos,
+          faltas: faltas,
+          permisos: permisos,
+          hrs_permiso: hrsPermiso,
+          monto_horas_extra: montoHorasExtra,
+          descuento_faltas: descuentoFaltas,
+          descuento_retardos: descuentoRetardos,
+          monto_final_semanal: montoFinalSemanal
         });
       }
     });
 
-    setResumen(null); // Limpia el resumen previo si vuelve a cargar un archivo
+    setResumen(null); 
     setEmpleados(encontrados);
   };
 
@@ -166,16 +200,32 @@ export default function ImportarEmpleados() {
   const actualizarIncidencias = async (empleadoId, empleado, pId) => {
     if (!pId) return;
 
+    // Aquí inyectamos el periodo_id que equivale a la "semana" y mapeamos todos los nuevos campos
     const payload = {
       empleado_id: empleadoId,
       periodo_id: Number(pId),
+      
       horas_extra: Number(empleado.horas_extra || 0),
+      horas_extra_reales: Number(empleado.horas_extra_reales || 0),
+      
       faltas_justificadas: Number(empleado.faltas_justificadas || 0),
       faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
+      faltas: Number(empleado.faltas || 0),
+      
+      retardos: Number(empleado.retardos || 0),
+      permisos: Number(empleado.permisos || 0),
+      hrs_permiso: Number(empleado.hrs_permiso || 0),
+      
       dias_vacaciones: Number(empleado.dias_vacaciones || 0),
       descuento_ausencias: Number(empleado.descuento_ausencias || 0),
+      
+      monto_horas_extra: Number(empleado.monto_horas_extra || 0),
+      descuento_faltas: Number(empleado.descuento_faltas || 0),
+      descuento_retardos: Number(empleado.descuento_retardos || 0),
+      monto_final_semanal: Number(empleado.monto_final_semanal || 0)
     };
 
+    // Upsert para insertar si es nuevo, o actualizar si ya existe para este empleado_id y periodo_id
     const { error } = await supabase.from("incidencias").upsert([payload], {
       onConflict: "empleado_id, periodo_id",
     });
@@ -429,14 +479,15 @@ export default function ImportarEmpleados() {
         }
 
         if (empId) {
+          // Ejecutamos las funciones que procesan los datos adjuntos
           await actualizarVacaciones(empId, empleado);
           await actualizarPrestamo(empId, empleado);
+          // IMPORTANTE: aquí se ejecuta la función que hace el upsert
           await actualizarIncidencias(empId, empleado, periodoId);
           await actualizarDescuentosYBonos(empId, empleado, periodoId);
         }
       }
 
-      // Guardar el resumen completo de la importación
       setResumen({
         insertados,
         actualizados,
@@ -486,7 +537,6 @@ export default function ImportarEmpleados() {
           />
         </div>
 
-        {/* Tarjeta del Resumen Post-Importación */}
         {resumen && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 mb-6">
             <div className="flex justify-between items-start mb-4">
@@ -527,7 +577,6 @@ export default function ImportarEmpleados() {
               </div>
             </div>
 
-            {/* Listado de incidencias/errores no procesados */}
             {resumen.detallesErrores.length > 0 && (
               <div className="bg-white rounded-xl border border-red-200 p-4 mt-2">
                 <h3 className="text-sm font-semibold text-red-600 mb-2">
@@ -584,7 +633,6 @@ export default function ImportarEmpleados() {
           </div>
         </div>
 
-        {/* Tabla de previsualización */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100">

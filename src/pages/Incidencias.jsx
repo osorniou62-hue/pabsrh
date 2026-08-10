@@ -11,7 +11,7 @@ export default function Incidencias() {
   const [periodos, setPeriodos] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
 
-  // --- ESTADOS DE FILTROS ---
+  // --- ESTADOS DE FILTROS POR DEPARTAMENTO / SUPERVISOR ---
   const [busquedaDepto, setBusquedaDepto] = useState("");
   const [deptoSeleccionado, setDeptoSeleccionado] = useState(null);
   const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
@@ -46,7 +46,7 @@ export default function Incidencias() {
   const cargarEmpleadosCatalogo = async () => {
     const { data, error } = await supabase
       .from("empleados")
-      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual, puesto, fecha_ingreso, turno, rfc, curp")
+      .select("id, nombre_completo, departamento_id, supervisor_id, activo, salario_mensual")
       .order("nombre_completo");
 
     if (error) console.error("❌ Error al cargar catálogo de empleados:", error.message);
@@ -59,24 +59,19 @@ export default function Incidencias() {
     else setPeriodos(data || []);
   };
 
-  // ✅ Carga de incidencias corregida (relación directa sin alias estricto de FK)
   const cargarIncidencias = async () => {
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados ( 
-          id, nombre_completo, departamento_id, supervisor_id, salario_mensual, 
-          puesto, fecha_ingreso, turno, rfc, curp 
-        ),
-        periodos_nomina ( id, descripcion )
+        empleados!incidencias_empleado_fk ( id, nombre_completo, departamento_id, supervisor_id, salario_mensual ),
+        periodos_nomina!incidencias_periodo_fk ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
 
     if (error) {
       console.error("❌ Error al cargar incidencias:", error.message);
     } else {
-      console.log("📊 Datos de incidencias recibidos:", data);
       setIncidencias(data || []);
     }
   };
@@ -124,7 +119,7 @@ export default function Incidencias() {
   // --- FILTRADO FINAL DE LA TABLA DE INCIDENCIAS ---
   const incidenciasMostrar = incidencias.filter((item) => {
     const emp = item.empleados;
-    if (!emp) return true; // Si no hay relación con empleado, muestra la fila para no ocultar datos
+    if (!emp) return false;
 
     if (empleadoSeleccionado) {
       return String(emp.id) === String(empleadoSeleccionado.id);
@@ -295,7 +290,6 @@ export default function Incidencias() {
                         className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
                       >
                         <span>{emp.nombre_completo || "Sin Nombre"}</span>
-                        {emp.puesto && <span className="text-xs text-gray-400">({emp.puesto})</span>}
                       </li>
                     ))}
                   </ul>
@@ -316,12 +310,12 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* DETALLE DEL TRABAJADOR SELECCIONADO (TARJETA PROFESIONAL) */}
+      {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
       {empleadoSeleccionado && (
-        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3 shadow-sm">
+        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
           <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-blue-900 text-base flex items-center gap-2">
-              👤 Detalle del Trabajador Seleccionado
+            <h3 className="font-semibold text-blue-900 text-base">
+              👤 Detalle del Trabajador Seleccionado:
             </h3>
             <button
               onClick={limpiarFiltros}
@@ -333,12 +327,8 @@ export default function Incidencias() {
 
           <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 text-xs md:text-sm">
             <div>
-              <span className="text-gray-500 block">Nombre Completo:</span>
-              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo || "N/A"}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Puesto / Cargo:</span>
-              <span className="font-semibold text-gray-700">{empleadoSeleccionado.puesto || "Sin asignar"}</span>
+              <span className="text-gray-500 block">Nombre del Trabajador:</span>
+              <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
             </div>
             <div>
               <span className="text-gray-500 block">Salario Mensual:</span>
@@ -351,22 +341,6 @@ export default function Incidencias() {
               <span className="font-semibold text-gray-700">
                 {empleadoSeleccionado.salario_mensual ? `$${(Number(empleadoSeleccionado.salario_mensual) / 30).toFixed(2)}` : "N/A"}
               </span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Turno:</span>
-              <span className="font-semibold text-gray-700">{empleadoSeleccionado.turno || "N/A"}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">Fecha de Ingreso:</span>
-              <span className="font-semibold text-gray-700">{empleadoSeleccionado.fecha_ingreso || "N/A"}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">RFC:</span>
-              <span className="font-semibold text-gray-700 uppercase">{empleadoSeleccionado.rfc || "N/A"}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 block">CURP:</span>
-              <span className="font-semibold text-gray-700 uppercase">{empleadoSeleccionado.curp || "N/A"}</span>
             </div>
           </div>
         </div>
@@ -492,7 +466,7 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* MODAL EDICIÓN CON ENCABEZADO CONTEXTUAL */}
+      {/* MODAL EDICIÓN */}
       {modalEdicion.abierto && modalEdicion.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -502,19 +476,9 @@ export default function Incidencias() {
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
               ✏️ Modificar Incidencia
             </h3>
-
-            {/* ENCABEZADO CONTEXTUAL DEL EMPLEADO Y PERIODO */}
-            <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg text-xs space-y-1">
-              <p className="text-gray-800 font-semibold">
-                👤 Empleado: <span className="font-bold text-blue-700">{modalEdicion.datos.empleados?.nombre_completo || "N/A"}</span>
-              </p>
-              <p className="text-gray-600">
-                💼 Puesto: <span className="font-medium">{modalEdicion.datos.empleados?.puesto || "Sin especificar"}</span>
-              </p>
-              <p className="text-gray-600">
-                📅 Periodo: <span className="font-medium text-amber-700">{modalEdicion.datos.periodos_nomina?.descripcion || "N/A"}</span>
-              </p>
-            </div>
+            <p className="text-xs text-gray-500">
+              Empleado: <strong>{modalEdicion.datos.empleados?.nombre_completo}</strong>
+            </p>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>

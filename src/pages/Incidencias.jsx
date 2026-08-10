@@ -23,6 +23,7 @@ export default function Incidencias() {
   const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
 
   // --- ESTADOS DE MODALES ---
+  const [modalReglas, setModalReglas] = useState(false);
   const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
   const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
   const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
@@ -136,11 +137,17 @@ export default function Incidencias() {
     return true;
   });
 
-  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL ---
+  // --- CÁLCULO FINANCIERO / NÓMINA SEMANAL Y REGLAS DE SUELDO DIARIO ---
   const calcularNominaIncidencia = (empleado, incidencia, diasPeriodo = 7) => {
     const salarioMensual = Number(empleado?.salario_mensual) || 0;
-    const salarioDiario = salarioMensual / 30;
-    const valorHora = salarioDiario / 8;
+    
+    // Regla de Sueldo Base Semanal (Equivalente a 7 días)
+    const sueldoBaseSemanal = (salarioMensual / 30) * diasPeriodo;
+    
+    // Regla de Sueldo Diario: Sueldo Base entre los 7 días (6 laborados + 1 descanso)
+    const sueldoDiario = sueldoBaseSemanal / 7;
+    
+    const valorHora = sueldoDiario / 8;
 
     // Prioridad a ajustes de admin si existen, si no a lo reportado por supervisor
     const hrsCalculo = incidencia.horas_extra_reales !== null && incidencia.horas_extra_reales !== undefined
@@ -154,7 +161,7 @@ export default function Incidencias() {
       ? Number(incidencia.faltas_injustificadas)
       : Number(incidencia.faltas) || 0;
 
-    const descuentoFaltas = totalFaltasInjust * salarioDiario;
+    const descuentoFaltas = totalFaltasInjust * sueldoDiario;
 
     // Retardos sin permiso (o retardos generales) descuentan media hora
     const totalRetardosSinPermiso = incidencia.retardos_sin_permiso !== null && incidencia.retardos_sin_permiso !== undefined
@@ -163,11 +170,10 @@ export default function Incidencias() {
 
     const descuentoRetardos = totalRetardosSinPermiso * (valorHora * 0.5);
 
-    const sueldoBaseSemanal = salarioDiario * diasPeriodo;
     const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
 
     return {
-      salarioDiario,
+      sueldoDiario,
       sueldoBaseSemanal,
       pagoHorasExtra,
       descuentoFaltas,
@@ -215,6 +221,16 @@ export default function Incidencias() {
       <h1 className="text-3xl font-bold text-gray-800">
         📋 Control de Incidencias y Nómina Semanal
       </h1>
+
+      {/* ================= BOTÓN DE REGLAS DE SUELDO DIARIO ================= */}
+      <div className="flex justify-start">
+        <button
+          onClick={() => setModalReglas(true)}
+          className="bg-indigo-600 text-white text-xs font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 shadow-sm flex items-center gap-2 transition-all"
+        >
+          <span>⚙️</span> Reglas del Sueldo Diario
+        </button>
+      </div>
 
       {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
       <div className="space-y-6">
@@ -377,6 +393,7 @@ export default function Incidencias() {
               <th className="p-3 border">Empleado</th>
               <th className="p-3 border">Periodo</th>
               <th className="p-3 border text-right bg-blue-50">Sueldo Base</th>
+              <th className="p-3 border text-right bg-indigo-50">Sueldo Diario</th>
               <th className="p-3 border text-center">Hrs Extra Rep. (J)</th>
               <th className="p-3 border text-center">Hrs Extra Real</th>
               <th className="p-3 border text-center">Retardos</th>
@@ -392,7 +409,7 @@ export default function Incidencias() {
           <tbody>
             {incidenciasMostrar.length === 0 ? (
               <tr>
-                <td colSpan="13" className="text-center p-6 text-gray-500">
+                <td colSpan="14" className="text-center p-6 text-gray-500">
                   No hay datos de incidencias registrados para el filtro seleccionado.
                 </td>
               </tr>
@@ -412,6 +429,9 @@ export default function Incidencias() {
                     </td>
                     <td className="p-3 border text-right font-semibold text-gray-800 bg-blue-50/50">
                       ${calculo.sueldoBaseSemanal.toFixed(2)}
+                    </td>
+                    <td className="p-3 border text-right font-semibold text-indigo-900 bg-indigo-50/50">
+                      ${calculo.sueldoDiario.toFixed(2)}
                     </td>
                     <td className="p-3 border text-center">{item.horas_extra || 0}h</td>
                     <td className="p-3 border text-center font-semibold text-blue-600">
@@ -490,6 +510,60 @@ export default function Incidencias() {
           </tbody>
         </table>
       </div>
+
+      {/* ================= MODAL REGLAS DEL SUELDO DIARIO ================= */}
+      {modalReglas && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 border border-indigo-100">
+            <div className="border-b pb-3 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+                <span>⚙️</span> Reglas de Cálculo: Sueldo Diario
+              </h3>
+              <button
+                onClick={() => setModalReglas(false)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs md:text-sm text-gray-700">
+              <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 space-y-2">
+                <p className="font-semibold text-indigo-950">
+                  📌 Criterios de Cálculo Semanal:
+                </p>
+                <ul className="list-disc list-inside space-y-1.5 text-indigo-900">
+                  <li>
+                    <strong>Sueldo Base Semanal:</strong> Equivale a <strong>7 días</strong> de trabajo completos.
+                  </li>
+                  <li>
+                    <strong>Composición de la Semana:</strong> <strong>6 días laborados</strong> + <strong>1 día de descanso</strong>.
+                  </li>
+                  <li>
+                    <strong>Fórmula del Sueldo Diario:</strong> 
+                    <span className="block mt-1 bg-white p-2 rounded border border-indigo-200 font-mono text-center font-bold text-indigo-700">
+                      Sueldo Diario = Sueldo Base Semanal / 7 días
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <p className="text-gray-500 text-xs">
+                * Este sueldo diario es la base para calcular las proporciones de horas extras, faltas e incidencias de la nómina semanal.
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t">
+              <button
+                onClick={() => setModalReglas(false)}
+                className="bg-indigo-600 text-white text-xs font-semibold px-5 py-2 rounded-lg hover:bg-indigo-700 shadow-md"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= MODAL EDICIÓN MULTINIVEL ================= */}
       {modalEdicion.abierto && modalEdicion.datos && (() => {

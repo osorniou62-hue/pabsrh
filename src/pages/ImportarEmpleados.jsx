@@ -71,7 +71,8 @@ export default function ImportarEmpleados() {
 
     // Bonos y conceptos
     const idxBonoPuesto = encabezadosRaw.findIndex((h) => h === "BONO POR PUESTO");
-    // Buscamos las ocurrencias de pago/bono puntualidad y asistencia
+    
+    // Buscamos todas las ocurrencias de pago/bono puntualidad y asistencia
     const indicesPuntualidad = encabezadosRaw.reduce((acc, h, i) => (h.includes("PUNTUALIDAD") ? [...acc, i] : acc), []);
     const indicesAsistencia = encabezadosRaw.reduce((acc, h, i) => (h.includes("ASISTENCIA") ? [...acc, i] : acc), []);
 
@@ -97,12 +98,20 @@ export default function ImportarEmpleados() {
       const fechaIngreso = convertirFechaExcel(idxAlta !== -1 ? fila[idxAlta] : fila[4]);
       
       const sueldoBase = limpiarMonto(idxSueldoBase !== -1 ? fila[idxSueldoBase] : fila[6]);
-
       const bonoPuesto = limpiarMonto(idxBonoPuesto !== -1 ? fila[idxBonoPuesto] : fila[13]);
       
-      // Tomamos el primer índice encontrado para puntualidad y asistencia
-      const bonoPuntualidad = indicesPuntualidad.length > 0 ? limpiarMonto(fila[indicesPuntualidad[0]]) : 0;
-      const bonoAsistencia = indicesAsistencia.length > 0 ? limpiarMonto(fila[indicesAsistencia[0]]) : 0;
+      // Función auxiliar para buscar el primer índice que contenga un valor numérico real mayor a 0
+      const obtenerValorDeIndices = (indices) => {
+        for (const idx of indices) {
+          const val = limpiarMonto(fila[idx]);
+          if (val > 0) return val;
+        }
+        // Si ninguno es mayor a 0, retornamos el valor del primer índice encontrado o 0
+        return indices.length > 0 ? limpiarMonto(fila[indices[0]]) : 0;
+      };
+
+      const bonoPuntualidad = obtenerValorDeIndices(indicesPuntualidad);
+      const bonoAsistencia = obtenerValorDeIndices(indicesAsistencia);
 
       const bonoDesempeno = limpiarMonto(idxBonoDesempeno !== -1 ? fila[idxBonoDesempeno] : 0);
       const apoyoMedico = limpiarMonto(idxApoyoMedico !== -1 ? fila[idxApoyoMedico] : 0);
@@ -239,7 +248,7 @@ export default function ImportarEmpleados() {
         );
 
         if (!departamento && departamentos.length > 0) {
-          departamento = departamentos[0]; // Asignar un departamento por defecto si no lo encuentra exacto
+          departamento = departamentos[0]; 
         }
 
         let puesto = puestos.find(
@@ -434,7 +443,7 @@ export default function ImportarEmpleados() {
                     <td className="p-3 font-semibold text-blue-600">{empleado.puesto}</td>
                     <td className="p-3 text-right font-bold text-slate-700">${empleado.sueldo_base.toFixed(2)}</td>
                     <td className="p-3 text-right">${empleado.bono_puesto.toFixed(2)}</td>
-                    <td className="p-3 text-right">${empleado.bono_puntualidad.toFixed(2)}</td>
+                    <td className="p-3 text-right text-emerald-600 font-bold">${empleado.bono_puntualidad.toFixed(2)}</td>
                     <td className="p-3 text-right">${empleado.bono_asistencia.toFixed(2)}</td>
                     <td className="p-3 text-right font-bold text-emerald-700">${sumaBonos.toFixed(2)}</td>
                   </tr>

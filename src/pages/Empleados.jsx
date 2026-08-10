@@ -21,12 +21,11 @@ export default function Empleados() {
     bonos: [],
     cargandoBonos: false,
   });
-  
+
   const [nuevoBonoNombre, setNuevoBonoNombre] = useState("Puntualidad");
   const [nuevoBonoMonto, setNuevoBonoMonto] = useState("");
   const [guardando, setGuardando] = useState(false);
 
-  // Tipos de bonos predefinidos identificados en el archivo
   const TIPOS_BONOS_PREDEFINIDOS = [
     "Puntualidad",
     "Asistencia",
@@ -65,7 +64,7 @@ export default function Empleados() {
 
       if (error) throw error;
 
-      // Consultar bonos para cálculo del total directo en la tabla
+      // Consultar bonos para desglosar en la tabla
       const { data: bonosData } = await supabase.from("empleado_bonos").select("*");
 
       const empleadosConBonos = (emps || []).map((emp) => {
@@ -78,12 +77,70 @@ export default function Empleados() {
       console.error("❌ Error al cargar empleados:", err);
       const fallback = await supabase.from("empleados").select("*").order("nombre_completo");
       setEmpleados(fallback.data || []);
-    } fontally {
+    } finally {
       setLoading(false);
     }
   };
 
-  // --- CONSULTAR BONOS EN VIVO PARA EL POP-UP ---
+  // Helper para extraer un tipo de bono específico
+  const obtenerMontoBono = (listaBonos, tipo) => {
+    if (!Array.isArray(listaBonos)) return 0;
+    const bonoEncontrado = listaBonos.find(
+      (b) => b?.tipo_bono?.toLowerCase() === tipo.toLowerCase()
+    );
+    return Number(bonoEncontrado?.monto) || 0;
+  };
+
+  const obtenerValoresEmpleado = (emp) => {
+    if (!emp)
+      return {
+        salarioBaseSemanal: 0,
+        salarioDiario: 0,
+        bonoPuntualidad: 0,
+        bonoAsistencia: 0,
+        bonoProduccion: 0,
+        bonoDespensa: 0,
+        bonoOtros: 0,
+        totalBonos: 0,
+      };
+
+    const salarioBaseSemanal = Number(
+      emp?.salario_base ?? emp?.sueldo_base ?? emp?.salario_semanal ?? emp?.sueldo_semanal
+    ) || 0;
+
+    const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
+    const bonos = Array.isArray(emp?.empleado_bonos) ? emp.empleado_bonos : [];
+
+    const bonoPuntualidad = obtenerMontoBono(bonos, "Puntualidad");
+    const bonoAsistencia = obtenerMontoBono(bonos, "Asistencia");
+    const bonoProduccion = obtenerMontoBono(bonos, "Producción");
+    const bonoDespensa = obtenerMontoBono(bonos, "Despensa");
+
+    // "Otros" abarca cualquier otro tipo de bono no predefinido arriba
+    const bonoOtros = bonos
+      .filter(
+        (b) =>
+          !["puntualidad", "asistencia", "producción", "produccion", "despensa"].includes(
+            b?.tipo_bono?.toLowerCase()
+          )
+      )
+      .reduce((acc, b) => acc + (Number(b?.monto) || 0), 0);
+
+    const totalBonos = bonos.reduce((acc, b) => acc + (Number(b?.monto) || 0), 0);
+
+    return {
+      salarioBaseSemanal,
+      salarioDiario,
+      bonoPuntualidad,
+      bonoAsistencia,
+      bonoProduccion,
+      bonoDespensa,
+      bonoOtros,
+      totalBonos,
+    };
+  };
+
+  // --- ACCIONES DE BONOS (MODAL) ---
   const abrirModalBonos = async (empleado) => {
     setModalBonos({ abierto: true, empleado, bonos: [], cargandoBonos: true });
     setNuevoBonoNombre("Puntualidad");
@@ -113,91 +170,6 @@ export default function Empleados() {
     }
   };
 
-  // --- CÁLCULO DE SALARIO Y BONOS ---
-  const obtenerValoresEmpleado = (emp) => {
-    if (!emp) return { salarioBaseSemanal: 0, salarioDiario: 0, totalBonos: 0 };
-
-    const salarioBaseSemanal = Number(
-      emp?.salario_base ?? 
-      emp?.sueldo_base ?? 
-      emp?.salario_semanal ?? 
-      emp?.sueldo_semanal
-    ) || 0;
-
-    // Regla: 7 días (6 laborados + 1 descanso)
-    const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
-
-    const listaBonos = Array.isArray(emp?.empleado_bonos) ? emp.empleado_bonos : [];
-    const totalBonos = listaBonos.reduce(
-      (acc, b) => acc + (Number(b?.monto) || 0),
-      0
-    );
-
-    return { salarioBaseSemanal, salarioDiario, totalBonos };
-  };
-
-  // --- MÉTODOS DE ACCIÓN (BAJA / REACTIVAR) ---
-  const darDeBaja = async (empleado) => {
-    if (!empleado) return;
-    const confirmar = window.confirm(`¿Deseas dar de baja a ${empleado.nombre_completo}?`);
-    if (!confirmar) return;
-
-    const { error } = await supabase
-      .from("empleados")
-      .update({
-        activo: false,
-        fecha_baja: new Date().toISOString().split("T")[0],
-      })
-      .eq("id", empleado.id);
-
-    if (error) alert(error.message);
-    else await cargarEmpleados();
-  };
-
-  const reactivarEmpleado = async (empleado) => {
-    if (!empleado) return;
-    const { error } = await supabase
-      .from("empleados")
-      .update({
-        activo: true,
-        fecha_baja: null,
-      })
-      .eq("id", empleado.id);
-
-    if (error) alert(error.message);
-    else await cargarEmpleados();
-  };
-
-  // --- EDICIÓN RÁPIDA ---
-  const guardarEdicionRapida = async (e) => {
-    e.preventDefault();
-    if (!modalEdicionRapida.datos) return;
-
-    setGuardando(true);
-    const d = modalEdicionRapida.datos;
-
-    const { error } = await supabase
-      .from("empleados")
-      .update({
-        puesto_id: d.puesto_id || null,
-        activo: Boolean(d.activo),
-        salario_base: Number(d.salario_base) || 0,
-        sueldo_base: Number(d.salario_base) || 0,
-        fecha_baja: d.activo ? null : (d.fecha_baja || new Date().toISOString().split("T")[0]),
-      })
-      .eq("id", d.id);
-
-    setGuardando(false);
-
-    if (error) {
-      alert("Error al actualizar empleado: " + error.message);
-    } else {
-      setModalEdicionRapida({ abierto: false, datos: null });
-      cargarEmpleados();
-    }
-  };
-
-  // --- ACCIONES EN POP-UP DE BONOS ---
   const handleCambioMontoBono = (bonoId, nuevoMonto) => {
     const bonosActualizados = (modalBonos.bonos || []).map((b) =>
       b.id === bonoId ? { ...b, monto: nuevoMonto } : b
@@ -218,10 +190,7 @@ export default function Empleados() {
       monto: Number(nuevoBonoMonto) || 0,
     };
 
-    const { data, error } = await supabase
-      .from("empleado_bonos")
-      .insert([nuevoRegistro])
-      .select();
+    const { data, error } = await supabase.from("empleado_bonos").insert([nuevoRegistro]).select();
 
     setGuardando(false);
 
@@ -286,8 +255,7 @@ export default function Empleados() {
     if (estatus === "BAJAS") coincideEstatus = !empleado.activo;
 
     const coincideDepartamento =
-      departamentoFiltro === "TODOS" ||
-      empleado.departamentos?.nombre === departamentoFiltro;
+      departamentoFiltro === "TODOS" || empleado.departamentos?.nombre === departamentoFiltro;
 
     return coincideBusqueda && coincideEstatus && coincideDepartamento;
   });
@@ -303,7 +271,7 @@ export default function Empleados() {
           <div>
             <h1 className="text-4xl font-bold text-gray-800">👥 Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Gestión de empleados, salarios semanales y desglose de bonos
+              Gestión de empleados, sueldos y desglose individual de bonos
             </p>
           </div>
 
@@ -369,27 +337,35 @@ export default function Empleados() {
           Mostrando <strong>{empleadosFiltrados.length}</strong> empleados
         </div>
 
-        {/* TABLA PRINCIPAL */}
+        {/* TABLA PRINCIPAL CON TODAS LAS COLUMNAS DE BONOS VISIBLES */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
-          <table className="w-full text-left text-xs md:text-sm">
+          <table className="w-full text-left text-xs md:text-sm whitespace-nowrap">
             <thead className="bg-slate-100 text-gray-700 font-bold">
               <tr>
-                <th className="p-4">No.</th>
-                <th className="p-4">Nombre</th>
-                <th className="p-4">Departamento</th>
-                <th className="p-4">Puesto</th>
-                <th className="p-4 text-right bg-blue-50">Sueldo Base Semanal</th>
-                <th className="p-4 text-right bg-indigo-50">Sueldo Diario</th>
-                <th className="p-4 text-right bg-emerald-50">Bonos</th>
-                <th className="p-4 text-center">Estatus</th>
-                <th className="p-4 text-center">Acciones</th>
+                <th className="p-3">No.</th>
+                <th className="p-3">Nombre</th>
+                <th className="p-3">Departamento</th>
+                <th className="p-3">Puesto</th>
+                <th className="p-3 text-right bg-blue-50">Sueldo Base Sem.</th>
+                <th className="p-3 text-right bg-indigo-50">Sueldo Diario</th>
+                {/* COLUMNAS VISIBLES DE BONOS */}
+                <th className="p-3 text-right bg-emerald-50 text-emerald-800">B. Puntualidad</th>
+                <th className="p-3 text-right bg-emerald-50 text-emerald-800">B. Asistencia</th>
+                <th className="p-3 text-right bg-emerald-50 text-emerald-800">B. Producción</th>
+                <th className="p-3 text-right bg-emerald-50 text-emerald-800">B. Despensa</th>
+                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Otros Bonos</th>
+                <th className="p-3 text-right bg-emerald-100 text-emerald-900 font-black">
+                  Total Bonos
+                </th>
+                <th className="p-3 text-center">Estatus</th>
+                <th className="p-3 text-center">Acciones</th>
               </tr>
             </thead>
 
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={9} className="p-6 text-center text-gray-500">
+                  <td colSpan={14} className="p-6 text-center text-gray-500">
                     Cargando lista de empleados...
                   </td>
                 </tr>
@@ -397,19 +373,27 @@ export default function Empleados() {
 
               {!loading &&
                 empleadosFiltrados.map((empleado) => {
-                  const { salarioBaseSemanal, salarioDiario, totalBonos } =
-                    obtenerValoresEmpleado(empleado);
+                  const {
+                    salarioBaseSemanal,
+                    salarioDiario,
+                    bonoPuntualidad,
+                    bonoAsistencia,
+                    bonoProduccion,
+                    bonoDespensa,
+                    bonoOtros,
+                    totalBonos,
+                  } = obtenerValoresEmpleado(empleado);
 
                   return (
                     <tr key={empleado.id} className="border-t hover:bg-slate-50 transition">
-                      <td className="p-4 font-mono">{empleado.numero_empleado || "S/N"}</td>
-                      <td className="p-4 font-semibold text-gray-800">
+                      <td className="p-3 font-mono">{empleado.numero_empleado || "S/N"}</td>
+                      <td className="p-3 font-semibold text-gray-800">
                         {empleado.nombre_completo || "Sin nombre"}
                       </td>
-                      <td className="p-4">{empleado.departamentos?.nombre || "N/A"}</td>
-                      <td className="p-4">{empleado.puestos?.nombre || "Sin Asignar"}</td>
+                      <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
+                      <td className="p-3">{empleado.puestos?.nombre || "Sin Asignar"}</td>
 
-                      <td className="p-4 text-right font-bold text-gray-800 bg-blue-50/40">
+                      <td className="p-3 text-right font-bold text-gray-800 bg-blue-50/40">
                         {salarioBaseSemanal > 0 ? (
                           `$${salarioBaseSemanal.toFixed(2)}`
                         ) : (
@@ -417,7 +401,7 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      <td className="p-4 text-right font-bold text-indigo-900 bg-indigo-50/40">
+                      <td className="p-3 text-right font-bold text-indigo-900 bg-indigo-50/40">
                         {salarioDiario > 0 ? (
                           `$${salarioDiario.toFixed(2)}`
                         ) : (
@@ -425,31 +409,47 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      <td className="p-4 text-right bg-emerald-50/40">
+                      {/* VALORES VISIBLES POR CADA BONO */}
+                      <td className="p-3 text-right font-medium text-gray-700 bg-emerald-50/20">
+                        ${bonoPuntualidad.toFixed(2)}
+                      </td>
+                      <td className="p-3 text-right font-medium text-gray-700 bg-emerald-50/20">
+                        ${bonoAsistencia.toFixed(2)}
+                      </td>
+                      <td className="p-3 text-right font-medium text-gray-700 bg-emerald-50/20">
+                        ${bonoProduccion.toFixed(2)}
+                      </td>
+                      <td className="p-3 text-right font-medium text-gray-700 bg-emerald-50/20">
+                        ${bonoDespensa.toFixed(2)}
+                      </td>
+                      <td className="p-3 text-right font-medium text-gray-700 bg-emerald-50/20">
+                        ${bonoOtros.toFixed(2)}
+                      </td>
+
+                      {/* TOTAL Y ACCIÓN RÁPIDA DE MODAL */}
+                      <td className="p-3 text-right bg-emerald-100/50">
                         <button
                           onClick={() => abrirModalBonos(empleado)}
-                          className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 ml-auto shadow-sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold text-xs shadow-sm ml-auto block"
+                          title="Haz clic para editar o agregar bonos en el pop-up"
                         >
-                          <span>🎁</span>
-                          <span>
-                            {totalBonos > 0 ? `$${totalBonos.toFixed(2)}` : "Ver / Añadir"}
-                          </span>
+                          ${totalBonos.toFixed(2)} ✏️
                         </button>
                       </td>
 
-                      <td className="p-4 text-center">
+                      <td className="p-3 text-center">
                         {empleado.activo ? (
-                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
+                          <span className="bg-green-100 text-green-700 px-2.5 py-1 rounded-full text-xs font-bold">
                             Activo
                           </span>
                         ) : (
-                          <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold">
+                          <span className="bg-red-100 text-red-700 px-2.5 py-1 rounded-full text-xs font-bold">
                             Baja
                           </span>
                         )}
                       </td>
 
-                      <td className="p-4">
+                      <td className="p-3">
                         <div className="flex gap-1.5 justify-center">
                           <button
                             onClick={() =>
@@ -464,33 +464,17 @@ export default function Empleados() {
                                 },
                               })
                             }
-                            className="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1.5 rounded-lg font-semibold text-xs"
+                            className="bg-amber-500 hover:bg-amber-600 text-white px-2 py-1 rounded-lg font-semibold text-xs"
                           >
                             ✏️ Editar
                           </button>
 
                           <Link
                             to={`/empleados/detalle/${empleado.id}`}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg font-semibold text-xs"
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded-lg font-semibold text-xs"
                           >
                             Ver
                           </Link>
-
-                          {empleado.activo ? (
-                            <button
-                              onClick={() => darDeBaja(empleado)}
-                              className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded-lg font-semibold text-xs"
-                            >
-                              Baja
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => reactivarEmpleado(empleado)}
-                              className="bg-green-600 hover:bg-green-700 text-white px-2.5 py-1.5 rounded-lg font-semibold text-xs"
-                            >
-                              Reactivar
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -499,7 +483,7 @@ export default function Empleados() {
 
               {!loading && empleadosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-6 text-center text-gray-500">
+                  <td colSpan={14} className="p-6 text-center text-gray-500">
                     No se encontraron empleados.
                   </td>
                 </tr>
@@ -509,129 +493,14 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* MODAL EDICIÓN RÁPIDA */}
-      {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={guardarEdicionRapida}
-            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5"
-          >
-            <div className="border-b pb-3 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-gray-800">
-                ✏️ Editar Puesto y Sueldo Base Semanal
-              </h3>
-              <button
-                type="button"
-                onClick={() => setModalEdicionRapida({ abierto: false, datos: null })}
-                className="text-gray-400 font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-gray-500">
-              Empleado:{" "}
-              <strong className="text-gray-800">
-                {modalEdicionRapida.datos?.nombre_completo || "S/D"}
-              </strong>
-            </p>
-
-            <div className="space-y-4 text-xs md:text-sm">
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">Puesto</label>
-                <select
-                  value={modalEdicionRapida.datos?.puesto_id || ""}
-                  onChange={(e) =>
-                    setModalEdicionRapida({
-                      ...modalEdicionRapida,
-                      datos: { ...modalEdicionRapida.datos, puesto_id: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2.5 rounded-lg outline-none"
-                >
-                  <option value="">-- Seleccionar Puesto --</option>
-                  {puestosLista.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">Estatus</label>
-                <select
-                  value={modalEdicionRapida.datos?.activo ? "ACTIVO" : "INACTIVO"}
-                  onChange={(e) =>
-                    setModalEdicionRapida({
-                      ...modalEdicionRapida,
-                      datos: {
-                        ...modalEdicionRapida.datos,
-                        activo: e.target.value === "ACTIVO",
-                      },
-                    })
-                  }
-                  className="w-full border p-2.5 rounded-lg outline-none"
-                >
-                  <option value="ACTIVO">Activo</option>
-                  <option value="INACTIVO">Baja / Inactivo</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">
-                  Sueldo Base Semanal ($)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={modalEdicionRapida.datos?.salario_base ?? 0}
-                  onChange={(e) =>
-                    setModalEdicionRapida({
-                      ...modalEdicionRapida,
-                      datos: { ...modalEdicionRapida.datos, salario_base: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none"
-                />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  * Sueldo diario calculado (/7 días):{" "}
-                  <strong>
-                    ${((Number(modalEdicionRapida.datos?.salario_base) || 0) / 7).toFixed(2)}
-                  </strong>
-                </p>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t">
-              <button
-                type="button"
-                onClick={() => setModalEdicionRapida({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={guardando}
-                className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300"
-              >
-                {guardando ? "Guardando..." : "Guardar Cambios"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* POP-UP / MODAL DE BONOS DESGLOSADOS */}
+      {/* POP-UP / MODAL DE BONOS */}
       {modalBonos.abierto && modalBonos.empleado && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
             <div className="border-b pb-3 flex justify-between items-center">
               <div>
                 <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
-                  <span>🎁</span> Desglose de Bonos
+                  <span>🎁</span> Desglose y Edición de Bonos
                 </h3>
                 <p className="text-xs text-gray-500">
                   Empleado:{" "}
@@ -651,13 +520,12 @@ export default function Empleados() {
               </button>
             </div>
 
-            {/* LISTA DE BONOS REGISTRADOS */}
             <div className="space-y-3 max-h-56 overflow-y-auto p-1">
               {modalBonos.cargandoBonos ? (
                 <div className="text-center py-4 text-gray-400 text-xs">Cargando bonos...</div>
-              ) : (!modalBonos.bonos || modalBonos.bonos.length === 0) ? (
+              ) : !modalBonos.bonos || modalBonos.bonos.length === 0 ? (
                 <div className="text-center py-4 text-amber-700 bg-amber-50 rounded-xl p-3 text-xs border border-amber-200">
-                  Sin bonos asignados. Puedes agregar uno de las columnas del archivo a continuación:
+                  Sin bonos asignados a este empleado.
                 </div>
               ) : (
                 modalBonos.bonos.map((bono) => (
@@ -691,9 +559,8 @@ export default function Empleados() {
               )}
             </div>
 
-            {/* AGREGAR NUEVO BONO DESDE SELECCIÓN */}
             <div className="bg-slate-100 p-3 rounded-xl space-y-2 border border-slate-200">
-              <span className="text-xs font-bold text-gray-700 block">+ Asignar Bono Manual</span>
+              <span className="text-xs font-bold text-gray-700 block">+ Asignar Novo Bono</span>
               <div className="flex gap-2">
                 <select
                   value={nuevoBonoNombre}
@@ -726,9 +593,8 @@ export default function Empleados() {
               </div>
             </div>
 
-            {/* SUMA TOTAL */}
             <div className="bg-emerald-50 p-3 rounded-xl flex justify-between items-center border border-emerald-200">
-              <span className="text-xs font-bold text-emerald-900">Total Acumulado de Bonos:</span>
+              <span className="text-xs font-bold text-emerald-900">Total Acumulado:</span>
               <span className="text-base font-black text-emerald-700">
                 $
                 {(modalBonos.bonos || [])

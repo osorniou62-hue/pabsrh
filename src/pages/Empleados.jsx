@@ -5,18 +5,6 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// Lista exacta de conceptos de bonos según la estructura de la nómina
-const TIPOS_BONOS_NOMINA = [
-  "BONO POR PUESTO",
-  "BONO PUNTUALIDAD",
-  "BONO ASISTENCIA",
-  "BONOS MULTIPLICADOR",
-  "BONO POR DESEMPEÑO",
-  "BONO EXTRA",
-  "APOYO MEDICO",
-  "GRATIFICACIÓN ESPECIAL",
-];
-
 export default function Empleados() {
   const [empleados, setEmpleados] = useState([]);
   const [puestosLista, setPuestosLista] = useState([]);
@@ -27,15 +15,6 @@ export default function Empleados() {
 
   // --- ESTADOS DE MODALES ---
   const [modalEdicionRapida, setModalEdicionRapida] = useState({ abierto: false, datos: null });
-  const [modalBonos, setModalBonos] = useState({
-    abierto: false,
-    empleado: null,
-    bonos: [],
-    cargandoBonos: false,
-  });
-
-  const [nuevoBonoTipo, setNuevoBonoTipo] = useState(TIPOS_BONOS_NOMINA[0]);
-  const [nuevoBonoMonto, setNuevoBonoMonto] = useState("");
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
@@ -56,28 +35,25 @@ export default function Empleados() {
     setLoading(true);
 
     try {
+      // Consulta con relación explícita a departamentos, puestos y la tabla relacional empleado_bonos
       const { data: emps, error } = await supabase
         .from("empleados")
         .select(`
           *,
-          departamentos (*),
-          puestos (*)
+          departamentos (id, nombre),
+          puestos (id, nombre),
+          empleado_bonos (
+            bonos (id, nombre),
+            monto
+          )
         `)
         .order("nombre_completo");
 
       if (error) throw error;
-
-      // Obtener bonos de la base de datos
-      const { data: bonosData } = await supabase.from("empleado_bonos").select("*");
-
-      const empleadosConBonos = (emps || []).map((emp) => {
-        const bonosEmp = (bonosData || []).filter((b) => b.empleado_id === emp.id);
-        return { ...emp, empleado_bonos: bonosEmp };
-      });
-
-      setEmpleados(empleadosConBonos);
+      setEmpleados(emps || []);
     } catch (err) {
       console.error("❌ Error al cargar empleados:", err);
+      // Fallback por si la relación falla temporalmente
       const fallback = await supabase.from("empleados").select("*").order("nombre_completo");
       setEmpleados(fallback.data || []);
     } finally {
@@ -85,27 +61,7 @@ export default function Empleados() {
     }
   };
 
-  // Helper para buscar el monto de un bono específico ignorando mayúsculas y acentos
-  const obtenerMontoPorTipo = (listaBonos, tipoBonoBuscado) => {
-    if (!Array.isArray(listaBonos)) return 0;
-    
-    const normalizar = (str) =>
-      (str || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .trim();
-
-    const objetivo = normalizar(tipoBonoBuscado);
-
-    const bonoEncontrado = listaBonos.find(
-      (b) => normalizar(b?.tipo_bono) === objetivo
-    );
-
-    return Number(bonoEncontrado?.monto) || 0;
-  };
-
-  // Extraer salarios y desglosar cada bono según la nómina
+  // --- EXTRACCIÓN DE VALORES DESDE LA TABLA RELACIONAL O COLUMNAS ---
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) {
       return {
@@ -123,26 +79,57 @@ export default function Empleados() {
       };
     }
 
-    // Sueldo base semanal
     const salarioBaseSemanal = Number(
       emp?.salario_base ?? emp?.sueldo_base ?? emp?.salario_semanal ?? emp?.sueldo_semanal
     ) || 0;
 
-    // Regla: Sueldo Diario = Sueldo Base entre 7 días (6 laborados + 1 descanso)
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
-    const bonos = Array.isArray(emp?.empleado_bonos) ? emp.empleado_bonos : [];
 
-    // Mapeo exacto de bonos de nómina
-    const bonoPuesto = obtenerMontoPorTipo(bonos, "BONO POR PUESTO");
-    const bonoPuntualidad = obtenerMontoPorTipo(bonos, "BONO PUNTUALIDAD");
-    const bonoAsistencia = obtenerMontoPorTipo(bonos, "BONO ASISTENCIA");
-    const bonoMultiplicador = obtenerMontoPorTipo(bonos, "BONOS MULTIPLICADOR");
-    const bonoDesempeno = obtenerMontoPorTipo(bonos, "BONO POR DESEMPEÑO");
-    const bonoExtra = obtenerMontoPorTipo(bonos, "BONO EXTRA");
-    const apoyoMedico = obtenerMontoPorTipo(bonos, "APOYO MEDICO");
-    const gratificacionEspecial = obtenerMontoPorTipo(bonos, "GRATIFICACIÓN ESPECIAL");
+    // Si viene de la tabla relacional empleado_bonos
+    let bonoPuesto = 0;
+    let bonoPuntualidad = 0;
+    let bonoAsistencia = 0;
+    let bonoMultiplicador = 0;
+    let bonoDesempeno = 0;
+    let bonoExtra = 0;
+    let apoyoMedico = 0;
+    let gratificacionEspecial = 0;
 
-    const totalBonos = bonos.reduce((acc, b) => acc + (Number(b?.monto) || 0), 0);
+    if (Array.isArray(emp.empleado_bonos) && emp.empleado_bonos.length > 0) {
+      emp.empleado_bonos.forEach((item) => {
+        const nombreBono = (item.bonos?.nombre || "").toLowerCase();
+        const montoBono = Number(item.monto) || 0;
+
+        if (nombreBono.includes("puesto")) bonoPuesto += montoBono;
+        else if (nombreBono.includes("puntualidad")) bonoPuntualidad += montoBono;
+        else if (nombreBono.includes("asistencia")) bonoAsistencia += montoBono;
+        else if (nombreBono.includes("multiplicador")) bonoMultiplicador += montoBono;
+        else if (nombreBono.includes("desempeño") || nombreBono.includes("desempeno")) bonoDesempeno += montoBono;
+        else if (nombreBono.includes("extra")) bonoExtra += montoBono;
+        else if (nombreBono.includes("medico") || nombreBono.includes("médico")) apoyoMedico += montoBono;
+        else if (nombreBono.includes("gratificacion") || nombreBono.includes("gratificación")) gratificacionEspecial += montoBono;
+      });
+    } else {
+      // Respaldo leyendo directamente de las columnas exactas si no usa la tabla relacional todavía
+      bonoPuesto = Number(emp?.bono_puesto) || 0;
+      bonoPuntualidad = Number(emp?.bono_puntualidad) || 0;
+      bonoAsistencia = Number(emp?.bono_asistencia) || 0;
+      bonoMultiplicador = Number(emp?.bono_multiplicador) || 0;
+      bonoDesempeno = Number(emp?.bono_desempeno || emp?.bono_desempeño) || 0;
+      bonoExtra = Number(emp?.bono_extra) || 0;
+      apoyoMedico = Number(emp?.apoyo_medico) || 0;
+      gratificacionEspecial = Number(emp?.gratificacion_especial) || 0;
+    }
+
+    const totalBonos =
+      bonoPuesto +
+      bonoPuntualidad +
+      bonoAsistencia +
+      bonoMultiplicador +
+      bonoDesempeno +
+      bonoExtra +
+      apoyoMedico +
+      gratificacionEspecial;
 
     return {
       salarioBaseSemanal,
@@ -159,102 +146,7 @@ export default function Empleados() {
     };
   };
 
-  // --- CONSULTAR BONOS EN POP-UP ---
-  const abrirModalBonos = async (empleado) => {
-    setModalBonos({ abierto: true, empleado, bonos: [], cargandoBonos: true });
-    setNuevoBonoTipo(TIPOS_BONOS_NOMINA[0]);
-    setNuevoBonoMonto("");
-
-    try {
-      let { data, error } = await supabase
-        .from("empleado_bonos")
-        .select("*")
-        .eq("empleado_id", empleado.id)
-        .order("id");
-
-      if (error) {
-        console.error("Error cargando bonos:", error.message);
-        data = [];
-      }
-
-      setModalBonos({
-        abierto: true,
-        empleado,
-        bonos: data || [],
-        cargandoBonos: false,
-      });
-    } catch (e) {
-      console.error("Error al obtener bonos del empleado:", e);
-      setModalBonos({ abierto: true, empleado, bonos: [], cargandoBonos: false });
-    }
-  };
-
-  // --- MÉTODOS DE EDICIÓN EN MODAL DE BONOS ---
-  const handleCambioMontoBono = (bonoId, nuevoMonto) => {
-    const bonosActualizados = (modalBonos.bonos || []).map((b) =>
-      b.id === bonoId ? { ...b, monto: nuevoMonto } : b
-    );
-    setModalBonos({ ...modalBonos, bonos: bonosActualizados });
-  };
-
-  const agregarNuevoBono = async () => {
-    if (!nuevoBonoTipo || nuevoBonoMonto === "") {
-      alert("Selecciona el tipo de bono e ingresa un monto.");
-      return;
-    }
-
-    setGuardando(true);
-    const nuevoRegistro = {
-      empleado_id: modalBonos.empleado.id,
-      tipo_bono: nuevoBonoTipo.trim(),
-      monto: Number(nuevoBonoMonto) || 0,
-    };
-
-    const { data, error } = await supabase.from("empleado_bonos").insert([nuevoRegistro]).select();
-
-    setGuardando(false);
-
-    if (error) {
-      alert("Error al agregar bono: " + error.message);
-    } else {
-      setModalBonos({
-        ...modalBonos,
-        bonos: [...modalBonos.bonos, data[0]],
-      });
-      setNuevoBonoMonto("");
-      cargarEmpleados();
-    }
-  };
-
-  const eliminarBono = async (bonoId) => {
-    const { error } = await supabase.from("empleado_bonos").delete().eq("id", bonoId);
-    if (error) {
-      alert("Error al eliminar bono: " + error.message);
-    } else {
-      setModalBonos({
-        ...modalBonos,
-        bonos: modalBonos.bonos.filter((b) => b.id !== bonoId),
-      });
-      cargarEmpleados();
-    }
-  };
-
-  const guardarAjustesBonos = async () => {
-    setGuardando(true);
-    for (const bono of modalBonos.bonos || []) {
-      if (bono.id) {
-        await supabase
-          .from("empleado_bonos")
-          .update({ monto: Number(bono.monto) || 0 })
-          .eq("id", bono.id);
-      }
-    }
-    setGuardando(false);
-    setModalBonos({ abierto: false, empleado: null, bonos: [], cargandoBonos: false });
-    cargarEmpleados();
-  };
-
-  // --- MÉTODOS DE EDICIÓN RÁPIDA DE SUELDO BASE ---
+  // --- MÉTODOS DE EDICIÓN RÁPIDA ---
   const guardarEdicionRapida = async (e) => {
     e.preventDefault();
     if (!modalEdicionRapida.datos) return;
@@ -386,7 +278,7 @@ export default function Empleados() {
           Mostrando <strong>{empleadosFiltrados.length}</strong> empleados
         </div>
 
-        {/* TABLA PRINCIPAL CON TODAS LAS COLUMNAS DE BONOS SEGÚN NÓMINA */}
+        {/* TABLA PRINCIPAL */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="bg-slate-100 text-gray-700 font-bold border-b">
@@ -398,7 +290,6 @@ export default function Empleados() {
                 <th className="p-3 text-right bg-blue-50 text-blue-900">Sueldo Base</th>
                 <th className="p-3 text-right bg-indigo-50 text-indigo-900">Sueldo Diario</th>
 
-                {/* COLUMNAS EXACTAS DEL ARCHIVO DE NÓMINA */}
                 <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puesto</th>
                 <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puntualidad</th>
                 <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Asistencia</th>
@@ -466,41 +357,17 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      {/* VALORES INDIVIDUALES DE BONOS */}
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoPuesto.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoPuntualidad.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoAsistencia.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoMultiplicador.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoDesempeno.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${bonoExtra.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${apoyoMedico.toFixed(2)}
-                      </td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">
-                        ${gratificacionEspecial.toFixed(2)}
-                      </td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuesto.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuntualidad.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoAsistencia.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoMultiplicador.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoDesempeno.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoExtra.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${apoyoMedico.toFixed(2)}</td>
+                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${gratificacionEspecial.toFixed(2)}</td>
 
-                      {/* SUMATORIA Y ACCIÓN DE DESGLOSE */}
-                      <td className="p-3 text-right bg-emerald-100/50">
-                        <button
-                          onClick={() => abrirModalBonos(empleado)}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold text-xs shadow-sm ml-auto block"
-                          title="Haz clic para editar bonos de este empleado"
-                        >
-                          ${totalBonos.toFixed(2)} ✏️
-                        </button>
+                      <td className="p-3 text-right bg-emerald-100/50 font-black text-emerald-900">
+                        ${totalBonos.toFixed(2)}
                       </td>
 
                       <td className="p-3 text-center">
@@ -671,144 +538,6 @@ export default function Empleados() {
               </button>
             </div>
           </form>
-        </div>
-      )}
-
-      {/* POP-UP / MODAL DE DESGLOSE Y EDICIÓN DE BONOS */}
-      {modalBonos.abierto && modalBonos.empleado && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
-            <div className="border-b pb-3 flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
-                  <span>🎁</span> Desglose y Gestión de Bonos
-                </h3>
-                <p className="text-xs text-gray-500">
-                  Empleado:{" "}
-                  <strong className="text-gray-800">
-                    {modalBonos.empleado?.nombre_completo}
-                  </strong>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setModalBonos({ abierto: false, empleado: null, bonos: [], cargandoBonos: false })
-                }
-                className="text-gray-400 font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* LISTADO DE BONOS ACTUALES DEL EMPLEADO */}
-            <div className="space-y-3 max-h-56 overflow-y-auto p-1">
-              {modalBonos.cargandoBonos ? (
-                <div className="text-center py-4 text-gray-400 text-xs">Cargando bonos...</div>
-              ) : !modalBonos.bonos || modalBonos.bonos.length === 0 ? (
-                <div className="text-center py-4 text-amber-700 bg-amber-50 rounded-xl p-3 text-xs border border-amber-200">
-                  El empleado no tiene ningún bono registrado actualmente.
-                </div>
-              ) : (
-                modalBonos.bonos.map((bono) => (
-                  <div
-                    key={bono.id}
-                    className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border text-xs"
-                  >
-                    <span className="font-semibold text-gray-700">
-                      {bono.tipo_bono || "Bono General"}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500 font-bold">$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={bono.monto ?? 0}
-                        onChange={(e) => handleCambioMontoBono(bono.id, e.target.value)}
-                        className="w-24 border p-1.5 rounded-lg text-right font-bold text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <button
-                        onClick={() => eliminarBono(bono.id)}
-                        className="text-red-500 hover:text-red-700 font-bold px-1.5"
-                        title="Eliminar este bono"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* FORMULARIO PARA AGREGAR BONOS DE LA NÓMINA */}
-            <div className="bg-slate-100 p-3 rounded-xl space-y-2 border border-slate-200">
-              <span className="text-xs font-bold text-gray-700 block">+ Asignar Bono / Concepto</span>
-              <div className="flex gap-2">
-                <select
-                  value={nuevoBonoTipo}
-                  onChange={(e) => setNuevoBonoTipo(e.target.value)}
-                  className="w-full border p-2 rounded-lg text-xs outline-none bg-white font-medium"
-                >
-                  {TIPOS_BONOS_NOMINA.map((tipo) => (
-                    <option key={tipo} value={tipo}>
-                      {tipo}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  placeholder="Monto ($)"
-                  value={nuevoBonoMonto}
-                  onChange={(e) => setNuevoBonoMonto(e.target.value)}
-                  className="w-28 border p-2 rounded-lg text-xs outline-none bg-white font-bold text-right"
-                />
-
-                <button
-                  type="button"
-                  onClick={agregarNuevoBono}
-                  disabled={guardando}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"
-                >
-                  Añadir
-                </button>
-              </div>
-            </div>
-
-            {/* TOTAL */}
-            <div className="bg-emerald-50 p-3 rounded-xl flex justify-between items-center border border-emerald-200">
-              <span className="text-xs font-bold text-emerald-900">Total Acumulado:</span>
-              <span className="text-base font-black text-emerald-700">
-                $
-                {(modalBonos.bonos || [])
-                  .reduce((acc, b) => acc + (Number(b.monto) || 0), 0)
-                  .toFixed(2)}
-              </span>
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t">
-              <button
-                type="button"
-                onClick={() =>
-                  setModalBonos({ abierto: false, empleado: null, bonos: [], cargandoBonos: false })
-                }
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold"
-              >
-                Cerrar
-              </button>
-              {modalBonos.bonos && modalBonos.bonos.length > 0 && (
-                <button
-                  type="button"
-                  onClick={guardarAjustesBonos}
-                  disabled={guardando}
-                  className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 disabled:bg-emerald-300"
-                >
-                  {guardando ? "Guardando..." : "Guardar Cambios"}
-                </button>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </Layout>

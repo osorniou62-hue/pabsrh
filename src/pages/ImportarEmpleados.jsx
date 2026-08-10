@@ -39,7 +39,6 @@ export default function ImportarEmpleados() {
         return fecha.toISOString().split("T")[0];
       }
     }
-    // Si viene como string de fecha ej. "15/01/2026"
     if (typeof valor === "string" && valor.includes("/")) {
       const partes = valor.split("/");
       if (partes.length === 3) {
@@ -49,7 +48,6 @@ export default function ImportarEmpleados() {
     return null;
   };
 
-  // Función robusta para limpiar montos monetarios (ej. " $2,205.28 ", " $-   " -> 2205.28 o 0)
   const limpiarMonto = (valor) => {
     if (typeof valor === "number") return isNaN(valor) ? 0 : valor;
     if (!valor) return 0;
@@ -73,73 +71,35 @@ export default function ImportarEmpleados() {
 
     if (headerRowIndex === -1) headerRowIndex = 0;
 
-    const headers = rows[headerRowIndex].map((h) =>
-      String(h || "").trim().toUpperCase()
-    );
-
-    const getColIndex = (keywords) => {
-      return headers.findIndex((h) =>
-        keywords.some((kw) => h.includes(kw.toUpperCase()))
-      );
-    };
-
-    // --- ÍNDICES DINÁMICOS BASADOS EN LOS ENCABEZADOS DE TU CSV ---
-    const idxNumEmpleado = getColIndex(["#", "NO.", "NUM", "CLAVE"]);
-    const idxNombre = getColIndex(["COLABORADOR", "NOMBRE"]);
-    const idxPuesto = getColIndex(["PUESTO"]);
-    const idxDepto = getColIndex(["DEPARTAMENTO", "DEPTO"]);
-    const idxFechaIngreso = getColIndex(["ALTA", "INGRESO"]);
-    const idxSueldo = getColIndex(["SUELDO BASE"]);
-
-    // Índices exactos de Bonos y Compensaciones
-    const idxBonoPuesto = getColIndex(["BONO POR PUESTO"]);
-    const idxBonoPuntualidad = getColIndex(["BONO PUNTUALIDAD", "PAGO PUNTUALIDAD"]);
-    const idxBonoAsistencia = getColIndex(["BONO ASISTENCIA"]);
-    const idxBonoMultiplicador = getColIndex(["MULTIPLICADOR"]);
-    const idxBonoDesempeno = getColIndex(["DESEMPEÑO"]);
-    const idxBonoExtra = getColIndex(["BONO EXTRA"]);
-    const idxApoyoMedico = getColIndex(["APOYO MEDICO"]);
-    const idxGratificacionEspecial = getColIndex(["GRATIFICACIÓN ESPECIAL", "GRATIFICACION ESPECIAL"]);
-
-    // Incidencias y otros
-    const idxVacaciones = getColIndex(["VACACIONES"]);
-    const idxHorasExtra = getColIndex(["HORAS EXTRAS BASE", "HORAS EXTRA"]);
-    const idxFaltasJust = getColIndex(["FALTAS JUSTIFICADAS"]);
-    const idxFaltasInjust = getColIndex(["FALTA INJUSTIFICADA"]);
-    const idxDescVarios = getColIndex(["PRESTAMO"]);
-    const idxSaldoPrestamo = getColIndex(["ADEUDOS"]);
-    const idxMontoFinalSemanal = getColIndex(["SUELDO TOTAL", "TOTAL"]);
-
     const encontrados = [];
+    // Empezamos a leer los datos después de las filas de cabecera (fila 2 en adelante por lo general)
     const dataRows = rows.slice(headerRowIndex + 1);
 
     dataRows.forEach((fila) => {
-      // Usamos respaldo por posición fija si el encabezado no coincide exactamente
-      const numeroEmpleado = fila[idxNumEmpleado !== -1 ? idxNumEmpleado : 2];
-      const nombre = fila[idxNombre !== -1 ? idxNombre : 3];
-      const puesto = fila[idxPuesto !== -1 ? idxPuesto : 1];
-      const departamento = fila[idxDepto !== -1 ? idxDepto : 2]; // O ajustado a la columna correspondiente
-      const fechaIngreso = convertirFechaExcel(fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]);
+      // --- MAPEO DIRECTO POR POSICIÓN EXACTA EN TU CSV ---
+      const numeroEmpleado = fila[0];            // Columna 0: Número consecutivo / ID
+      const puesto = fila[1];                    // Columna 1: Puesto (ej. AUX. CHOFER, MONTACARGUISTA)
+      const departamento = fila[2];              // Columna 2: Departamento / Área (ej. CHOFER, MERMA, NAVE 3)
+      const nombre = fila[3];                    // Columna 3: Nombre completo del colaborador
+      const fechaIngreso = convertirFechaExcel(fila[5]); // Columna 5: Fecha de alta
       
-      const sueldoBase = limpiarMonto(idxSueldo !== -1 ? fila[idxSueldo] : fila[6]);
+      const sueldoBase = limpiarMonto(fila[6]);  // Columna 6: Sueldo base
 
-      // Extracción de Bonos individuales
-      const bonoPuesto = limpiarMonto(idxBonoPuesto !== -1 ? fila[idxBonoPuesto] : 0);
-      const bonoPuntualidad = limpiarMonto(idxBonoPuntualidad !== -1 ? fila[idxBonoPuntualidad] : 0);
-      const bonoAsistencia = limpiarMonto(idxBonoAsistencia !== -1 ? fila[idxBonoAsistencia] : 0);
-      const bonoMultiplicador = limpiarMonto(idxBonoMultiplicador !== -1 ? fila[idxBonoMultiplicador] : 0);
-      const bonoDesempeno = limpiarMonto(idxBonoDesempeno !== -1 ? fila[idxBonoDesempeno] : 0);
-      const bonoExtra = limpiarMonto(idxBonoExtra !== -1 ? fila[idxBonoExtra] : 0);
-      const apoyoMedico = limpiarMonto(idxApoyoMedico !== -1 ? fila[idxApoyoMedico] : 0);
-      const gratificacionEspecial = limpiarMonto(idxGratificacionEspecial !== -1 ? fila[idxGratificacionEspecial] : 0);
+      // Bonos y Compensaciones (Asegurando leer las columnas correctas donde vienen los montos)
+      const bonoPuesto = limpiarMonto(fila[13]);        // Columna 13: BONO POR PUESTO
+      const bonoPuntualidad = limpiarMonto(fila[23] || fila[21]); // Columna 23 o 21: BONO PUNTUALIDAD
+      const bonoAsistencia = limpiarMonto(fila[24] || fila[22]);  // Columna 24 o 22: BONO ASISTENCIA
+      const bonoMultiplicador = limpiarMonto(fila[26]); // Columna 26: BONOS MULTIPLICADOR
+      const bonoDesempeno = limpiarMonto(fila[29]);     // Columna 29: BONO POR DESEMPEÑO
+      const bonoExtra = limpiarMonto(fila[37]);         // Columna 37: BONO EXTRA
+      const apoyoMedico = limpiarMonto(fila[30]);       // Columna 30: APOYO MEDICO
+      const gratificacionEspecial = limpiarMonto(fila[40]); // Columna 40: GRATIFICACIÓN ESPECIAL
 
-      const diasVacaciones = limpiarMonto(idxVacaciones !== -1 ? fila[idxVacaciones] : 0);
-      const horasExtra = limpiarMonto(idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0);
-      const faltasJustificadas = limpiarMonto(idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0);
-      const faltasInjustificadas = limpiarMonto(idxFaltasInjust !== -1 ? fila[idxFaltasInjust] : 0);
-      const descuentoVarios = limpiarMonto(idxDescVarios !== -1 ? fila[idxDescVarios] : 0);
-      const saldoPrestamo = limpiarMonto(idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0);
-      const montoFinalSemanal = limpiarMonto(idxMontoFinalSemanal !== -1 ? fila[idxMontoFinalSemanal] : 0);
+      const diasVacaciones = limpiarMonto(fila[31]);
+      const horasExtra = limpiarMonto(fila[11]);
+      const descuentoVarios = limpiarMonto(fila[52]);
+      const saldoPrestamo = limpiarMonto(fila[54]);
+      const montoFinalSemanal = limpiarMonto(fila[53]);
 
       const empleadoValido =
         (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
@@ -156,7 +116,6 @@ export default function ImportarEmpleados() {
           fecha_ingreso: fechaIngreso,
           sueldo_base: sueldoBase,
           
-          // Bonos mapeados directamente a las columnas reales de la BD
           bono_puesto: bonoPuesto,
           bono_puntualidad: bonoPuntualidad,
           bono_asistencia: bonoAsistencia,
@@ -168,8 +127,6 @@ export default function ImportarEmpleados() {
 
           dias_vacaciones: diasVacaciones,
           horas_extra: horasExtra,
-          faltas_justificadas: faltasJustificadas,
-          faltas_injustificadas: faltasInjustificadas,
           descuento_varios: descuentoVarios,
           saldo_prestamo: saldoPrestamo,
           monto_final_semanal: montoFinalSemanal
@@ -196,7 +153,7 @@ export default function ImportarEmpleados() {
         analizarNomina(rows);
       } catch (error) {
         console.error(error);
-        alert("Error leyendo el archivo Excel/CSV");
+        alert("Error leyendo el archivo CSV/Excel");
       }
     };
 
@@ -210,8 +167,6 @@ export default function ImportarEmpleados() {
       empleado_id: empleadoId,
       periodo_id: Number(pId),
       horas_extra: Number(empleado.horas_extra || 0),
-      faltas_justificadas: Number(empleado.faltas_justificadas || 0),
-      faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
       dias_vacaciones: Number(empleado.dias_vacaciones || 0),
       monto_final_semanal: Number(empleado.monto_final_semanal || 0)
     };
@@ -250,6 +205,7 @@ export default function ImportarEmpleados() {
           "MTTO NAVE 3": "MTTO",
           "AYU CHOFER": "LOGISTICA INTERNA",
           CHOFER: "LOGISTICA INTERNA",
+          "LAVADO": "LOGISTICA INTERNA"
         };
 
         if (equivalencias[nombreDepartamento]) {
@@ -317,7 +273,6 @@ export default function ImportarEmpleados() {
 
         let empId = null;
 
-        // Payload completo incluyendo los bonos directos en la tabla empleados
         const datosEmpleadoPayload = {
           nombre_completo: empleado.nombre_completo,
           fecha_ingreso: empleado.fecha_ingreso,
@@ -390,7 +345,7 @@ export default function ImportarEmpleados() {
           <div>
             <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Carga masiva e Incidencias con asignación correcta de Bonos
+              Carga masiva con lectura correcta de Puestos y Bonos
             </p>
           </div>
         </div>
@@ -430,7 +385,7 @@ export default function ImportarEmpleados() {
             <input type="file" accept=".csv,.xlsx,.xls" onChange={leerArchivo} className="border rounded-xl p-3 w-full" />
 
             <button onClick={importarEmpleados} disabled={loading || empleados.length === 0} className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium">
-              {loading ? "Importando..." : "🚀 Importar Empleados y Bonos Reales"}
+              {loading ? "Importando..." : "🚀 Importar Empleados con Puestos y Bonos Reales"}
             </button>
           </div>
         </div>
@@ -446,7 +401,7 @@ export default function ImportarEmpleados() {
                 <th className="p-3 text-right">Bono Puesto</th>
                 <th className="p-3 text-right">Bono Puntualidad</th>
                 <th className="p-3 text-right">Bono Asistencia</th>
-                <th className="p-3 text-right">Total Bonos (Fila)</th>
+                <th className="p-3 text-right">Total Bonos</th>
               </tr>
             </thead>
             <tbody>
@@ -456,7 +411,7 @@ export default function ImportarEmpleados() {
                   <tr key={index} className="border-t hover:bg-slate-50">
                     <td className="p-3">{empleado.numero_empleado}</td>
                     <td className="p-3 font-medium">{empleado.nombre_completo}</td>
-                    <td className="p-3">{empleado.puesto}</td>
+                    <td className="p-3 font-semibold text-blue-600">{empleado.puesto}</td>
                     <td className="p-3 text-right">${empleado.sueldo_base.toFixed(2)}</td>
                     <td className="p-3 text-right">${empleado.bono_puesto.toFixed(2)}</td>
                     <td className="p-3 text-right">${empleado.bono_puntualidad.toFixed(2)}</td>

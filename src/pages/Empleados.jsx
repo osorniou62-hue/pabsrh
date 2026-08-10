@@ -24,55 +24,49 @@ export default function Empleados() {
   }, []);
 
   const cargarPuestos = async () => {
-    const { data } = await supabase.from("puestos").select("*").order("nombre");
-    setPuestosLista(data || []);
+    try {
+      const { data, error } = await supabase.from("puestos").select("*").order("nombre");
+      if (!error) setPuestosLista(data || []);
+    } catch (e) {
+      console.error("Error cargando puestos:", e);
+    }
   };
 
   const cargarEmpleados = async () => {
     setLoading(true);
 
-    // Consulta flexible para prevenir errores de estructura en Supabase
-    const { data, error } = await supabase
-      .from("empleados")
-      .select(`
-        *,
-        departamentos!empleados_departamento_id_fkey ( * ),
-        puestos!empleados_puesto_id_fkey ( * ),
-        empleado_bonos (
-          id,
-          tipo_bono,
-          monto
-        )
-      `)
-      .order("nombre_completo");
-
-    if (error) {
-      // Intento de fallback si los FKEYs no tienen alias explícitos
-      const fallback = await supabase
+    try {
+      // Usamos la consulta más segura usando select("*") base
+      const { data, error } = await supabase
         .from("empleados")
         .select(`
           *,
-          departamentos ( nombre ),
-          puestos ( nombre ),
-          empleado_bonos ( id, tipo_bono, monto )
+          departamentos (*),
+          puestos (*),
+          empleado_bonos (*)
         `)
         .order("nombre_completo");
 
-      if (fallback.error) {
-        console.error("❌ Error al cargar empleados:", fallback.error.message);
-      } else {
+      if (error) {
+        console.error("❌ Error Supabase:", error.message);
+        // Respaldo simple sin relaciones profundas si falla la FK
+        const fallback = await supabase.from("empleados").select("*").order("nombre_completo");
         setEmpleados(fallback.data || []);
+      } else {
+        setEmpleados(data || []);
       }
-    } else {
-      setEmpleados(data || []);
+    } catch (err) {
+      console.error("❌ Error crítico al cargar empleados:", err);
+      setEmpleados([]);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
-  // --- CÁLCULOS DE SALARIO Y BONOS ---
+  // --- CÁLCULOS SEGUROS (CON DEFAULT VALUES) ---
   const obtenerValoresEmpleado = (emp) => {
-    // Salario base semanal
+    if (!emp) return { salarioBaseSemanal: 0, salarioDiario: 0, totalBonos: 0 };
+
     const salarioBaseSemanal = Number(
       emp?.salario_base ?? 
       emp?.sueldo_base ?? 
@@ -83,17 +77,18 @@ export default function Empleados() {
     // Regla: 7 días de trabajo (6 laborados + 1 descanso)
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    // Suma total de bonos asignados al empleado
-    const totalBonos = (emp?.empleado_bonos || []).reduce(
-      (acc, b) => acc + (Number(b.monto) || 0),
+    const listaBonos = Array.isArray(emp?.empleado_bonos) ? emp.empleado_bonos : [];
+    const totalBonos = listaBonos.reduce(
+      (acc, b) => acc + (Number(b?.monto) || 0),
       0
     );
 
     return { salarioBaseSemanal, salarioDiario, totalBonos };
   };
 
-  // --- MÉTODOS DE BAJA Y REACTIVACIÓN ---
+  // --- MÉTODOS DE ACCIÓN ---
   const darDeBaja = async (empleado) => {
+    if (!empleado) return;
     const confirmar = window.confirm(`¿Deseas dar de baja a ${empleado.nombre_completo}?`);
     if (!confirmar) return;
 
@@ -110,6 +105,7 @@ export default function Empleados() {
   };
 
   const reactivarEmpleado = async (empleado) => {
+    if (!empleado) return;
     const { error } = await supabase
       .from("empleados")
       .update({
@@ -122,9 +118,11 @@ export default function Empleados() {
     else await cargarEmpleados();
   };
 
-  // --- GUARDAR EDICIÓN RÁPIDA (PUESTO, ESTATUS, SALARIO BASE) ---
+  // --- GUARDAR EDICIÓN RÁPIDA ---
   const guardarEdicionRapida = async (e) => {
     e.preventDefault();
+    if (!modalEdicionRapida.datos) return;
+
     setGuardando(true);
     const d = modalEdicionRapida.datos;
 
@@ -132,9 +130,9 @@ export default function Empleados() {
       .from("empleados")
       .update({
         puesto_id: d.puesto_id || null,
-        activo: d.activo,
+        activo: Boolean(d.activo),
         salario_base: Number(d.salario_base) || 0,
-        sueldo_base: Number(d.salario_base) || 0, // Actualiza ambos campos por compatibilidad
+        sueldo_base: Number(d.salario_base) || 0,
         fecha_baja: d.activo ? null : (d.fecha_baja || new Date().toISOString().split("T")[0])
       })
       .eq("id", d.id);
@@ -149,9 +147,9 @@ export default function Empleados() {
     }
   };
 
-  // --- GESTIÓN DE BONOS (AJUSTAR Y GUARDAR EN POP-UP) ---
+  // --- GESTIÓN DE BONOS ---
   const handleCambioMontoBono = (bonoId, nuevoMonto) => {
-    const bonosActualizados = modalBonos.bonos.map((b) =>
+    const bonosActualizados = (modalBonos.bonos || []).map((b) =>
       b.id === bonoId ? { ...b, monto: nuevoMonto } : b
     );
     setModalBonos({ ...modalBonos, bonos: bonosActualizados });
@@ -160,8 +158,7 @@ export default function Empleados() {
   const guardarAjusteBonos = async () => {
     setGuardando(true);
     
-    // Actualizamos cada bono modificado en Supabase
-    for (const bono of modalBonos.bonos) {
+    for (const bono of modalBonos.bonos || []) {
       await supabase
         .from("empleado_bonos")
         .update({ monto: Number(bono.monto) || 0 })
@@ -173,23 +170,24 @@ export default function Empleados() {
     cargarEmpleados();
   };
 
-  // --- FILTRADO DE DEPARTAMENTOS Y EMPLEADOS ---
+  // --- FILTRADOS SEGUROS ---
   const departamentos = [
     "TODOS",
-    ...new Set(empleados.map((e) => e.departamentos?.nombre).filter(Boolean)),
+    ...new Set(empleados.map((e) => e?.departamentos?.nombre).filter(Boolean)),
   ].sort();
 
   const empleadosFiltrados = empleados.filter((empleado) => {
+    if (!empleado) return false;
     const texto = busqueda.toLowerCase().trim();
 
     const coincideBusqueda =
-      empleado.nombre_completo?.toLowerCase().includes(texto) ||
-      empleado.numero_empleado?.toString().toLowerCase().includes(texto) ||
-      empleado.departamentos?.nombre?.toLowerCase().includes(texto) ||
-      empleado.puestos?.nombre?.toLowerCase().includes(texto);
+      (empleado.nombre_completo || "").toLowerCase().includes(texto) ||
+      (empleado.numero_empleado || "").toString().toLowerCase().includes(texto) ||
+      (empleado.departamentos?.nombre || "").toLowerCase().includes(texto) ||
+      (empleado.puestos?.nombre || "").toLowerCase().includes(texto);
 
     let coincideEstatus = true;
-    if (estatus === "ACTIVOS") coincideEstatus = empleado.activo;
+    if (estatus === "ACTIVOS") coincideEstatus = Boolean(empleado.activo);
     if (estatus === "BAJAS") coincideEstatus = !empleado.activo;
 
     const coincideDepartamento =
@@ -200,8 +198,8 @@ export default function Empleados() {
   });
 
   const total = empleados.length;
-  const activos = empleados.filter((e) => e.activo).length;
-  const bajas = empleados.filter((e) => !e.activo).length;
+  const activos = empleados.filter((e) => e?.activo).length;
+  const bajas = empleados.filter((e) => !e?.activo).length;
 
   return (
     <Layout>
@@ -268,7 +266,7 @@ export default function Empleados() {
           Mostrando <strong>{empleadosFiltrados.length}</strong> empleados
         </div>
 
-        {/* TABLA PRINCIPAL DE EMPLEADOS */}
+        {/* TABLA PRINCIPAL */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
           <table className="w-full text-left text-xs md:text-sm">
             <thead className="bg-slate-100 text-gray-700 font-bold">
@@ -297,16 +295,15 @@ export default function Empleados() {
               {!loading &&
                 empleadosFiltrados.map((empleado) => {
                   const { salarioBaseSemanal, salarioDiario, totalBonos } = obtenerValoresEmpleado(empleado);
-                  const bonosLista = empleado.empleado_bonos || [];
+                  const bonosLista = Array.isArray(empleado?.empleado_bonos) ? empleado.empleado_bonos : [];
 
                   return (
                     <tr key={empleado.id} className="border-t hover:bg-slate-50 transition">
                       <td className="p-4 font-mono">{empleado.numero_empleado || "S/N"}</td>
-                      <td className="p-4 font-semibold text-gray-800">{empleado.nombre_completo}</td>
+                      <td className="p-4 font-semibold text-gray-800">{empleado.nombre_completo || "Sin nombre"}</td>
                       <td className="p-4">{empleado.departamentos?.nombre || "N/A"}</td>
                       <td className="p-4">{empleado.puestos?.nombre || "Sin Asignar"}</td>
                       
-                      {/* SALARIO BASE SEMANAL */}
                       <td className="p-4 text-right font-bold text-gray-800 bg-blue-50/40">
                         {salarioBaseSemanal > 0 ? (
                           `$${salarioBaseSemanal.toFixed(2)}`
@@ -315,7 +312,6 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      {/* SALARIO DIARIO (BASE / 7) */}
                       <td className="p-4 text-right font-bold text-indigo-900 bg-indigo-50/40">
                         {salarioDiario > 0 ? (
                           `$${salarioDiario.toFixed(2)}`
@@ -324,7 +320,6 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      {/* BONOS CON POP-UP */}
                       <td className="p-4 text-right bg-emerald-50/40">
                         <button
                           onClick={() =>
@@ -335,7 +330,6 @@ export default function Empleados() {
                             })
                           }
                           className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 ml-auto shadow-sm"
-                          title="Ver y ajustar bonos"
                         >
                           <span>🎁</span>
                           <span>
@@ -344,7 +338,6 @@ export default function Empleados() {
                         </button>
                       </td>
 
-                      {/* ESTATUS */}
                       <td className="p-4 text-center">
                         {empleado.activo ? (
                           <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
@@ -357,7 +350,6 @@ export default function Empleados() {
                         )}
                       </td>
 
-                      {/* ACCIONES Y EDICIÓN RÁPIDA */}
                       <td className="p-4">
                         <div className="flex gap-1.5 justify-center">
                           <button
@@ -374,7 +366,6 @@ export default function Empleados() {
                               })
                             }
                             className="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1.5 rounded-lg font-semibold text-xs"
-                            title="Modificar Puesto, Estatus y Salario Base"
                           >
                             ✏️ Editar
                           </button>
@@ -410,7 +401,7 @@ export default function Empleados() {
               {!loading && empleadosFiltrados.length === 0 && (
                 <tr>
                   <td colSpan={9} className="p-6 text-center text-gray-500">
-                    No se encontraron empleados registrados.
+                    No se encontraron empleados.
                   </td>
                 </tr>
               )}
@@ -419,7 +410,7 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* ================= MODAL DE EDICIÓN RÁPIDA (PUESTO, ESTATUS, SALARIO BASE) ================= */}
+      {/* MODAL EDICIÓN RÁPIDA */}
       {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -440,21 +431,21 @@ export default function Empleados() {
             </div>
 
             <p className="text-xs text-gray-500">
-              Empleado: <strong className="text-gray-800">{modalEdicionRapida.datos.nombre_completo}</strong>
+              Empleado: <strong className="text-gray-800">{modalEdicionRapida.datos?.nombre_completo || "S/D"}</strong>
             </p>
 
             <div className="space-y-4 text-xs md:text-sm">
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Puesto</label>
                 <select
-                  value={modalEdicionRapida.datos.puesto_id}
+                  value={modalEdicionRapida.datos?.puesto_id || ""}
                   onChange={(e) =>
                     setModalEdicionRapida({
                       ...modalEdicionRapida,
                       datos: { ...modalEdicionRapida.datos, puesto_id: e.target.value },
                     })
                   }
-                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border p-2.5 rounded-lg outline-none"
                 >
                   <option value="">-- Seleccionar Puesto --</option>
                   {puestosLista.map((p) => (
@@ -468,7 +459,7 @@ export default function Empleados() {
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Estatus</label>
                 <select
-                  value={modalEdicionRapida.datos.activo ? "ACTIVO" : "INACTIVO"}
+                  value={modalEdicionRapida.datos?.activo ? "ACTIVO" : "INACTIVO"}
                   onChange={(e) =>
                     setModalEdicionRapida({
                       ...modalEdicionRapida,
@@ -478,7 +469,7 @@ export default function Empleados() {
                       },
                     })
                   }
-                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border p-2.5 rounded-lg outline-none"
                 >
                   <option value="ACTIVO">Activo</option>
                   <option value="INACTIVO">Baja / Inactivo</option>
@@ -491,19 +482,19 @@ export default function Empleados() {
                   type="number"
                   step="0.01"
                   min="0"
-                  value={modalEdicionRapida.datos.salario_base}
+                  value={modalEdicionRapida.datos?.salario_base ?? 0}
                   onChange={(e) =>
                     setModalEdicionRapida({
                       ...modalEdicionRapida,
                       datos: { ...modalEdicionRapida.datos, salario_base: e.target.value },
                     })
                   }
-                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-bold text-green-700"
+                  className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none"
                 />
                 <p className="text-[11px] text-gray-500 mt-1">
-                  * El sueldo diario calculado automáticamente será:{" "}
+                  * Sueldo diario calculado:{" "}
                   <strong>
-                    ${((Number(modalEdicionRapida.datos.salario_base) || 0) / 7).toFixed(2)}
+                    ${((Number(modalEdicionRapida.datos?.salario_base) || 0) / 7).toFixed(2)}
                   </strong>
                 </p>
               </div>
@@ -513,14 +504,14 @@ export default function Empleados() {
               <button
                 type="button"
                 onClick={() => setModalEdicionRapida({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={guardando}
-                className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300 shadow-md"
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300"
               >
                 {guardando ? "Guardando..." : "Guardar Cambios"}
               </button>
@@ -529,38 +520,38 @@ export default function Empleados() {
         </div>
       )}
 
-      {/* ================= POP-UP / MODAL DE AJUSTE DE BONOS ================= */}
+      {/* MODAL DE BONOS */}
       {modalBonos.abierto && modalBonos.empleado && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 border border-emerald-100">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
             <div className="border-b pb-3 flex justify-between items-center">
               <div>
                 <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
                   <span>🎁</span> Bonos Asignados
                 </h3>
                 <p className="text-xs text-gray-500">
-                  Empleado: <strong className="text-gray-800">{modalBonos.empleado.nombre_completo}</strong>
+                  Empleado: <strong className="text-gray-800">{modalBonos.empleado?.nombre_completo}</strong>
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setModalBonos({ abierto: false, empleado: null, bonos: [] })}
-                className="text-gray-400 hover:text-gray-600 font-bold"
+                className="text-gray-400 font-bold"
               >
                 ✕
               </button>
             </div>
 
             <div className="space-y-3 max-h-60 overflow-y-auto p-1">
-              {modalBonos.bonos.length === 0 ? (
+              {(!modalBonos.bonos || modalBonos.bonos.length === 0) ? (
                 <div className="text-center py-6 text-gray-500 text-xs">
-                  No hay bonos específicos asignados a este empleado. Se importan automáticamente desde el sistema o archivo de empleados.
+                  No hay bonos asignados a este empleado.
                 </div>
               ) : (
                 modalBonos.bonos.map((bono) => (
                   <div
                     key={bono.id}
-                    className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs"
+                    className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border text-xs"
                   >
                     <span className="font-semibold text-gray-700">{bono.tipo_bono || "Bono General"}</span>
                     <div className="flex items-center gap-1.5">
@@ -569,9 +560,9 @@ export default function Empleados() {
                         type="number"
                         step="0.01"
                         min="0"
-                        value={bono.monto}
+                        value={bono.monto ?? 0}
                         onChange={(e) => handleCambioMontoBono(bono.id, e.target.value)}
-                        className="w-28 border p-1.5 rounded-lg text-right font-bold text-emerald-700 bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                        className="w-28 border p-1.5 rounded-lg text-right font-bold text-emerald-700 outline-none"
                       />
                     </div>
                   </div>
@@ -579,12 +570,11 @@ export default function Empleados() {
               )}
             </div>
 
-            {/* TOTAL DE BONOS CALCULADO */}
             <div className="bg-emerald-50 p-3 rounded-xl flex justify-between items-center border border-emerald-200">
               <span className="text-xs font-bold text-emerald-900">Total de Bonos:</span>
               <span className="text-base font-black text-emerald-700">
                 $
-                {modalBonos.bonos
+                {(modalBonos.bonos || [])
                   .reduce((acc, b) => acc + (Number(b.monto) || 0), 0)
                   .toFixed(2)}
               </span>
@@ -594,16 +584,16 @@ export default function Empleados() {
               <button
                 type="button"
                 onClick={() => setModalBonos({ abierto: false, empleado: null, bonos: [] })}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold"
               >
                 Cerrar
               </button>
-              {modalBonos.bonos.length > 0 && (
+              {modalBonos.bonos && modalBonos.bonos.length > 0 && (
                 <button
                   type="button"
                   onClick={guardarAjusteBonos}
                   disabled={guardando}
-                  className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 disabled:bg-emerald-300 shadow-md"
+                  className="bg-emerald-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-emerald-700 disabled:bg-emerald-300"
                 >
                   {guardando ? "Guardando..." : "Guardar Ajuste de Bonos"}
                 </button>

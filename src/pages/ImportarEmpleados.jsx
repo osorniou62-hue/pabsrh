@@ -13,7 +13,6 @@ export default function ImportarEmpleados() {
   const [periodoId, setPeriodoId] = useState("");
   const [loading, setLoading] = useState(false);
   
-  // Estado para almacenar el resumen de la importación
   const [resumen, setResumen] = useState(null);
 
   useEffect(() => {
@@ -33,14 +32,30 @@ export default function ImportarEmpleados() {
   };
 
   const convertirFechaExcel = (valor) => {
-    if (typeof valor !== "number") {
-      return null;
+    if (!valor) return null;
+    if (typeof valor === "number") {
+      const fecha = new Date((valor - 25569) * 86400 * 1000);
+      if (!isNaN(fecha.getTime())) {
+        return fecha.toISOString().split("T")[0];
+      }
     }
-    const fecha = new Date((valor - 25569) * 86400 * 1000);
-    if (isNaN(fecha.getTime())) {
-      return null;
+    // Si viene como string de fecha ej. "15/01/2026"
+    if (typeof valor === "string" && valor.includes("/")) {
+      const partes = valor.split("/");
+      if (partes.length === 3) {
+        return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+      }
     }
-    return fecha.toISOString().split("T")[0];
+    return null;
+  };
+
+  // Función robusta para limpiar montos monetarios (ej. " $2,205.28 ", " $-   " -> 2205.28 o 0)
+  const limpiarMonto = (valor) => {
+    if (typeof valor === "number") return isNaN(valor) ? 0 : valor;
+    if (!valor) return 0;
+    const limpio = String(valor).replace(/[^0-9.-]+/g, "");
+    const numero = parseFloat(limpio);
+    return isNaN(numero) ? 0 : numero;
   };
 
   const analizarNomina = (rows) => {
@@ -51,8 +66,8 @@ export default function ImportarEmpleados() {
         (cell) =>
           typeof cell === "string" &&
           (cell.toUpperCase().includes("NOMBRE") ||
-            cell.toUpperCase().includes("EMPLEADO") ||
-            cell.toUpperCase().includes("PUESTO"))
+            cell.toUpperCase().includes("COLABORADOR") ||
+            cell.toUpperCase().includes("SUELDO BASE"))
       )
     );
 
@@ -68,66 +83,63 @@ export default function ImportarEmpleados() {
       );
     };
 
-    // Índices de columnas
-    const idxNumEmpleado = getColIndex(["NUM", "NO.", "CLAVE", "CODIGO", "EMPLEADO"]);
+    // --- ÍNDICES DINÁMICOS BASADOS EN LOS ENCABEZADOS DE TU CSV ---
+    const idxNumEmpleado = getColIndex(["#", "NO.", "NUM", "CLAVE"]);
+    const idxNombre = getColIndex(["COLABORADOR", "NOMBRE"]);
     const idxPuesto = getColIndex(["PUESTO"]);
-    const idxDepto = getColIndex(["DEPTO", "DEPARTAMENTO"]);
-    const idxNombre = getColIndex(["NOMBRE"]);
-    const idxFechaIngreso = getColIndex(["INGRESO", "FECHA"]);
-    const idxSueldo = getColIndex(["SUELDO", "SDO", "DIARIO"]);
-    const idxVacaciones = getColIndex(["VACACIONES", "VAC"]);
-    const idxHorasExtra = getColIndex(["HORAS EXTRA", "H.EXTRA", "EXTRA", "HE"]);
-    const idxFaltasJust = getColIndex(["JUSTIFICADA", "F.JUST"]);
-    const idxFaltasInjust = getColIndex(["INJUSTIFICADA", "FALTA INJUSTIFICADA", "F.INJUST"]);
-    const idxDescAusencias = getColIndex(["AUSENCIA", "DESC. AUSENCIA"]);
-    const idxBono = getColIndex(["BONO"]);
-    const idxDescVarios = getColIndex(["VARIOS", "DESC. VARIOS", "OTROS DESC"]);
-    const idxDescPrestamo = getColIndex(["PRESTAMO", "DESC. PRESTAMO"]);
-    const idxSaldoPrestamo = getColIndex(["ADEUDO", "SALDO"]);
+    const idxDepto = getColIndex(["DEPARTAMENTO", "DEPTO"]);
+    const idxFechaIngreso = getColIndex(["ALTA", "INGRESO"]);
+    const idxSueldo = getColIndex(["SUELDO BASE"]);
 
-    // Incidencias adicionales
-    const idxHorasExtraReales = getColIndex(["H.E REALES", "HORAS EXTRA REALES", "EXTRA REAL"]);
-    const idxRetardos = getColIndex(["RETARDO", "RETARDOS"]);
-    const idxFaltas = getColIndex(["FALTAS", "FALTA"]);
-    const idxPermisos = getColIndex(["PERMISO", "PERMISOS"]);
-    const idxHrsPermiso = getColIndex(["HRS PERMISO", "HORAS PERMISO"]);
-    const idxMontoHorasExtra = getColIndex(["MONTO H.E", "MONTO HORAS EXTRA", "PAGO H.E"]);
-    const idxDescuentoFaltas = getColIndex(["DESC. FALTAS", "DESCUENTO FALTAS"]);
-    const idxDescuentoRetardos = getColIndex(["DESC. RETARDOS", "DESCUENTO RETARDOS"]);
-    const idxMontoFinalSemanal = getColIndex(["MONTO FINAL", "NETO SEMANAL", "NETO PAGAR", "TOTAL PAGAR"]);
+    // Índices exactos de Bonos y Compensaciones
+    const idxBonoPuesto = getColIndex(["BONO POR PUESTO"]);
+    const idxBonoPuntualidad = getColIndex(["BONO PUNTUALIDAD", "PAGO PUNTUALIDAD"]);
+    const idxBonoAsistencia = getColIndex(["BONO ASISTENCIA"]);
+    const idxBonoMultiplicador = getColIndex(["MULTIPLICADOR"]);
+    const idxBonoDesempeno = getColIndex(["DESEMPEÑO"]);
+    const idxBonoExtra = getColIndex(["BONO EXTRA"]);
+    const idxApoyoMedico = getColIndex(["APOYO MEDICO"]);
+    const idxGratificacionEspecial = getColIndex(["GRATIFICACIÓN ESPECIAL", "GRATIFICACION ESPECIAL"]);
+
+    // Incidencias y otros
+    const idxVacaciones = getColIndex(["VACACIONES"]);
+    const idxHorasExtra = getColIndex(["HORAS EXTRAS BASE", "HORAS EXTRA"]);
+    const idxFaltasJust = getColIndex(["FALTAS JUSTIFICADAS"]);
+    const idxFaltasInjust = getColIndex(["FALTA INJUSTIFICADA"]);
+    const idxDescVarios = getColIndex(["PRESTAMO"]);
+    const idxSaldoPrestamo = getColIndex(["ADEUDOS"]);
+    const idxMontoFinalSemanal = getColIndex(["SUELDO TOTAL", "TOTAL"]);
 
     const encontrados = [];
     const dataRows = rows.slice(headerRowIndex + 1);
 
     dataRows.forEach((fila) => {
-      const numeroEmpleado = fila[idxNumEmpleado !== -1 ? idxNumEmpleado : 0];
-      const puesto = fila[idxPuesto !== -1 ? idxPuesto : 1];
-      const departamento = fila[idxDepto !== -1 ? idxDepto : 2];
+      // Usamos respaldo por posición fija si el encabezado no coincide exactamente
+      const numeroEmpleado = fila[idxNumEmpleado !== -1 ? idxNumEmpleado : 2];
       const nombre = fila[idxNombre !== -1 ? idxNombre : 3];
-      const fechaIngreso = convertirFechaExcel(
-        fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]
-      );
-      const sueldoBase = Number((idxSueldo !== -1 ? fila[idxSueldo] : fila[51]) || 0);
+      const puesto = fila[idxPuesto !== -1 ? idxPuesto : 1];
+      const departamento = fila[idxDepto !== -1 ? idxDepto : 2]; // O ajustado a la columna correspondiente
+      const fechaIngreso = convertirFechaExcel(fila[idxFechaIngreso !== -1 ? idxFechaIngreso : 5]);
+      
+      const sueldoBase = limpiarMonto(idxSueldo !== -1 ? fila[idxSueldo] : fila[6]);
 
-      const diasVacaciones = Number((idxVacaciones !== -1 ? fila[idxVacaciones] : 0) || 0);
-      const horasExtra = Number((idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0) || 0);
-      const faltasJustificadas = Number((idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0) || 0);
-      const faltasInjustificadas = Number((idxFaltasInjust !== -1 ? fila[idxFaltasInjust] : 0) || 0);
-      const descuentoAusencias = Number((idxDescAusencias !== -1 ? fila[idxDescAusencias] : 0) || 0);
-      const bono = Number((idxBono !== -1 ? fila[idxBono] : 0) || 0);
-      const descuentoVarios = Number((idxDescVarios !== -1 ? fila[idxDescVarios] : 0) || 0);
-      const descuentoPrestamo = Number((idxDescPrestamo !== -1 ? fila[idxDescPrestamo] : 0) || 0);
-      const saldoPrestamo = Number((idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0) || 0);
+      // Extracción de Bonos individuales
+      const bonoPuesto = limpiarMonto(idxBonoPuesto !== -1 ? fila[idxBonoPuesto] : 0);
+      const bonoPuntualidad = limpiarMonto(idxBonoPuntualidad !== -1 ? fila[idxBonoPuntualidad] : 0);
+      const bonoAsistencia = limpiarMonto(idxBonoAsistencia !== -1 ? fila[idxBonoAsistencia] : 0);
+      const bonoMultiplicador = limpiarMonto(idxBonoMultiplicador !== -1 ? fila[idxBonoMultiplicador] : 0);
+      const bonoDesempeno = limpiarMonto(idxBonoDesempeno !== -1 ? fila[idxBonoDesempeno] : 0);
+      const bonoExtra = limpiarMonto(idxBonoExtra !== -1 ? fila[idxBonoExtra] : 0);
+      const apoyoMedico = limpiarMonto(idxApoyoMedico !== -1 ? fila[idxApoyoMedico] : 0);
+      const gratificacionEspecial = limpiarMonto(idxGratificacionEspecial !== -1 ? fila[idxGratificacionEspecial] : 0);
 
-      const horasExtraReales = Number((idxHorasExtraReales !== -1 ? fila[idxHorasExtraReales] : 0) || 0);
-      const retardos = Number((idxRetardos !== -1 ? fila[idxRetardos] : 0) || 0);
-      const faltas = Number((idxFaltas !== -1 ? fila[idxFaltas] : 0) || 0);
-      const permisos = Number((idxPermisos !== -1 ? fila[idxPermisos] : 0) || 0);
-      const hrsPermiso = Number((idxHrsPermiso !== -1 ? fila[idxHrsPermiso] : 0) || 0);
-      const montoHorasExtra = Number((idxMontoHorasExtra !== -1 ? fila[idxMontoHorasExtra] : 0) || 0);
-      const descuentoFaltas = Number((idxDescuentoFaltas !== -1 ? fila[idxDescuentoFaltas] : 0) || 0);
-      const descuentoRetardos = Number((idxDescuentoRetardos !== -1 ? fila[idxDescuentoRetardos] : 0) || 0);
-      const montoFinalSemanal = Number((idxMontoFinalSemanal !== -1 ? fila[idxMontoFinalSemanal] : 0) || 0);
+      const diasVacaciones = limpiarMonto(idxVacaciones !== -1 ? fila[idxVacaciones] : 0);
+      const horasExtra = limpiarMonto(idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0);
+      const faltasJustificadas = limpiarMonto(idxFaltasJust !== -1 ? fila[idxFaltasJust] : 0);
+      const faltasInjustificadas = limpiarMonto(idxFaltasInjust !== -1 ? fila[idxFaltasInjust] : 0);
+      const descuentoVarios = limpiarMonto(idxDescVarios !== -1 ? fila[idxDescVarios] : 0);
+      const saldoPrestamo = limpiarMonto(idxSaldoPrestamo !== -1 ? fila[idxSaldoPrestamo] : 0);
+      const montoFinalSemanal = limpiarMonto(idxMontoFinalSemanal !== -1 ? fila[idxMontoFinalSemanal] : 0);
 
       const empleadoValido =
         (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
@@ -142,26 +154,24 @@ export default function ImportarEmpleados() {
           puesto: typeof puesto === "string" ? puesto.trim() : "",
           departamento: typeof departamento === "string" ? departamento.trim() : "",
           fecha_ingreso: fechaIngreso,
-          sueldo_base: sueldoBase, // Sueldo base / diario extraído del Excel
+          sueldo_base: sueldoBase,
           
+          // Bonos mapeados directamente a las columnas reales de la BD
+          bono_puesto: bonoPuesto,
+          bono_puntualidad: bonoPuntualidad,
+          bono_asistencia: bonoAsistencia,
+          bono_multiplicador: bonoMultiplicador,
+          bono_desempeno: bonoDesempeno,
+          bono_extra: bonoExtra,
+          apoyo_medico: apoyoMedico,
+          gratificacion_especial: gratificacionEspecial,
+
           dias_vacaciones: diasVacaciones,
           horas_extra: horasExtra,
           faltas_justificadas: faltasJustificadas,
           faltas_injustificadas: faltasInjustificadas,
-          descuento_ausencias: descuentoAusencias,
-          bono: bono,
           descuento_varios: descuentoVarios,
           saldo_prestamo: saldoPrestamo,
-          descuento_prestamo: descuentoPrestamo,
-
-          horas_extra_reales: horasExtraReales,
-          retardos: retardos,
-          faltas: faltas,
-          permisos: permisos,
-          hrs_permiso: hrsPermiso,
-          monto_horas_extra: montoHorasExtra,
-          descuento_faltas: descuentoFaltas,
-          descuento_retardos: descuentoRetardos,
           monto_final_semanal: montoFinalSemanal
         });
       }
@@ -186,7 +196,7 @@ export default function ImportarEmpleados() {
         analizarNomina(rows);
       } catch (error) {
         console.error(error);
-        alert("Error leyendo el archivo Excel");
+        alert("Error leyendo el archivo Excel/CSV");
       }
     };
 
@@ -200,135 +210,15 @@ export default function ImportarEmpleados() {
       empleado_id: empleadoId,
       periodo_id: Number(pId),
       horas_extra: Number(empleado.horas_extra || 0),
-      horas_extra_reales: Number(empleado.horas_extra_reales || 0),
       faltas_justificadas: Number(empleado.faltas_justificadas || 0),
       faltas_injustificadas: Number(empleado.faltas_injustificadas || 0),
-      faltas: Number(empleado.faltas || 0),
-      retardos: Number(empleado.retardos || 0),
-      permisos: Number(empleado.permisos || 0),
-      hrs_permiso: Number(empleado.hrs_permiso || 0),
       dias_vacaciones: Number(empleado.dias_vacaciones || 0),
-      descuento_ausencias: Number(empleado.descuento_ausencias || 0),
-      monto_horas_extra: Number(empleado.monto_horas_extra || 0),
-      descuento_faltas: Number(empleado.descuento_faltas || 0),
-      descuento_retardos: Number(empleado.descuento_retardos || 0),
       monto_final_semanal: Number(empleado.monto_final_semanal || 0)
     };
 
-    const { error } = await supabase.from("incidencias").upsert([payload], {
+    await supabase.from("incidencias").upsert([payload], {
       onConflict: "empleado_id, periodo_id",
     });
-
-    if (error) console.error("Error guardando incidencias:", error.message);
-  };
-
-  const actualizarDescuentosYBonos = async (empleadoId, empleado, pId) => {
-    if (!pId) return;
-
-    if (Number(empleado.bono || 0) > 0) {
-      await supabase
-        .from("bonos_empleado")
-        .delete()
-        .eq("empleado_id", empleadoId)
-        .eq("periodo_id", Number(pId));
-
-      const { error: bonoError } = await supabase
-        .from("bonos_empleado")
-        .insert([
-          {
-            empleado_id: empleadoId,
-            periodo_id: Number(pId),
-            tipo_bono_id: 1,
-            concepto: "BONO IMPORTADO",
-            importe: Number(empleado.bono),
-          },
-        ]);
-
-      if (bonoError) console.error("Error guardando bono:", bonoError.message);
-    }
-
-    if (Number(empleado.descuento_varios || 0) > 0) {
-      await supabase
-        .from("descuentos_empleado")
-        .delete()
-        .eq("empleado_id", empleadoId)
-        .eq("periodo_id", Number(pId));
-
-      const { error: descError } = await supabase
-        .from("descuentos_empleado")
-        .insert([
-          {
-            empleado_id: empleadoId,
-            periodo_id: Number(pId),
-            concepto: "DESCUENTOS VARIOS",
-            importe: Number(empleado.descuento_varios),
-          },
-        ]);
-
-      if (descError) console.error("Error guardando descuento:", descError.message);
-    }
-  };
-
-  const actualizarVacaciones = async (empleadoId, empleado) => {
-    if (empleado.dias_vacaciones <= 0) return;
-    const fechaHoy = new Date().toISOString().split("T")[0];
-
-    const { data: vacacionesExistentes } = await supabase
-      .from("vacaciones")
-      .select("id")
-      .eq("empleado_id", empleadoId)
-      .eq("estatus", "IMPORTADO")
-      .maybeSingle();
-
-    if (vacacionesExistentes) {
-      await supabase
-        .from("vacaciones")
-        .update({ dias: Number(empleado.dias_vacaciones) })
-        .eq("id", vacacionesExistentes.id);
-    } else {
-      await supabase.from("vacaciones").insert([
-        {
-          empleado_id: empleadoId,
-          fecha_inicio: fechaHoy,
-          fecha_fin: fechaHoy,
-          dias: Number(empleado.dias_vacaciones),
-          estatus: "IMPORTADO",
-        },
-      ]);
-    }
-  };
-
-  const actualizarPrestamo = async (empleadoId, empleado) => {
-    const saldo = Number(empleado.saldo_prestamo || 0);
-    const descuento = Number(empleado.descuento_prestamo || 0);
-
-    if (saldo === 0 && descuento === 0) return;
-
-    const { data: prestamoExistente } = await supabase
-      .from("prestamos")
-      .select("id")
-      .eq("empleado_id", empleadoId)
-      .maybeSingle();
-
-    if (prestamoExistente) {
-      await supabase
-        .from("prestamos")
-        .update({
-          saldo_actual: saldo,
-          descuento_periodo: descuento,
-        })
-        .eq("id", prestamoExistente.id);
-    } else {
-      await supabase.from("prestamos").insert([
-        {
-          empleado_id: empleadoId,
-          importe_total: saldo,
-          saldo_actual: saldo,
-          descuento_periodo: descuento,
-          estatus: "ACTIVO",
-        },
-      ]);
-    }
   };
 
   const importarEmpleados = async () => {
@@ -398,7 +288,7 @@ export default function ImportarEmpleados() {
             .from("puestos")
             .insert([
               {
-                nombre: empleado.puesto,
+                nombre: empleado.puesto || "SIN PUESTO",
                 departamento_id: departamento.id,
                 activo: true,
               },
@@ -427,11 +317,19 @@ export default function ImportarEmpleados() {
 
         let empId = null;
 
-        // NOTA: Excluimos salario_mensual completamente de aquí
+        // Payload completo incluyendo los bonos directos en la tabla empleados
         const datosEmpleadoPayload = {
           nombre_completo: empleado.nombre_completo,
           fecha_ingreso: empleado.fecha_ingreso,
           sueldo_base: empleado.sueldo_base,
+          bono_puesto: empleado.bono_puesto,
+          bono_puntualidad: empleado.bono_puntualidad,
+          bono_asistencia: empleado.bono_asistencia,
+          bono_multiplicador: empleado.bono_multiplicador,
+          bono_desempeno: empleado.bono_desempeno,
+          bono_extra: empleado.bono_extra,
+          apoyo_medico: empleado.apoyo_medico,
+          gratificacion_especial: empleado.gratificacion_especial,
           departamento_id: departamento.id,
           puesto_id: puesto.id,
           linea_id: lineaId,
@@ -465,10 +363,7 @@ export default function ImportarEmpleados() {
         }
 
         if (empId) {
-          await actualizarVacaciones(empId, empleado);
-          await actualizarPrestamo(empId, empleado);
           await actualizarIncidencias(empId, empleado, periodoId);
-          await actualizarDescuentosYBonos(empId, empleado, periodoId);
         }
       }
 
@@ -495,161 +390,81 @@ export default function ImportarEmpleados() {
           <div>
             <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Carga masiva e Incidencias desde NOMINA.xlsx (Mapeo directo)
+              Carga masiva e Incidencias con asignación correcta de Bonos
             </p>
           </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <KpiCard
-            titulo="Archivo"
-            valor={archivo ? "Cargado" : "Sin archivo"}
-            icono="📄"
-            color="text-blue-600"
-          />
-          <KpiCard
-            titulo="Detectados"
-            valor={empleados.length}
-            icono="👥"
-            color="text-green-600"
-          />
-          <KpiCard
-            titulo="Listos"
-            valor={empleados.length}
-            icono="✅"
-            color="text-purple-600"
-          />
+          <KpiCard titulo="Archivo" valor={archivo ? "Cargado" : "Sin archivo"} icono="📄" color="text-blue-600" />
+          <KpiCard titulo="Detectados" valor={empleados.length} icono="👥" color="text-green-600" />
+          <KpiCard titulo="Listos" valor={empleados.length} icono="✅" color="text-purple-600" />
         </div>
 
         {resumen && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 mb-6">
             <div className="flex justify-between items-start mb-4">
               <div>
-                <h2 className="text-xl font-bold text-emerald-900 flex items-center gap-2">
-                  🎉 ¡Importación Finalizada!
-                </h2>
-                <p className="text-sm text-emerald-700">
-                  Período procesado: <span className="font-semibold">{resumen.periodoNombre}</span>
-                </p>
+                <h2 className="text-xl font-bold text-emerald-900">🎉 ¡Importación Finalizada!</h2>
+                <p className="text-sm text-emerald-700">Período: <span className="font-semibold">{resumen.periodoNombre}</span></p>
               </div>
-              <button
-                onClick={() => setResumen(null)}
-                className="text-xs text-gray-500 hover:text-gray-800 underline"
-              >
-                Cerrar Resumen
-              </button>
+              <button onClick={() => setResumen(null)} className="text-xs text-gray-500 underline">Cerrar</button>
             </div>
-
-            <div className="grid grid-cols-3 gap-4 mb-4 text-center">
-              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
-                <span className="block text-2xl font-bold text-emerald-600">
-                  {resumen.insertados}
-                </span>
-                <span className="text-xs text-gray-500 font-medium">Nuevos Creados</span>
-              </div>
-              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
-                <span className="block text-2xl font-bold text-blue-600">
-                  {resumen.actualizados}
-                </span>
-                <span className="text-xs text-gray-500 font-medium">Actualizados</span>
-              </div>
-              <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
-                <span className={`block text-2xl font-bold ${resumen.totalErrores > 0 ? "text-red-500" : "text-gray-400"}`}>
-                  {resumen.totalErrores}
-                </span>
-                <span className="text-xs text-gray-500 font-medium">Con Errores</span>
-              </div>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="bg-white p-3 rounded-xl border"><span className="block text-2xl font-bold text-emerald-600">{resumen.insertados}</span><span className="text-xs text-gray-500">Nuevos</span></div>
+              <div className="bg-white p-3 rounded-xl border"><span className="block text-2xl font-bold text-blue-600">{resumen.actualizados}</span><span className="text-xs text-gray-500">Actualizados</span></div>
+              <div className="bg-white p-3 rounded-xl border"><span className="block text-2xl font-bold text-red-500">{resumen.totalErrores}</span><span className="text-xs text-gray-500">Errores</span></div>
             </div>
-
-            {resumen.detallesErrores.length > 0 && (
-              <div className="bg-white rounded-xl border border-red-200 p-4 mt-2">
-                <h3 className="text-sm font-semibold text-red-600 mb-2">
-                  ⚠️ Registros que no pudieron importarse:
-                </h3>
-                <ul className="text-xs text-gray-600 space-y-1 max-h-36 overflow-y-auto">
-                  {resumen.detallesErrores.map((err, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="font-semibold">{err.numero} - {err.nombre}:</span>
-                      <span className="text-red-500">{err.motivo}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
 
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="flex flex-col gap-4">
-            <label className="font-semibold text-gray-700">
-              1. Selecciona el Período para asignar las incidencias:
-            </label>
-            <select
-              value={periodoId}
-              onChange={(e) => setPeriodoId(e.target.value)}
-              className="border rounded-xl p-3 bg-slate-50"
-            >
+            <label className="font-semibold text-gray-700">1. Selecciona el Período:</label>
+            <select value={periodoId} onChange={(e) => setPeriodoId(e.target.value)} className="border rounded-xl p-3 bg-slate-50">
               <option value="">-- Selecciona Período --</option>
-              {periodos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.descripcion}
-                </option>
-              ))}
+              {periodos.map((p) => (<option key={p.id} value={p.id}>{p.descripcion}</option>))}
             </select>
 
-            <label className="font-semibold text-gray-700 mt-2">
-              2. Carga el archivo Excel:
-            </label>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={leerArchivo}
-              className="border rounded-xl p-3 w-full"
-            />
+            <label className="font-semibold text-gray-700 mt-2">2. Carga el archivo CSV / Excel:</label>
+            <input type="file" accept=".csv,.xlsx,.xls" onChange={leerArchivo} className="border rounded-xl p-3 w-full" />
 
-            <button
-              onClick={importarEmpleados}
-              disabled={loading || empleados.length === 0}
-              className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium"
-            >
-              {loading ? "Importando..." : "🚀 Importar Empleados e Incidencias"}
+            <button onClick={importarEmpleados} disabled={loading || empleados.length === 0} className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium">
+              {loading ? "Importando..." : "🚀 Importar Empleados y Bonos Reales"}
             </button>
           </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead className="bg-slate-100">
               <tr>
                 <th className="p-3">#</th>
                 <th className="p-3">Nombre</th>
-                <th className="p-3">Departamento</th>
+                <th className="p-3">Puesto</th>
                 <th className="p-3 text-right">Sueldo Base</th>
-                <th className="p-3 text-center">Vacaciones</th>
-                <th className="p-3 text-center">H. Extra</th>
-                <th className="p-3 text-right">Bono</th>
-                <th className="p-3 text-right">Prestamo (Saldo)</th>
+                <th className="p-3 text-right">Bono Puesto</th>
+                <th className="p-3 text-right">Bono Puntualidad</th>
+                <th className="p-3 text-right">Bono Asistencia</th>
+                <th className="p-3 text-right">Total Bonos (Fila)</th>
               </tr>
             </thead>
             <tbody>
-              {empleados.map((empleado, index) => (
-                <tr key={index} className="border-t hover:bg-slate-50">
-                  <td className="p-3">{empleado.numero_empleado}</td>
-                  <td className="p-3 font-medium">{empleado.nombre_completo}</td>
-                  <td className="p-3">{empleado.departamento}</td>
-                  <td className="p-3 text-right">
-                    ${Number(empleado.sueldo_base).toLocaleString("es-MX")}
-                  </td>
-                  <td className="p-3 text-center">{empleado.dias_vacaciones} d</td>
-                  <td className="p-3 text-center">{empleado.horas_extra} hrs</td>
-                  <td className="p-3 text-right">
-                    ${Number(empleado.bono).toLocaleString("es-MX")}
-                  </td>
-                  <td className="p-3 text-right">
-                    ${Number(empleado.saldo_prestamo).toLocaleString("es-MX")}
-                  </td>
-                </tr>
-              ))}
+              {empleados.map((empleado, index) => {
+                const sumaBonos = empleado.bono_puesto + empleado.bono_puntualidad + empleado.bono_asistencia + empleado.bono_multiplicador + empleado.bono_desempeno + empleado.bono_extra + empleado.apoyo_medico + empleado.gratificacion_especial;
+                return (
+                  <tr key={index} className="border-t hover:bg-slate-50">
+                    <td className="p-3">{empleado.numero_empleado}</td>
+                    <td className="p-3 font-medium">{empleado.nombre_completo}</td>
+                    <td className="p-3">{empleado.puesto}</td>
+                    <td className="p-3 text-right">${empleado.sueldo_base.toFixed(2)}</td>
+                    <td className="p-3 text-right">${empleado.bono_puesto.toFixed(2)}</td>
+                    <td className="p-3 text-right">${empleado.bono_puntualidad.toFixed(2)}</td>
+                    <td className="p-3 text-right">${empleado.bono_asistencia.toFixed(2)}</td>
+                    <td className="p-3 text-right font-bold text-emerald-700">${sumaBonos.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

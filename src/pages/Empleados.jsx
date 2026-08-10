@@ -59,9 +59,9 @@ export default function Empleados() {
       const empleadosMapeados = (emps || []).map(emp => {
         return {
           ...emp,
-          departamentos: departamentosMap.get(emp.departamento_id || emp.id_departamento) || null,
-          puestos: puestosMap.get(emp.puesto_id || emp.id_puesto) || null,
-          empleado_bonos: [] // Evita errores si no existe la tabla de bonos relacionales
+          departamentos: departamentosMap.get(emp.departamento_id || emp.id_departamento || emp.depto_id) || null,
+          puestos: puestosMap.get(emp.puesto_id || emp.id_puesto || emp.puestos_id) || null,
+          empleado_bonos: [] 
         };
       });
 
@@ -76,7 +76,7 @@ export default function Empleados() {
     }
   };
 
-  // --- EXTRACCIÓN DE VALORES DESDE LA TABLA O COLUMNAS DE EMPLEADOS ---
+  // --- EXTRACCIÓN DE VALORES ADAPTADA A TUS TÍTULOS DE COLUMNAS DE EXCEL ---
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) {
       return {
@@ -95,20 +95,20 @@ export default function Empleados() {
     }
 
     const salarioBaseSemanal = Number(
-      emp?.salario_base ?? emp?.sueldo_base ?? emp?.salario_semanal ?? emp?.sueldo_semanal
-    ) || 0;
+      emp?.["SUELDO BASE"] ?? emp?.salario_base ?? emp?.sueldo_base ?? emp?.salario_semanal ?? 0
+    );
 
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    // Lectura directa desde columnas de empleados por si guardas los bonos directamente ahí
-    const bonoPuesto = Number(emp?.bono_puesto) || 0;
-    const bonoPuntualidad = Number(emp?.bono_puntualidad) || 0;
-    const bonoAsistencia = Number(emp?.bono_asistencia) || 0;
-    const bonoMultiplicador = Number(emp?.bono_multiplicador) || 0;
-    const bonoDesempeno = Number(emp?.bono_desempeno || emp?.bono_desempeño) || 0;
-    const bonoExtra = Number(emp?.bono_extra) || 0;
-    const apoyoMedico = Number(emp?.apoyo_medico) || 0;
-    const gratificacionEspecial = Number(emp?.gratificacion_especial) || 0;
+    // Extracción usando los títulos exactos de tu estructura
+    const bonoPuesto = Number(emp?.["BONO POR PUESTO"] ?? emp?.bono_puesto ?? 0);
+    const bonoPuntualidad = Number(emp?.["BONO PUNTUALIDAD"] ?? emp?.bono_puntualidad ?? 0);
+    const bonoAsistencia = Number(emp?.["BONO ASISTENCIA"] ?? emp?.bono_asistencia ?? 0);
+    const bonoMultiplicador = Number(emp?.["BONOS MULTIPLICADOR"] ?? emp?.bono_multiplicador ?? 0);
+    const bonoDesempeno = Number(emp?.["BAJO DESEMPEÑO/SANCIÓN"] ?? emp?.["BONO DE DESEMPEÑO"] ?? emp?.bono_desempeno ?? 0);
+    const bonoExtra = Number(emp?.["BONO EXTRA"] ?? emp?.bono_extra ?? 0);
+    const apoyoMedico = Number(emp?.["APOYO MEDICO"] ?? emp?.apoyo_medico ?? 0);
+    const gratificacionEspecial = Number(emp?.["GRATIFICACIÓN ESPECIAL"] ?? emp?.gratificacion_especial ?? 0);
 
     const totalBonos =
       bonoPuesto +
@@ -175,14 +175,14 @@ export default function Empleados() {
     const texto = busqueda.toLowerCase().trim();
 
     const coincideBusqueda =
-      (empleado.nombre_completo || "").toLowerCase().includes(texto) ||
-      (empleado.numero_empleado || "").toString().toLowerCase().includes(texto) ||
+      (empleado.nombre_completo || empleado.NOMBRE || "").toLowerCase().includes(texto) ||
+      (empleado.numero_empleado || empleado["#"] || "").toString().toLowerCase().includes(texto) ||
       (empleado.departamentos?.nombre || "").toLowerCase().includes(texto) ||
       (empleado.puestos?.nombre || "").toLowerCase().includes(texto);
 
     let coincideEstatus = true;
-    if (estatus === "ACTIVOS") coincideEstatus = Boolean(empleado.activo);
-    if (estatus === "BAJAS") coincideEstatus = !empleado.activo;
+    if (estatus === "ACTIVOS") coincideEstatus = Boolean(empleado.activo ?? true);
+    if (estatus === "BAJAS") coincideEstatus = !Boolean(empleado.activo ?? true);
 
     const coincideDepartamento =
       departamentoFiltro === "TODOS" || empleado.departamentos?.nombre === departamentoFiltro;
@@ -191,8 +191,8 @@ export default function Empleados() {
   });
 
   const total = empleados.length;
-  const activos = empleados.filter((e) => e?.activo).length;
-  const bajas = empleados.filter((e) => !e?.activo).length;
+  const activos = empleados.filter((e) => e?.activo ?? true).length;
+  const bajas = empleados.filter((e) => !(e?.activo ?? true)).length;
 
   return (
     <Layout>
@@ -321,11 +321,13 @@ export default function Empleados() {
                     totalBonos,
                   } = obtenerValoresEmpleado(empleado);
 
+                  const estaActivo = empleado.activo ?? true;
+
                   return (
                     <tr key={empleado.id} className="border-t hover:bg-slate-50 transition">
-                      <td className="p-3 font-mono">{empleado.numero_empleado || "S/N"}</td>
+                      <td className="p-3 font-mono">{empleado.numero_empleado || empleado["#"] || "S/N"}</td>
                       <td className="p-3 font-semibold text-gray-800">
-                        {empleado.nombre_completo || "Sin nombre"}
+                        {empleado.nombre_completo || empleado.NOMBRE || "Sin nombre"}
                       </td>
                       <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
                       <td className="p-3">{empleado.puestos?.nombre || "Sin Asignar"}</td>
@@ -360,7 +362,7 @@ export default function Empleados() {
                       </td>
 
                       <td className="p-3 text-center">
-                        {empleado.activo ? (
+                        {estaActivo ? (
                           <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">
                             Activo
                           </span>
@@ -379,9 +381,9 @@ export default function Empleados() {
                                 abierto: true,
                                 datos: {
                                   id: empleado.id,
-                                  nombre_completo: empleado.nombre_completo,
-                                  puesto_id: empleado.puesto_id || "",
-                                  activo: empleado.activo,
+                                  nombre_completo: empleado.nombre_completo || empleado.NOMBRE,
+                                  puesto_id: empleado.puesto_id || empleado.id_puesto || "",
+                                  activo: estaActivo,
                                   salario_base: salarioBaseSemanal,
                                 },
                               })

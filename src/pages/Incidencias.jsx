@@ -142,13 +142,26 @@ export default function Incidencias() {
     const salarioDiario = salarioMensual / 30;
     const valorHora = salarioDiario / 8;
 
-    const hrsReales = Number(incidencia.horas_extra_reales) || Number(incidencia.horas_extra) || 0;
-    const pagoHorasExtra = hrsReales * (valorHora * 2);
+    // Prioridad a ajustes de admin si existen, si no a lo reportado por supervisor
+    const hrsCalculo = incidencia.horas_extra_reales !== null && incidencia.horas_extra_reales !== undefined
+      ? Number(incidencia.horas_extra_reales)
+      : Number(incidencia.horas_extra) || 0;
 
-    const totalFaltas = Number(incidencia.faltas) || Number(incidencia.faltas_injustificadas) || 0;
-    const descuentoFaltas = totalFaltas * salarioDiario;
+    const pagoHorasExtra = hrsCalculo * (valorHora * 2);
 
-    const descuentoRetardos = (Number(incidencia.retardos) || 0) * (valorHora * 0.5);
+    // Faltas injustificadas descuentan día entero
+    const totalFaltasInjust = incidencia.faltas_injustificadas !== null && incidencia.faltas_injustificadas !== undefined
+      ? Number(incidencia.faltas_injustificadas)
+      : Number(incidencia.faltas) || 0;
+
+    const descuentoFaltas = totalFaltasInjust * salarioDiario;
+
+    // Retardos sin permiso (o retardos generales) descuentan media hora
+    const totalRetardosSinPermiso = incidencia.retardos_sin_permiso !== null && incidencia.retardos_sin_permiso !== undefined
+      ? Number(incidencia.retardos_sin_permiso)
+      : Number(incidencia.retardos) || 0;
+
+    const descuentoRetardos = totalRetardosSinPermiso * (valorHora * 0.5);
 
     const sueldoBaseSemanal = salarioDiario * diasPeriodo;
     const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
@@ -169,17 +182,23 @@ export default function Incidencias() {
     if (!modalEdicion.datos) return;
 
     setGuardando(true);
-    const { id, horas_extra, horas_extra_reales, retardos, faltas } = modalEdicion.datos;
+    const d = modalEdicion.datos;
 
     const { error } = await supabase
       .from("incidencias")
       .update({
-        horas_extra: Number(horas_extra) || 0,
-        horas_extra_reales: Number(horas_extra_reales) || 0,
-        retardos: Number(retardos) || 0,
-        faltas: Number(faltas) || 0,
+        // Datos del supervisor
+        horas_extra: Number(d.horas_extra) || 0,
+        faltas_justificadas: Number(d.faltas_justificadas) || 0,
+        faltas_injustificadas: Number(d.faltas_injustificadas) || 0,
+        retardos_con_permiso: Number(d.retardos_con_permiso) || 0,
+        retardos_sin_permiso: Number(d.retardos_sin_permiso) || 0,
+        // Ajustes del admin
+        horas_extra_reales: Number(d.horas_extra_reales) || 0,
+        faltas: Number(d.faltas) || 0,
+        retardos: Number(d.retardos) || 0,
       })
-      .eq("id", id);
+      .eq("id", d.id);
 
     setGuardando(false);
 
@@ -394,9 +413,11 @@ export default function Incidencias() {
                     <td className="p-3 border text-center font-semibold text-blue-600">
                       {item.horas_extra_reales || item.horas_extra || 0}h
                     </td>
-                    <td className="p-3 border text-center">{item.retardos || 0}</td>
+                    <td className="p-3 border text-center">
+                      {item.retardos_sin_permiso ?? item.retardos ?? 0}
+                    </td>
                     <td className="p-3 border text-center text-red-600 font-semibold">
-                      {item.faltas || item.faltas_injustificadas || 0}d
+                      {item.faltas_injustificadas ?? item.faltas ?? 0}d
                     </td>
                     <td className="p-3 border text-right text-green-600 font-medium">
                       +${calculo.pagoHorasExtra.toFixed(2)}
@@ -466,115 +487,225 @@ export default function Incidencias() {
         </table>
       </div>
 
-      {/* MODAL EDICIÓN */}
-      {modalEdicion.abierto && modalEdicion.datos && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={guardarEdicion}
-            className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4"
-          >
-            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
-              ✏️ Modificar Incidencia
-            </h3>
-            <p className="text-xs text-gray-500">
-              Empleado: <strong>{modalEdicion.datos.empleados?.nombre_completo}</strong>
-            </p>
+      {/* ================= MODAL EDICIÓN MULTINIVEL ================= */}
+      {modalEdicion.abierto && modalEdicion.datos && (() => {
+        const d = modalEdicion.datos;
+        const calculoEnv = calcularNominaIncidencia(d.empleados, d, 7);
 
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">
-                  Hrs Extra Rep.
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  value={modalEdicion.datos.horas_extra || 0}
-                  onChange={(e) =>
-                    setModalEdicion({
-                      ...modalEdicion,
-                      datos: { ...modalEdicion.datos, horas_extra: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <form
+              onSubmit={guardarEdicion}
+              className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-6 my-8"
+            >
+              <div className="border-b pb-3 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold text-gray-800">
+                    ✏️ Gestión y Edición de Incidencia
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Empleado: <strong className="text-gray-700">{d.empleados?.nombre_completo}</strong>
+                  </p>
+                </div>
+                <span className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full font-bold">
+                  Periodo: {d.periodos_nomina?.descripcion || "S/D"}
+                </span>
               </div>
 
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">
-                  Hrs Extra Real
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  value={modalEdicion.datos.horas_extra_reales || 0}
-                  onChange={(e) =>
-                    setModalEdicion({
-                      ...modalEdicion,
-                      datos: { ...modalEdicion.datos, horas_extra_reales: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+              {/* BLOQUE 1: INFORMACIÓN SUBIDA POR EL SUPERVISOR */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>👔</span> 1. Información Reportada por Supervisor
+                </h4>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-gray-600 mb-1 font-medium">Horas Extras Rep.</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={d.horas_extra ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, horas_extra: e.target.value },
+                        })
+                      }
+                      className="w-full border p-2 rounded bg-white font-semibold text-gray-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1 font-medium">Faltas Justificadas</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.faltas_justificadas ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, faltas_justificadas: e.target.value },
+                        })
+                      }
+                      className="w-full border p-2 rounded bg-white font-semibold text-green-700"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1 font-medium">Faltas Injustificadas</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.faltas_injustificadas ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, faltas_injustificadas: e.target.value },
+                        })
+                      }
+                      className="w-full border p-2 rounded bg-white font-semibold text-red-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1 font-medium">Retardos Con Permiso</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.retardos_con_permiso ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, retardos_con_permiso: e.target.value },
+                        })
+                      }
+                      className="w-full border p-2 rounded bg-white font-semibold text-gray-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-600 mb-1 font-medium">Retardos Sin Permiso</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.retardos_sin_permiso ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, retardos_sin_permiso: e.target.value },
+                        })
+                      }
+                      className="w-full border p-2 rounded bg-white font-semibold text-amber-700"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">
-                  Retardos
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={modalEdicion.datos.retardos || 0}
-                  onChange={(e) =>
-                    setModalEdicion({
-                      ...modalEdicion,
-                      datos: { ...modalEdicion.datos, retardos: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+              {/* BLOQUE 2: AJUSTES AUTORIZADOS POR EL ADMINISTRADOR */}
+              <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3">
+                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🛠️</span> 2. Ajustes de Autorización (Administrador)
+                </h4>
+
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-amber-900 mb-1 font-medium">Horas Extra Aprobadas</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={d.horas_extra_reales ?? d.horas_extra ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, horas_extra_reales: e.target.value },
+                        })
+                      }
+                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-blue-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-amber-900 mb-1 font-medium">Total Faltas p/ Nómina</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.faltas ?? d.faltas_injustificadas ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, faltas: e.target.value },
+                        })
+                      }
+                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-red-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-amber-900 mb-1 font-medium">Retardos a Descontar</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={d.retardos ?? d.retardos_sin_permiso ?? 0}
+                      onChange={(e) =>
+                        setModalEdicion({
+                          ...modalEdicion,
+                          datos: { ...d, retardos: e.target.value },
+                        })
+                      }
+                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-gray-800 focus:ring-2 focus:ring-amber-500 outline-none"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block font-semibold text-gray-700 mb-1">
-                  Faltas (Días)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={modalEdicion.datos.faltas || modalEdicion.datos.faltas_injustificadas || 0}
-                  onChange={(e) =>
-                    setModalEdicion({
-                      ...modalEdicion,
-                      datos: { ...modalEdicion.datos, faltas: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-            </div>
+              {/* BLOQUE 3: RESULTADOS FINALES PARA NÓMINA */}
+              <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 space-y-2">
+                <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>💵</span> 3. Resultados Proyectados en Recibo de Nómina
+                </h4>
 
-            <div className="flex justify-end gap-2 pt-4 border-t">
-              <button
-                type="button"
-                onClick={() => setModalEdicion({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded text-xs font-semibold hover:bg-gray-300"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={guardando}
-                className="bg-blue-600 text-white px-4 py-2 rounded text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300"
-              >
-                {guardando ? "Guardando..." : "Guardar Cambios"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs pt-1">
+                  <div className="bg-white p-2.5 rounded border border-emerald-100">
+                    <span className="text-gray-500 block">Sueldo Base Semanal:</span>
+                    <span className="font-bold text-gray-800">${calculoEnv.sueldoBaseSemanal.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded border border-emerald-100">
+                    <span className="text-gray-500 block">Monto Hrs Extra (+):</span>
+                    <span className="font-bold text-emerald-600">+${calculoEnv.pagoHorasExtra.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded border border-emerald-100">
+                    <span className="text-gray-500 block">Descuento Faltas (-):</span>
+                    <span className="font-bold text-red-600">-${calculoEnv.descuentoFaltas.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-emerald-600 text-white p-2.5 rounded shadow-sm text-right">
+                    <span className="block text-[10px] opacity-90 uppercase font-semibold">Neto Semanal Est.</span>
+                    <span className="font-black text-base">${calculoEnv.montoFinalSemanal.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setModalEdicion({ abierto: false, datos: null })}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardando}
+                  className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300 shadow-md"
+                >
+                  {guardando ? "Guardando Cambios..." : "Guardar Registro Final"}
+                </button>
+              </div>
+            </form>
+          </div>
+        );
+      })()}
 
       {/* MODAL PERMISOS */}
       {modalPermisos.abierto && (

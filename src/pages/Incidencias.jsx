@@ -376,6 +376,7 @@ export default function Incidencias() {
             <tr className="bg-gray-100 border-b text-gray-700 font-bold">
               <th className="p-3 border">Empleado</th>
               <th className="p-3 border">Periodo</th>
+              <th className="p-3 border text-right bg-blue-50">Sueldo Base</th>
               <th className="p-3 border text-center">Hrs Extra Rep. (J)</th>
               <th className="p-3 border text-center">Hrs Extra Real</th>
               <th className="p-3 border text-center">Retardos</th>
@@ -391,7 +392,7 @@ export default function Incidencias() {
           <tbody>
             {incidenciasMostrar.length === 0 ? (
               <tr>
-                <td colSpan="12" className="text-center p-6 text-gray-500">
+                <td colSpan="13" className="text-center p-6 text-gray-500">
                   No hay datos de incidencias registrados para el filtro seleccionado.
                 </td>
               </tr>
@@ -408,6 +409,9 @@ export default function Incidencias() {
                     </td>
                     <td className="p-3 border">
                       {item.periodos_nomina?.descripcion || "N/A"}
+                    </td>
+                    <td className="p-3 border text-right font-semibold text-gray-800 bg-blue-50/50">
+                      ${calculo.sueldoBaseSemanal.toFixed(2)}
                     </td>
                     <td className="p-3 border text-center">{item.horas_extra || 0}h</td>
                     <td className="p-3 border text-center font-semibold text-blue-600">

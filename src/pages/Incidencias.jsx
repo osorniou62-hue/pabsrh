@@ -59,22 +59,24 @@ export default function Incidencias() {
     else setPeriodos(data || []);
   };
 
+  // ✅ Carga de incidencias corregida (relación directa sin alias estricto de FK)
   const cargarIncidencias = async () => {
     const { data, error } = await supabase
       .from("incidencias")
       .select(`
         *,
-        empleados!incidencias_empleado_fk ( 
+        empleados ( 
           id, nombre_completo, departamento_id, supervisor_id, salario_mensual, 
           puesto, fecha_ingreso, turno, rfc, curp 
         ),
-        periodos_nomina!incidencias_periodo_fk ( id, descripcion )
+        periodos_nomina ( id, descripcion )
       `)
       .order("created_at", { ascending: false });
 
     if (error) {
       console.error("❌ Error al cargar incidencias:", error.message);
     } else {
+      console.log("📊 Datos de incidencias recibidos:", data);
       setIncidencias(data || []);
     }
   };
@@ -122,7 +124,7 @@ export default function Incidencias() {
   // --- FILTRADO FINAL DE LA TABLA DE INCIDENCIAS ---
   const incidenciasMostrar = incidencias.filter((item) => {
     const emp = item.empleados;
-    if (!emp) return false;
+    if (!emp) return true; // Si no hay relación con empleado, muestra la fila para no ocultar datos
 
     if (empleadoSeleccionado) {
       return String(emp.id) === String(empleadoSeleccionado.id);

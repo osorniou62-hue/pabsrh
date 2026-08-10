@@ -57,47 +57,63 @@ export default function ImportarEmpleados() {
   };
 
   const analizarNomina = (rows) => {
-    if (!rows || rows.length === 0) return;
+    if (!rows || rows.length < 2) return;
 
-    // Buscamos la fila donde empieza la data real (después de los títulos y la fila numérica de índices 1, 2, 3...)
-    let dataStartIndex = rows.findIndex((row) =>
-      row.some((cell) => typeof cell === "number" && cell === 1)
-    );
+    // Fila 0 contiene los nombres de las columnas reales del CSV
+    const encabezadosRaw = rows[0].map((h) => String(h || "").trim().toUpperCase());
+    
+    // Buscamos dinámicamente el índice de cada columna basándonos en su nombre exacto
+    const idxNumEmpleado = encabezadosRaw.findIndex((h) => h === "#" || h === "NUMERO" || h === "NO.");
+    const idxPuesto = encabezadosRaw.findIndex((h) => h === "PUESTO");
+    const idxNombre = encabezadosRaw.findIndex((h) => h === "COLABORADOR" || h === "NOMBRE");
+    const idxAlta = encabezadosRaw.findIndex((h) => h === "ALTA" || h === "FECHA ALTA");
+    const idxSueldoBase = encabezadosRaw.findIndex((h) => h === "SUELDO BASE");
 
-    if (dataStartIndex === -1) {
-      dataStartIndex = 2; // Por defecto si no encuentra la fila numérica
-    } else {
-      dataStartIndex += 1; // Los datos empiezan justo debajo de la fila de índices
-    }
+    // Bonos y conceptos
+    const idxBonoPuesto = encabezadosRaw.findIndex((h) => h === "BONO POR PUESTO");
+    // Buscamos las ocurrencias de pago/bono puntualidad y asistencia
+    const indicesPuntualidad = encabezadosRaw.reduce((acc, h, i) => (h.includes("PUNTUALIDAD") ? [...acc, i] : acc), []);
+    const indicesAsistencia = encabezadosRaw.reduce((acc, h, i) => (h.includes("ASISTENCIA") ? [...acc, i] : acc), []);
+
+    const idxHorasExtra = encabezadosRaw.findIndex((h) => h.includes("HORAS EXTRAS"));
+    const idxBonoDesempeno = encabezadosRaw.findIndex((h) => h.includes("DESEMPEÑO"));
+    const idxApoyoMedico = encabezadosRaw.findIndex((h) => h.includes("APOYO MEDICO"));
+    const idxDiasVacaciones = encabezadosRaw.findIndex((h) => h.includes("DIAS DE VACACIONES"));
+    const idxBonoExtra = encabezadosRaw.findIndex((h) => h === "BONO EXTRA");
+    const idxGratificacion = encabezadosRaw.findIndex((h) => h.includes("GRATIFICACIÓN ESPECIAL") || h.includes("GRATIFICACION ESPECIAL"));
+    
+    const idxPrestamo = encabezadosRaw.findIndex((h) => h === "PRESTAMO" || h.includes("PRESTAMOS"));
+    const idxAdeudos = encabezadosRaw.findIndex((h) => h === "ADEUDOS");
+    const idxSueldoTotal = encabezadosRaw.findIndex((h) => h.includes("SUELDO TOTAL") || h.includes("TOTAL"));
 
     const encontrados = [];
-    const dataRows = rows.slice(dataStartIndex);
+    // Empezamos a leer desde la fila 2 en adelante (después de encabezados y fila numérica)
+    const dataRows = rows.slice(2);
 
     dataRows.forEach((fila) => {
-      // --- MAPEO EXACTO POR POSICIÓN DE COLUMNA (Índice = Columna - 1) ---
-      const numeroEmpleado = fila[2];              // Columna 3: Número de empleado / consecutivo
-      const puesto = fila[1];                      // Columna 2: Puesto (ej. MONTACARGUISTA, AUX. CHOFER)
-      const departamento = fila[2];                // (Se ajusta o deriva del puesto/área según convenga)
-      const nombre = fila[3];                      // Columna 4: Nombre del colaborador
-      const fechaIngreso = convertirFechaExcel(fila[4]); // Columna 5: Fecha de alta
+      const numeroEmpleado = idxNumEmpleado !== -1 ? fila[idxNumEmpleado] : fila[2];
+      const puesto = idxPuesto !== -1 ? fila[idxPuesto] : fila[1];
+      const nombre = idxNombre !== -1 ? fila[idxNombre] : fila[3];
+      const fechaIngreso = convertirFechaExcel(idxAlta !== -1 ? fila[idxAlta] : fila[4]);
       
-      const sueldoBase = limpiarMonto(fila[6]);    // Columna 7: Sueldo base
+      const sueldoBase = limpiarMonto(idxSueldoBase !== -1 ? fila[idxSueldoBase] : fila[6]);
 
-      // Bonos y Compensaciones en sus columnas exactas
-      const bonoPuesto = limpiarMonto(fila[13]);        // Columna 14: Bono por Puesto
-      const bonoPuntualidad = limpiarMonto(fila[22]);   // Columna 23: Bono de Puntualidad principal
-      const bonoAsistencia = limpiarMonto(fila[23]);    // Columna 24: Bono de Asistencia principal
-      const bonoMultiplicador = limpiarMonto(fila[25]); // Columna 26: Bonos Multiplicador
-      const bonoDesempeno = limpiarMonto(fila[28]);     // Columna 29: Bono por Desempeño
-      const apoyoMedico = limpiarMonto(fila[29]);       // Columna 30: Apoyo Médico
-      const bonoExtra = limpiarMonto(fila[36]);         // Columna 37: Bono Extra
-      const gratificacionEspecial = limpiarMonto(fila[39]); // Columna 40: Gratificación Especial
+      const bonoPuesto = limpiarMonto(idxBonoPuesto !== -1 ? fila[idxBonoPuesto] : fila[13]);
+      
+      // Tomamos el primer índice encontrado para puntualidad y asistencia
+      const bonoPuntualidad = indicesPuntualidad.length > 0 ? limpiarMonto(fila[indicesPuntualidad[0]]) : 0;
+      const bonoAsistencia = indicesAsistencia.length > 0 ? limpiarMonto(fila[indicesAsistencia[0]]) : 0;
 
-      const diasVacaciones = limpiarMonto(fila[30]);    // Columna 31: Días de vacaciones
-      const horasExtra = limpiarMonto(fila[10]);        // Columna 11: Horas extra base
-      const descuentoVarios = limpiarMonto(fila[51]);   // Columna 52: Préstamos / Descuentos
-      const saldoPrestamo = limpiarMonto(fila[53]);     // Columna 54: Adeudos
-      const montoFinalSemanal = limpiarMonto(fila[50]); // Columna 51: Sueldo total / Neto
+      const bonoDesempeno = limpiarMonto(idxBonoDesempeno !== -1 ? fila[idxBonoDesempeno] : 0);
+      const apoyoMedico = limpiarMonto(idxApoyoMedico !== -1 ? fila[idxApoyoMedico] : 0);
+      const bonoExtra = limpiarMonto(idxBonoExtra !== -1 ? fila[idxBonoExtra] : 0);
+      const gratificacionEspecial = limpiarMonto(idxGratificacion !== -1 ? fila[idxGratificacion] : 0);
+
+      const diasVacaciones = limpiarMonto(idxDiasVacaciones !== -1 ? fila[idxDiasVacaciones] : 0);
+      const horasExtra = limpiarMonto(idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0);
+      const descuentoVarios = limpiarMonto(idxPrestamo !== -1 ? fila[idxPrestamo] : 0);
+      const saldoPrestamo = limpiarMonto(idxAdeudos !== -1 ? fila[idxAdeudos] : 0);
+      const montoFinalSemanal = limpiarMonto(idxSueldoTotal !== -1 ? fila[idxSueldoTotal] : 0);
 
       const empleadoValido =
         (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
@@ -110,14 +126,14 @@ export default function ImportarEmpleados() {
           numero_empleado: String(numeroEmpleado).trim(),
           nombre_completo: nombre.trim(),
           puesto: typeof puesto === "string" ? puesto.trim() : "",
-          departamento: typeof departamento === "string" ? departamento.trim() : "GENERAL",
+          departamento: typeof puesto === "string" ? puesto.trim() : "GENERAL",
           fecha_ingreso: fechaIngreso,
           sueldo_base: sueldoBase,
           
           bono_puesto: bonoPuesto,
           bono_puntualidad: bonoPuntualidad,
           bono_asistencia: bonoAsistencia,
-          bono_multiplicador: bonoMultiplicador,
+          bono_multiplicador: 0,
           bono_desempeno: bonoDesempeno,
           bono_extra: bonoExtra,
           apoyo_medico: apoyoMedico,
@@ -218,26 +234,21 @@ export default function ImportarEmpleados() {
           nombreDepartamento = "MOLIENDA";
         }
 
-        const departamento = departamentos.find(
+        let departamento = departamentos.find(
           (d) => d.nombre?.trim()?.toUpperCase() === nombreDepartamento
         );
 
-        if (!departamento) {
-          errores.push({
-            numero: empleado.numero_empleado,
-            nombre: empleado.nombre_completo,
-            motivo: `Departamento no encontrado: ${empleado.departamento}`,
-          });
-          continue;
+        if (!departamento && departamentos.length > 0) {
+          departamento = departamentos[0]; // Asignar un departamento por defecto si no lo encuentra exacto
         }
 
         let puesto = puestos.find(
           (p) =>
             p.nombre?.trim()?.toUpperCase() === empleado.puesto?.trim()?.toUpperCase() &&
-            p.departamento_id === departamento.id
+            p.departamento_id === departamento?.id
         );
 
-        if (!puesto) {
+        if (!puesto && departamento) {
           const { data: nuevoPuesto, error: puestoError } = await supabase
             .from("puestos")
             .insert([
@@ -250,17 +261,10 @@ export default function ImportarEmpleados() {
             .select()
             .single();
 
-          if (puestoError) {
-            errores.push({
-              numero: empleado.numero_empleado,
-              nombre: empleado.nombre_completo,
-              motivo: puestoError.message,
-            });
-            continue;
+          if (!puestoError && nuevoPuesto) {
+            puesto = nuevoPuesto;
+            puestos.push(nuevoPuesto);
           }
-
-          puesto = nuevoPuesto;
-          puestos.push(nuevoPuesto);
         }
 
         const { data: existente } = await supabase
@@ -283,22 +287,27 @@ export default function ImportarEmpleados() {
           bono_extra: empleado.bono_extra,
           apoyo_medico: empleado.apoyo_medico,
           gratificacion_especial: empleado.gratificacion_especial,
-          departamento_id: departamento.id,
-          puesto_id: puesto.id,
+          departamento_id: departamento ? departamento.id : null,
+          puesto_id: puesto ? puesto.id : null,
           linea_id: lineaId,
           activo: true,
         };
 
         if (existente) {
           empId = existente.id;
-          await supabase
+          const { error: updateError } = await supabase
             .from("empleados")
             .update(datosEmpleadoPayload)
             .eq("id", empId);
 
+          if (updateError) {
+            errores.push({ numero: empleado.numero_empleado, nombre: empleado.nombre_completo, motivo: updateError.message });
+            continue;
+          }
+
           actualizados++;
         } else {
-          const { data: empleadoGuardado } = await supabase
+          const { data: empleadoGuardado, error: insertError } = await supabase
             .from("empleados")
             .insert([
               {
@@ -308,6 +317,11 @@ export default function ImportarEmpleados() {
             ])
             .select()
             .single();
+
+          if (insertError) {
+            errores.push({ numero: empleado.numero_empleado, nombre: empleado.nombre_completo, motivo: insertError.message });
+            continue;
+          }
 
           if (empleadoGuardado) {
             empId = empleadoGuardado.id;
@@ -343,7 +357,7 @@ export default function ImportarEmpleados() {
           <div>
             <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Lectura exacta basada en la posición de columnas de tu archivo CSV
+              Lectura dinámica basada en los nombres exactos de los encabezados del archivo
             </p>
           </div>
         </div>
@@ -368,6 +382,14 @@ export default function ImportarEmpleados() {
               <div className="bg-white p-3 rounded-xl border"><span className="block text-2xl font-bold text-blue-600">{resumen.actualizados}</span><span className="text-xs text-gray-500">Actualizados</span></div>
               <div className="bg-white p-3 rounded-xl border"><span className="block text-2xl font-bold text-red-500">{resumen.totalErrores}</span><span className="text-xs text-gray-500">Errores</span></div>
             </div>
+            {resumen.detallesErrores && resumen.detallesErrores.length > 0 && (
+              <div className="mt-4 bg-red-50 border border-red-200 p-3 rounded-lg max-h-40 overflow-y-auto text-xs text-red-700">
+                <p className="font-bold mb-1">Detalle de errores:</p>
+                {resumen.detallesErrores.map((err, i) => (
+                  <div key={i}>• Empleado #{err.numero} ({err.nombre}): {err.motivo}</div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -383,7 +405,7 @@ export default function ImportarEmpleados() {
             <input type="file" accept=".csv,.xlsx,.xls" onChange={leerArchivo} className="border rounded-xl p-3 w-full" />
 
             <button onClick={importarEmpleados} disabled={loading || empleados.length === 0} className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium">
-              {loading ? "Importando..." : "🚀 Importar Empleados (Posiciones Exactas)"}
+              {loading ? "Importando..." : "🚀 Importar Empleados por Nombre de Columna"}
             </button>
           </div>
         </div>

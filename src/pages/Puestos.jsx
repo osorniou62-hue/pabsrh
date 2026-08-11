@@ -78,7 +78,7 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN ACTUALIZADA: ESCANEO PROFUNDO Y TOLERANTE A JSON ---
+  // --- FUNCIÓN ACTUALIZADA: EXTRACCIÓN FILTRADA DE PUESTOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
@@ -96,41 +96,38 @@ export default function Puestos() {
               try { objAnalizar = JSON.parse(value); } catch (e) {}
             }
 
-            if (objAnalizar && typeof objAnalizar === "object") {
-              const buscarDestinoPuestos = (item) => {
-                if (!item || typeof item !== "object") return;
-                
-                Object.entries(item).forEach(([subKey, subVal]) => {
-                  if (subVal && typeof subVal === "object") {
-                    if (
-                      subVal.tablaDestino === "puestos" || 
-                      subVal.tabla === "puestos" || 
-                      subVal.destino === "puestos" ||
-                      String(subVal).toLowerCase().includes("puesto")
-                    ) {
+            const extraerPuestosRecursivo = (elemento) => {
+              if (!elemento || typeof elemento !== "object") return;
+
+              Object.entries(elemento).forEach(([subKey, subVal]) => {
+                if (subVal && typeof subVal === "object") {
+                  if (
+                    subVal.tablaDestino === "puestos" || 
+                    subVal.tabla === "puestos" || 
+                    subVal.destino === "puestos" ||
+                    String(subVal.campoDestino).toLowerCase().includes("puesto")
+                  ) {
+                    if (subKey.toLowerCase() !== "columnas" && subKey.toLowerCase() !== "configuracion") {
                       listaExtraida.push({
                         puesto: String(subKey).trim(),
-                        departamento: subVal.campoDestino || subVal.departamento || "Relación de Campos"
+                        departamento: subVal.departamento || subVal.campoDestino || "Relación de Campos"
                       });
                     }
-                    buscarDestinoPuestos(subVal);
                   }
-                });
-              };
+                  extraerPuestosRecursivo(subVal);
+                } else if (
+                  (subKey.toLowerCase() === "puesto" || subKey.toLowerCase() === "puestos") && 
+                  typeof subVal === "string"
+                ) {
+                  listaExtraida.push({
+                    puesto: String(subVal).trim(),
+                    departamento: "Relación de Campos"
+                  });
+                }
+              });
+            };
 
-              buscarDestinoPuestos(objAnalizar);
-
-              if (
-                objAnalizar.tablaDestino === "puestos" || 
-                objAnalizar.tabla === "puestos" ||
-                objAnalizar.destino === "puestos"
-              ) {
-                listaExtraida.push({
-                  puesto: String(key).trim(),
-                  departamento: objAnalizar.campoDestino || "Relación de Campos"
-                });
-              }
-            }
+            extraerPuestosRecursivo(objAnalizar);
           });
         });
       }
@@ -151,9 +148,13 @@ export default function Puestos() {
         });
       }
 
-      // Eliminar duplicados
+      // Eliminar duplicados y filtrar palabras genéricas
       const unicos = Array.from(
-        new Map(listaExtraida.map((item) => [item.puesto, item])).values()
+        new Map(
+          listaExtraida
+            .filter(item => item.puesto && item.puesto.toLowerCase() !== "columnas")
+            .map((item) => [item.puesto, item])
+        ).values()
       );
 
       setPuestosConfiguradosLista(unicos);

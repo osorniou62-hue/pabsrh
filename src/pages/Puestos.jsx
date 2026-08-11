@@ -78,7 +78,7 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN ACTUALIZADA: ESCANEO UNIVERSAL DE PUESTOS ---
+  // --- FUNCIÓN ACTUALIZADA: LECTURA LIMPIA DE MAPEOS Y CAMPOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
@@ -96,55 +96,48 @@ export default function Puestos() {
               try { objAnalizar = JSON.parse(value); } catch (e) {}
             }
 
-            const extraerTodoUniversal = (elemento) => {
+            const extraerMapeosColumnas = (elemento) => {
               if (!elemento || typeof elemento !== "object") return;
 
               Object.entries(elemento).forEach(([subKey, subVal]) => {
-                const subKeyLower = String(subKey).toLowerCase();
-                const esGenerico = ["columnas", "configuracion", "id", "created_at", "updated_at", "activo"].includes(subKeyLower);
-
-                if (!esGenerico) {
-                  if (subVal && typeof subVal === "object") {
-                    if (
-                      subVal.tablaDestino === "puestos" || 
-                      subVal.tabla === "puestos" || 
-                      subVal.destino === "puestos" ||
-                      String(subVal.campoDestino || "").toLowerCase().includes("puesto") ||
-                      subKeyLower.includes("puesto") ||
-                      subKeyLower.includes("cargo") ||
-                      subKeyLower.includes("rol")
-                    ) {
+                if (subVal && typeof subVal === "object") {
+                  const destino = String(subVal.campoDestino || subVal.destino || "").toLowerCase();
+                  
+                  if (
+                    subVal.tablaDestino === "empleados" || 
+                    subVal.tabla === "empleados" || 
+                    destino.includes("puesto") || 
+                    destino.includes("bono_puesto")
+                  ) {
+                    if (subKey.trim() !== "" && subKey !== subKey.toLowerCase()) {
                       listaExtraida.push({
                         puesto: String(subKey).trim(),
-                        departamento: subVal.departamento || subVal.campoDestino || subVal.tablaDestino || "Relación de Campos"
-                      });
-                    }
-                    extraerTodoUniversal(subVal);
-                  } else if (typeof subVal === "string" && subVal.trim() !== "") {
-                    if (
-                      subKeyLower.includes("puesto") || 
-                      subKeyLower.includes("cargo") || 
-                      subKeyLower.includes("rol") ||
-                      String(subVal).toLowerCase().includes("puesto")
-                    ) {
-                      listaExtraida.push({
-                        puesto: String(subVal).trim(),
-                        departamento: subKey.trim()
+                        departamento: subVal.campoDestino || subVal.tablaDestino || "Mapeo Activo"
                       });
                     }
                   }
-                } else {
-                  extraerTodoUniversal(subVal);
+                  extraerMapeosColumnas(subVal);
+                } 
+                else if (typeof subVal === "string" && subVal.trim() !== "") {
+                  const valLower = subVal.toLowerCase();
+                  if (valLower === "puesto" || valLower === "bono_puesto") {
+                    if (subKey.trim() !== "" && subKey !== subKey.toLowerCase()) {
+                      listaExtraida.push({
+                        puesto: String(subKey).trim(),
+                        departamento: String(subVal).trim()
+                      });
+                    }
+                  }
                 }
               });
             };
 
-            extraerTodoUniversal(objAnalizar);
+            extraerMapeosColumnas(objAnalizar);
           });
         });
       }
 
-      // 2. Consulta de respaldo en empleados
+      // 2. Consulta de respaldo en la tabla empleados
       const { data: empleadosData, error: errorEmp } = await supabase
         .from("empleados")
         .select("puesto, departamento");
@@ -160,11 +153,16 @@ export default function Puestos() {
         });
       }
 
-      // Eliminar duplicados y limpiar nombres genéricos
+      // Filtrar basura, duplicados y nombres técnicos puros en minúsculas
       const unicos = Array.from(
         new Map(
           listaExtraida
-            .filter(item => item.puesto && !["columnas", "configuracion"].includes(item.puesto.toLowerCase()))
+            .filter(item => {
+              const p = item.puesto;
+              return p && 
+                     p !== p.toLowerCase() && 
+                     !["columnas", "configuracion", "ignorada"].includes(p.toLowerCase());
+            })
             .map((item) => [item.puesto, item])
         ).values()
       );
@@ -631,7 +629,7 @@ export default function Puestos() {
                   <div key={idx} className="bg-slate-50 hover:bg-slate-100 p-3 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
                     <div>
                       <p className="font-bold text-slate-800 text-sm">{item.puesto}</p>
-                      <p className="text-gray-500 mt-0.5">Departamento: <span className="text-blue-600 font-semibold">{item.departamento}</span></p>
+                      <p className="text-gray-500 mt-0.5">Destino: <span className="text-blue-600 font-semibold">{item.departamento}</span></p>
                     </div>
                     <span className="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold">Sincronizado</span>
                   </div>

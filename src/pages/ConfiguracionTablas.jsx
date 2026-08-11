@@ -8,15 +8,15 @@ export default function ConfiguracionTablas() {
   const [columnasDetectadas, setColumnasDetectadas] = useState([]);
   
   // Mapeo dinámico: Relaciona cada columna del Excel con su Tabla, Campo y si usa Manual
-  // Estructura: { "NombreColumna": { tablaDestino: "", campoDestino: "", esManual: false, campoManual: "" } }
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
-  // Control de módulos activos / inactivos
+  // Control de módulos activos / inactivos (Añadido "puestos")
   const [modulosActivos, setModulosActivos] = useState({
     empleados: true,
     incidencias: true,
     vacaciones: true,
     prestamos: true,
+    puestos: true, // <-- Módulo de puestos integrado
   });
 
   const [guardando, setGuardando] = useState(false);
@@ -25,7 +25,7 @@ export default function ConfiguracionTablas() {
   const [mostrarModal, setMostrarModal] = useState(false);
   const [datosGuardadosResumen, setDatosGuardadosResumen] = useState(null);
 
-  // Catálogo oficial de tablas y campos existentes en Supabase
+  // Catálogo oficial de tablas y campos existentes en Supabase (Añadido esquema para "puestos")
   const esquemaTablasSupabase = {
     empleados: [
       { key: "numero_empleado", label: "Número de Empleado" },
@@ -49,6 +49,13 @@ export default function ConfiguracionTablas() {
       { key: "descuento_varios", label: "Descuento / Préstamo Semanal" },
       { key: "saldo_prestamo", label: "Saldo / Adeudo Pendiente" },
     ],
+    puestos: [ // <-- Catálogo de campos para el módulo de puestos
+      { key: "nombre_puesto", label: "Nombre del Puesto" },
+      { key: "nivel_jerarquico", label: "Nivel Jerárquico" },
+      { key: "descripcion", label: "Descripción de Puesto" },
+      { key: "salario_minimo", label: "Salario Mínimo" },
+      { key: "salario_maximo", label: "Salario Máximo" },
+    ],
   };
 
   // Cargar configuración previa desde Supabase al iniciar
@@ -66,7 +73,10 @@ export default function ConfiguracionTablas() {
 
       if (data && data.configuracion) {
         if (data.configuracion.asignacion) setAsignacionColumnas(data.configuracion.asignacion);
-        if (data.configuracion.modulos) setModulosActivos(data.configuracion.modulos);
+        // Combinamos los módulos guardados asegurando que si hay nuevos (como puestos) aparezcan
+        if (data.configuracion.modulos) {
+          setModulosActivos((prev) => ({ ...prev, ...data.configuracion.modulos }));
+        }
         if (data.configuracion.columnas) setColumnasDetectadas(data.configuracion.columnas);
       }
     } catch (err) {
@@ -95,7 +105,7 @@ export default function ConfiguracionTablas() {
 
           setColumnasDetectadas(encabezadosValidos);
 
-          // Sugerencia automática inteligente
+          // Sugerencia automática inteligente iterando sobre todos los esquemas (incluyendo puestos)
           const nuevaAsignacion = {};
           encabezadosValidos.forEach((col) => {
             const colUpper = col.toUpperCase();
@@ -213,7 +223,7 @@ export default function ConfiguracionTablas() {
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">1. Cargar archivo Excel para importar columnas con título</h2>
           <p className="text-sm text-gray-500 mb-4">
-            Sube tu archivo de nómina para extraer de forma dinámica todas las cabeceras disponibles.
+            Sube tu archivo para extraer de forma dinámica todas las cabeceras disponibles.
           </p>
           <input 
             type="file" 
@@ -223,10 +233,10 @@ export default function ConfiguracionTablas() {
           />
         </div>
 
-        {/* PASO 2: Control de Módulos Activos */}
+        {/* PASO 2: Control de Módulos Activos (Se renderizan de forma dinámica todos los módulos definidos) */}
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">2. Módulos y Tablas Activas en el Sistema</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-3">
             {Object.keys(modulosActivos).map((mod) => (
               <label key={mod} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer ${modulosActivos[mod] ? "border-blue-500 bg-blue-50/40" : "border-slate-200"}`}>
                 <span className="capitalize font-semibold text-slate-700">{mod}</span>
@@ -241,7 +251,7 @@ export default function ConfiguracionTablas() {
           </div>
         </div>
 
-        {/* PASO 3: Asignar cada columna detectada a una Tabla y Campo (con opción de Llenado Manual) */}
+        {/* PASO 3: Asignar cada columna detectada a una Tabla y Campo */}
         {columnasDetectadas.length > 0 && (
           <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
             <h2 className="text-lg font-bold text-slate-700 mb-2">3. Configurar Tabla y Campo Destino en Supabase</h2>
@@ -263,19 +273,25 @@ export default function ConfiguracionTablas() {
                       <span className="font-bold text-slate-800 text-sm break-all">{colOriginal}</span>
                     </div>
 
-                    {/* Selector de Tabla de Supabase */}
+                    {/* Selector Dinámico de Tabla de Supabase (Generado a partir de las llaves de esquemaTablasSupabase) */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
                       <label className="text-xs text-gray-500 font-medium">Tabla Destino:</label>
                       <select
                         value={tablaSeleccionada}
                         onChange={(e) => handleCambioAsignacion(colOriginal, "tablaDestino", e.target.value)}
-                        className="border rounded-lg p-2 bg-white text-sm font-medium"
+                        className="border rounded-lg p-2 bg-white text-sm font-medium capitalize"
                       >
                         <option value="">-- Ignorar / No usar --</option>
-                        <option value="empleados">👥 Empleados</option>
-                        <option value="incidencias">⚡ Incidencias</option>
-                        <option value="vacaciones">🌴 Vacaciones</option>
-                        <option value="prestamos">💳 Préstamos</option>
+                        {Object.keys(esquemaTablasSupabase).map((tablaKey) => (
+                          <option key={tablaKey} value={tablaKey}>
+                            {tablaKey === "empleados" && "👥 "}
+                            {tablaKey === "incidencias" && "⚡ "}
+                            {tablaKey === "vacaciones" && "🌴 "}
+                            {tablaKey === "prestamos" && "💳 "}
+                            {tablaKey === "puestos" && "💼 "}
+                            {tablaKey.charAt(0).toUpperCase() + tablaKey.slice(1)}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -348,10 +364,10 @@ export default function ConfiguracionTablas() {
           </div>
         )}
 
-        {/* 🌟 POP-UP / MODAL DE VERIFICACIÓN DE ACTUALIZACIÓN EN SUPABASE */}
+        {/* MODAL DE VERIFICACIÓN */}
         {mostrarModal && datosGuardadosResumen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 border border-slate-100">
               
               <div className="flex justify-between items-center pb-4 border-b mb-4">
                 <div>
@@ -369,7 +385,6 @@ export default function ConfiguracionTablas() {
               </div>
 
               <div className="space-y-6">
-                {/* Resumen de Módulos Activos */}
                 <div>
                   <h3 className="text-sm font-bold text-slate-700 mb-2">📌 Estado de Módulos Activos:</h3>
                   <div className="flex flex-wrap gap-2">
@@ -381,7 +396,6 @@ export default function ConfiguracionTablas() {
                   </div>
                 </div>
 
-                {/* Resumen Detallado de Asignaciones por Tabla */}
                 <div>
                   <h3 className="text-sm font-bold text-slate-700 mb-3">📊 Detalle de Columnas y Campos Destino Registrados:</h3>
                   

@@ -73,6 +73,27 @@ export default function ConfiguracionTablas() {
     ],
   };
 
+  // Cargar configuración existente desde Supabase al iniciar la página
+  useEffect(() => {
+    cargarConfiguracionGuardada();
+  }, []);
+
+  const cargarConfiguracionGuardada = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("configuracion_tablas")
+        .select("configuracion")
+        .eq("clave", "config_mapeo_tablas_supabase")
+        .maybeSingle();
+
+      if (data && data.configuracion && data.configuracion.mapeo) {
+        setConfiguracionTablas(data.configuracion.mapeo);
+      }
+    } catch (err) {
+      console.error("Error al cargar configuración de Supabase:", err);
+    }
+  };
+
   // Leer archivo Excel/CSV para extraer los encabezados de la fila 0
   const leerEncabezadosArchivo = (event) => {
     const file = event.target.files?.[0];
@@ -141,15 +162,34 @@ export default function ConfiguracionTablas() {
     }));
   };
 
+  // Guardar configuración en la tabla configuracion_tablas de Supabase
   const guardarConfiguracion = async () => {
     try {
       setGuardando(true);
-      // Guardamos la configuración de mapeo estructurada por tablas en localStorage o Supabase
+      
+      const configuracionFinal = {
+        mapeo: configuracionTablas,
+        fecha_actualizacion: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("configuracion_tablas")
+        .upsert({ 
+          clave: "config_mapeo_tablas_supabase", 
+          configuracion: configuracionFinal 
+        }, { 
+          onConflict: "clave" 
+        });
+
+      if (error) throw error;
+
+      // Respaldo local de seguridad
       localStorage.setItem("config_mapeo_tablas_supabase", JSON.stringify(configuracionTablas));
-      alert("🎉 ¡Configuración de tablas y columnas guardada exitosamente!");
+
+      alert("🎉 ¡Configuración guardada en Supabase y lista para usarse!");
     } catch (error) {
-      console.error(error);
-      alert("Error al guardar la configuración");
+      console.error("Error al guardar en Supabase:", error.message);
+      alert("Hubo un error al guardar la configuración en la base de datos.");
     } finally {
       setGuardando(false);
     }
@@ -191,9 +231,8 @@ export default function ConfiguracionTablas() {
           {Object.keys(esquemaTablasSupabase).map((nombreTabla) => {
             const tablaInfo = configuracionTablas[nombreTabla];
             return (
-              <div key={nombreTabla} className={`bg-white rounded-2xl shadow-md p-6 border transition-all ${tablaInfo.activa ? "border-slate-200" : "border-slate-200 opacity-60 bg-slate-50"}`}>
+              <div key={nombreTabla} className={`bg-white rounded-2xl shadow-md p-6 border transition-all ${tablaInfo?.activa ? "border-slate-200" : "border-slate-200 opacity-60 bg-slate-50"}`}>
                 
-                {/* Cabecera de la sección de la tabla */}
                 <div className="flex justify-between items-center mb-4 pb-3 border-b">
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">
@@ -209,18 +248,17 @@ export default function ConfiguracionTablas() {
                   </div>
                   
                   <label className="flex items-center gap-2 cursor-pointer bg-slate-100 px-3 py-1.5 rounded-lg">
-                    <span className="text-xs font-semibold text-slate-700">{tablaInfo.activa ? "Tabla Activa" : "Tabla Inactiva"}</span>
+                    <span className="text-xs font-semibold text-slate-700">{tablaInfo?.activa ? "Tabla Activa" : "Tabla Inactiva"}</span>
                     <input 
                       type="checkbox" 
-                      checked={tablaInfo.activa} 
+                      checked={tablaInfo?.activa ?? true} 
                       onChange={() => toggleTablaActiva(nombreTabla)}
                       className="w-4 h-4 text-blue-600 rounded" 
                     />
                   </label>
                 </div>
 
-                {/* Campos de la tabla vs Columnas del Excel */}
-                {tablaInfo.activa && (
+                {tablaInfo?.activa && (
                   <div className="grid md:grid-cols-2 gap-4">
                     {esquemaTablasSupabase[nombreTabla].map((campo) => (
                       <div key={campo.key} className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col gap-1">
@@ -229,7 +267,7 @@ export default function ConfiguracionTablas() {
                           <span className="font-mono text-gray-400">campo: {campo.key}</span>
                         </div>
                         <select
-                          value={tablaInfo.mapeo[campo.key] || ""}
+                          value={tablaInfo?.mapeo?.[campo.key] || ""}
                           onChange={(e) => handleCambioMapeo(nombreTabla, campo.key, e.target.value)}
                           className="border rounded-lg p-2 bg-white text-sm"
                           disabled={columnasDetectadas.length === 0}
@@ -250,14 +288,13 @@ export default function ConfiguracionTablas() {
           })}
         </div>
 
-        {/* Botón de guardado general */}
         <div className="flex justify-end bg-white p-6 rounded-2xl shadow-md border border-slate-100">
           <button 
             onClick={guardarConfiguracion}
             disabled={guardando}
             className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium shadow-lg transition-all"
           >
-            {guardando ? "Guardando Configuración..." : "💾 Guardar Configuración de Todas las Tablas"}
+            {guardando ? "Guardando en Supabase..." : "💾 Guardar Configuración en Supabase"}
           </button>
         </div>
 

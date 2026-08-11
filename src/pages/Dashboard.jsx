@@ -236,6 +236,12 @@ export default function Dashboard() {
           descripcion="Bitácora del sistema."
           ruta="/auditoria"
         />
+        <Modulo
+          icono="📊"
+          titulo="Configuración de Tablas"
+          descripcion="Administra y mapea columnas de Excel a Supabase."
+          ruta="/configuracion-tablas"
+        />
 
         <Modulo
           icono="⚙️"

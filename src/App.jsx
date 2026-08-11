@@ -22,6 +22,7 @@ import Notificaciones from "./pages/Notificaciones";
 import RecibosMasivos from "./pages/RecibosMasivos";
 import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
 import ImportarEmpleados from "./pages/ImportarEmpleados";
+import ConfiguracionTablas from "./pages/ConfiguracionTablas";
  
 
 
@@ -149,6 +150,9 @@ export default function App() {
     <ImportarEmpleados />
   }
 />
+
+<Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
+      </Routes>
 
 
       </Routes>

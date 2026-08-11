@@ -78,55 +78,61 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN CON DEPURACIÓN EN CONSOLA ---
+  // --- FUNCIÓN ACTUALIZADA: ESCANEO PROFUNDO Y TOLERANTE A JSON ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
-      console.log("🔍 Iniciando búsqueda de configuración en Supabase...");
 
       // 1. Consultar la tabla de configuración
       const { data: dataConfig, error } = await supabase
         .from("configuracion_tablas")
         .select("*");
 
-      if (error) {
-        console.warn("⚠️ Error o tabla 'configuracion_tablas' no accesible:", error.message);
-      } else {
-        console.log("📦 Datos obtenidos de configuracion_tablas:", dataConfig);
-        
-        if (dataConfig && dataConfig.length > 0) {
-          dataConfig.forEach((fila, idx) => {
-            console.log(`--- Analizando fila ${idx} ---`, fila);
-            
-            const posibleJson = [
-              fila.configuracion,
-              fila.datos,
-              fila.mapeo,
-              fila.asignacion,
-              fila
-            ];
+      if (!error && dataConfig && dataConfig.length > 0) {
+        dataConfig.forEach((fila) => {
+          Object.entries(fila).forEach(([key, value]) => {
+            let objAnalizar = value;
+            if (typeof value === "string" && (value.startsWith("{") || value.startsWith("["))) {
+              try { objAnalizar = JSON.parse(value); } catch (e) {}
+            }
 
-            posibleJson.forEach((jsonObj) => {
-              if (jsonObj && typeof jsonObj === "object") {
-                const asignaciones = jsonObj.asignacion || (jsonObj.tablaDestino ? { [jsonObj.columna || 'Columna']: jsonObj } : jsonObj);
-
-                if (asignaciones && typeof asignaciones === "object") {
-                  Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
-                    console.log(`Evaluando columna: ${columnaOriginal}`, info);
-                    if (info && (info.tablaDestino === "puestos" || info.tabla === "puestos")) {
+            if (objAnalizar && typeof objAnalizar === "object") {
+              const buscarDestinoPuestos = (item) => {
+                if (!item || typeof item !== "object") return;
+                
+                Object.entries(item).forEach(([subKey, subVal]) => {
+                  if (subVal && typeof subVal === "object") {
+                    if (
+                      subVal.tablaDestino === "puestos" || 
+                      subVal.tabla === "puestos" || 
+                      subVal.destino === "puestos" ||
+                      String(subVal).toLowerCase().includes("puesto")
+                    ) {
                       listaExtraida.push({
-                        puesto: String(columnaOriginal).trim(),
-                        departamento: info.campoDestino || "Relación de Campos"
+                        puesto: String(subKey).trim(),
+                        departamento: subVal.campoDestino || subVal.departamento || "Relación de Campos"
                       });
                     }
-                  });
-                }
+                    buscarDestinoPuestos(subVal);
+                  }
+                });
+              };
+
+              buscarDestinoPuestos(objAnalizar);
+
+              if (
+                objAnalizar.tablaDestino === "puestos" || 
+                objAnalizar.tabla === "puestos" ||
+                objAnalizar.destino === "puestos"
+              ) {
+                listaExtraida.push({
+                  puesto: String(key).trim(),
+                  departamento: objAnalizar.campoDestino || "Relación de Campos"
+                });
               }
-            });
+            }
           });
-        } else {
-          console.log("ℹ️ La tabla 'configuracion_tablas' está vacía.");
-        }
+        });
       }
 
       // 2. Consulta de respaldo en empleados
@@ -150,10 +156,9 @@ export default function Puestos() {
         new Map(listaExtraida.map((item) => [item.puesto, item])).values()
       );
 
-      console.log("✨ Puestos finales extraídos para el modal:", unicos);
       setPuestosConfiguradosLista(unicos);
     } catch (e) {
-      console.error("❌ Error crítico en cargarPuestosDesdeRelacionCampos:", e);
+      console.error("Error al cargar puestos desde relación de campos:", e);
     }
   };
 
@@ -620,7 +625,7 @@ export default function Puestos() {
                 ))
               ) : (
                 <div className="py-8 text-center text-gray-500 text-xs">
-                  ⚠️ No se encontraron puestos en la relación de campos activa. Revisa la consola (F12) para más detalles.
+                  ⚠️ No se encontraron puestos en la relación de campos activa.
                 </div>
               )}
             </div>

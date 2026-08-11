@@ -78,45 +78,46 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN CORREGIDA: CARGAR PUESTOS DESDE LA RELACIÓN DE CAMPOS ---
+  // --- FUNCIÓN ROBUSTA: CARGAR PUESTOS DESDE LA RELACIÓN DE CAMPOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
 
-      // 1. Consultar la configuración dinámica guardada en configuracion_tablas
-      const nombresPosibles = ["configuracion_tablas", "ConfiguracionTablas"];
-      let dataConfig = null;
+      // 1. Consultar la tabla de configuración con tolerancia a nombres y estructuras
+      const { data: dataConfig, error } = await supabase
+        .from("configuracion_tablas")
+        .select("*");
 
-      for (let nombreTabla of nombresPosibles) {
-        const { data, error } = await supabase
-          .from(nombreTabla)
-          .select("*");
-        
-        if (!error && data && data.length > 0) {
-          dataConfig = data;
-          break;
-        }
-      }
-
-      if (dataConfig && dataConfig.length > 0) {
+      if (!error && dataConfig && dataConfig.length > 0) {
         dataConfig.forEach((fila) => {
-          const cfg = fila.configuracion || fila.datos || fila.mapeo || fila;
-          const asignaciones = cfg.asignacion || cfg;
+          const posibleJson = [
+            fila.configuracion,
+            fila.datos,
+            fila.mapeo,
+            fila.asignacion,
+            fila
+          ];
 
-          if (asignaciones && typeof asignaciones === "object") {
-            Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
-              if (info && info.tablaDestino === "puestos") {
-                listaExtraida.push({
-                  puesto: String(columnaOriginal).trim(),
-                  departamento: "Configuración Dinámica"
+          posibleJson.forEach((jsonObj) => {
+            if (jsonObj && typeof jsonObj === "object") {
+              const asignaciones = jsonObj.asignacion || (jsonObj.tablaDestino ? { [jsonObj.columna || 'Columna']: jsonObj } : jsonObj);
+
+              if (asignaciones && typeof asignaciones === "object") {
+                Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
+                  if (info && (info.tablaDestino === "puestos" || info.tabla === "puestos")) {
+                    listaExtraida.push({
+                      puesto: String(columnaOriginal).trim(),
+                      departamento: info.campoDestino || "Relación de Campos"
+                    });
+                  }
                 });
               }
-            });
-          }
+            }
+          });
         });
       }
 
-      // 2. Mantener lectura opcional desde empleados si existen registros previos
+      // 2. Consulta de respaldo en empleados
       const { data: empleadosData, error: errorEmp } = await supabase
         .from("empleados")
         .select("puesto, departamento");

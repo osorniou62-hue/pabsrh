@@ -22,6 +22,10 @@ export default function Puestos() {
   const [mostrarModalDepto, setMostrarModalDepto] = useState(false);
   const [nuevoDeptoNombre, setNuevoDeptoNombre] = useState("");
 
+  // --- ESTADO PARA PUESTOS CONFIGURADOS DESDE CONFIGURACION_TABLAS ---
+  const [mostrarModalConfigurados, setMostrarModalConfigurados] = useState(false);
+  const [puestosConfiguradosLista, setPuestosConfiguradosLista] = useState([]);
+
   // Modal para Perfil/Detalle del Puesto
   const [puestoSeleccionado, setPuestoSeleccionado] = useState(null);
   const [detallePerfil, setDetallePerfil] = useState({
@@ -35,6 +39,7 @@ export default function Puestos() {
   useEffect(() => {
     cargarPuestos();
     cargarDepartamentos();
+    cargarPuestosConfiguradosTablas();
   }, []);
 
   const cargarPuestos = async () => {
@@ -73,6 +78,54 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
+  // Carga los puestos definidos dentro de configuracion_tablas (mapeo del excel)
+  const cargarPuestosConfiguradosTablas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("configuracion_tablas")
+        .select("*");
+
+      if (error) throw error;
+
+      // Extraemos los puestos mapeados o estructurados en la configuración
+      let listaExtraida = [];
+      if (data && data.length > 0) {
+        data.forEach((fila) => {
+          // Buscamos si dentro del JSON/configuración vienen puestos definidos
+          const config = fila.configuracion || fila.datos || {};
+          if (config.puestos && Array.isArray(config.puestos)) {
+            listaExtraida = [...listaExtraida, ...config.puestos];
+          }
+          // Si guardaste los puestos en alguna otra clave o mapeo de asignación
+          if (config.asignacion) {
+            Object.values(config.asignacion).forEach((val) => {
+              if (val.tablaDestino === "puestos" && val.campoDestino) {
+                listaExtraida.push(val.campoDestino);
+              }
+            });
+          }
+        });
+      }
+
+      // Si no hay datos estructurados específicos, buscamos respaldos locales o dejamos la lista limpia única
+      if (listaExtraida.length === 0) {
+        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+        if (local) {
+          const parsed = JSON.parse(local);
+          if (parsed.puestosConfigurados) {
+            listaExtraida = parsed.puestosConfigurados;
+          }
+        }
+      }
+
+      // Eliminamos duplicados
+      const unicos = [...new Set(listaExtraida)];
+      setPuestosConfiguradosLista(unicos);
+    } catch (e) {
+      console.error("Error al cargar puestos configurados:", e);
+    }
+  };
+
   const crearDepartamento = async () => {
     if (!nuevoDeptoNombre.trim()) {
       alert("Ingresa el nombre del departamento");
@@ -107,7 +160,6 @@ export default function Puestos() {
       return;
     }
 
-    // 1. Validar si ya existe un puesto con el mismo nombre en Supabase (case insensitive)
     const { data: puestoExistente, error: errBusqueda } = await supabase
       .from("puestos")
       .select("id, nombre, departamento_id, activo")
@@ -115,9 +167,7 @@ export default function Puestos() {
       .maybeSingle();
 
     if (!errBusqueda && puestoExistente) {
-      // Si estamos editando y el ID encontrado es el mismo que estamos editando, permitimos continuar
       if (!editandoId || puestoExistente.id !== editandoId) {
-        // Abrimos el modal de advertencia de duplicado
         setModalDuplicado({
           abierto: true,
           puestoExistente: puestoExistente,
@@ -128,7 +178,6 @@ export default function Puestos() {
       }
     }
 
-    // 2. Proceso normal si no hay duplicados o es el mismo registro
     await ejecutarGuardadoEnBD(nombreLimpio, departamentoId, editandoId);
   };
 
@@ -168,12 +217,10 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // Opción de fusión si el usuario decide usar el puesto existente en lugar de duplicarlo
   const fusionarPuestoExistente = async () => {
     const { puestoExistente } = modalDuplicado;
     if (!puestoExistente) return;
 
-    // Activamos o actualizamos su departamento si fuera necesario
     const { error } = await supabase
       .from("puestos")
       .update({ departamento_id: Number(modalDuplicado.departamentoDestino), activo: true })
@@ -216,6 +263,32 @@ export default function Puestos() {
       alert(error.message);
       return;
     }
+    await cargarPuestos();
+  };
+
+  // --- BORRAR PUESTO (SOLO SI ESTÁ INACTIVO/DESACTIVADO) ---
+  const eliminarPuestoDefinitivo = async (puesto) => {
+    if (puesto.activo) {
+      alert("⚠️ No puedes eliminar un puesto activo. Primero debes desactivarlo.");
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `¿Estás COMPLETAMENTE seguro de eliminar el puesto "${puesto.nombre}" de forma definitiva? Esta acción no se puede deshacer.`
+    );
+    if (!confirmar) return;
+
+    const { error } = await supabase
+      .from("puestos")
+      .delete()
+      .eq("id", puesto.id);
+
+    if (error) {
+      alert("Error al eliminar puesto (puede tener dependencias en empleados): " + error.message);
+      return;
+    }
+
+    alert("Puesto eliminado permanentemente del sistema.");
     await cargarPuestos();
   };
 
@@ -287,11 +360,11 @@ export default function Puestos() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
-          <p className="text-xs text-gray-500 mt-1">Gestión unificada con validación estricta anti-duplicados</p>
+          <p className="text-xs text-gray-500 mt-1">Gestión unificada con validación estricta y control de configuración</p>
         </div>
         <Link
           to="/dashboard"
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium text-sm"
         >
           Regresar
         </Link>
@@ -299,16 +372,27 @@ export default function Puestos() {
 
       {/* FORMULARIO: CREAR / EDITAR PUESTO */}
       <div className="bg-white shadow rounded p-4 mb-6">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
           <h2 className="text-xl font-bold">
             {editandoId ? `✏️ Editando Puesto #${editandoId}` : "➕ Nuevo Puesto"}
           </h2>
-          <button
-            onClick={() => setMostrarModalDepto(true)}
-            className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700 font-medium"
-          >
-            + Crear Departamento
-          </button>
+
+          <div className="flex items-center gap-2">
+            {/* BOTÓN SOLICITADO: PUESTOS CONFIGURADOS */}
+            <button
+              onClick={() => setMostrarModalConfigurados(true)}
+              className="bg-slate-700 text-white px-3 py-1.5 rounded text-sm hover:bg-slate-800 font-semibold shadow-sm transition-all"
+            >
+              📋 Puestos Configurados
+            </button>
+
+            <button
+              onClick={() => setMostrarModalDepto(true)}
+              className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700 font-medium shadow-sm transition-all"
+            >
+              + Crear Departamento
+            </button>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-4 gap-3">
@@ -317,13 +401,13 @@ export default function Puestos() {
             placeholder="Nombre del puesto"
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
-            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
           />
 
           <select
             value={departamentoId}
             onChange={(e) => setDepartamentoId(e.target.value)}
-            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+            className="border rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
           >
             <option value="">Selecciona departamento</option>
             {departamentos.map((departamento) => (
@@ -335,7 +419,7 @@ export default function Puestos() {
 
           <button
             onClick={guardarPuesto}
-            className={`text-white rounded px-4 py-2 font-semibold ${
+            className={`text-white rounded px-4 py-2 font-semibold text-sm ${
               editandoId
                 ? "bg-amber-600 hover:bg-amber-700"
                 : "bg-green-600 hover:bg-green-700"
@@ -347,7 +431,7 @@ export default function Puestos() {
           {editandoId && (
             <button
               onClick={cancelarEdicion}
-              className="bg-gray-400 text-white rounded px-4 py-2 hover:bg-gray-500 font-medium"
+              className="bg-gray-400 text-white rounded px-4 py-2 hover:bg-gray-500 font-medium text-sm"
             >
               Cancelar
             </button>
@@ -381,13 +465,13 @@ export default function Puestos() {
           placeholder="🔍 Buscar por puesto o por departamento..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          className="w-full border rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
         />
       </div>
 
       {/* TABLA DE RESULTADOS */}
       <div className="bg-white shadow rounded p-4 overflow-x-auto">
-        <table className="w-full border text-left">
+        <table className="w-full border text-left text-sm">
           <thead>
             <tr className="bg-gray-100">
               <th className="border p-2 text-center">ID</th>
@@ -426,30 +510,44 @@ export default function Puestos() {
                       {totalEmp}
                     </td>
                     <td className="border p-2 text-center">
-                      {puesto.activo ? "✅ Activo" : "🚫 Inactivo"}
+                      {puesto.activo ? (
+                        <span className="text-green-700 font-bold text-xs bg-green-50 px-2 py-1 rounded">✅ Activo</span>
+                      ) : (
+                        <span className="text-red-700 font-bold text-xs bg-red-50 px-2 py-1 rounded">🚫 Inactivo</span>
+                      )}
                     </td>
                     <td className="border p-2 text-center">
-                      <div className="flex justify-center gap-2">
+                      <div className="flex justify-center gap-1.5 flex-wrap">
                         <button
                           onClick={() => abrirPerfilPuesto(puesto)}
-                          className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 font-medium"
+                          className="bg-blue-500 text-white px-2.5 py-1 rounded text-xs hover:bg-blue-600 font-medium"
                           title="Ver o editar perfil completo"
                         >
                           👁️ Perfil
                         </button>
                         <button
                           onClick={() => editarPuesto(puesto)}
-                          className="bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600 font-medium"
-                          title="Editar puesto y habilitar perfil arriba"
+                          className="bg-yellow-500 text-white px-2.5 py-1 rounded text-xs hover:bg-yellow-600 font-medium"
+                          title="Editar puesto"
                         >
                           ✏️ Editar
                         </button>
-                        {puesto.activo && (
+                        
+                        {puesto.activo ? (
                           <button
                             onClick={() => desactivarPuesto(puesto.id)}
-                            className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700 font-medium"
+                            className="bg-red-500 text-white px-2.5 py-1 rounded text-xs hover:bg-red-600 font-medium"
                           >
                             Desactivar
+                          </button>
+                        ) : (
+                          // Botón habilitado para eliminar definitivamente si está inactivo
+                          <button
+                            onClick={() => eliminarPuestoDefinitivo(puesto)}
+                            className="bg-slate-900 text-white px-2.5 py-1 rounded text-xs hover:bg-black font-bold shadow-sm"
+                            title="Eliminar permanentemente puesto inactivo"
+                          >
+                            🗑️ Borrar
                           </button>
                         )}
                       </div>
@@ -461,6 +559,50 @@ export default function Puestos() {
           </tbody>
         </table>
       </div>
+
+      {/* 📋 MODAL: PUESTOS CONFIGURADOS EN CONFIGURACION_TABLAS */}
+      {mostrarModalConfigurados && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200">
+            <div className="flex justify-between items-center pb-3 border-b mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">📋 Puestos Configurados</h3>
+                <p className="text-xs text-gray-500">Cargados desde la estructura de configuración de tablas / excel</p>
+              </div>
+              <button
+                onClick={() => setMostrarModalConfigurados(false)}
+                className="text-gray-400 hover:text-gray-700 font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
+              {puestosConfiguradosLista.length > 0 ? (
+                puestosConfiguradosLista.map((p, idx) => (
+                  <div key={idx} className="bg-slate-50 hover:bg-slate-100 p-2.5 rounded-xl border border-slate-100 text-xs font-semibold text-slate-700 flex items-center justify-between">
+                    <span>{p}</span>
+                    <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-mono">Configurado</span>
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center text-gray-500 text-xs">
+                  ⚠️ No se encontraron puestos adicionales explícitamente estructurados en la tabla de configuración.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 pt-3 border-t flex justify-end">
+              <button
+                onClick={() => setMostrarModalConfigurados(false)}
+                className="bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-semibold hover:bg-slate-900 transition-all"
+              >
+                Cerrar Ventana
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ⚠️ MODAL DE ADVERTENCIA: PUESTO DUPLICADO ENCONTRADO */}
       {modalDuplicado.abierto && (
@@ -511,18 +653,18 @@ export default function Puestos() {
               placeholder="Nombre del departamento"
               value={nuevoDeptoNombre}
               onChange={(e) => setNuevoDeptoNombre(e.target.value)}
-              className="w-full border rounded p-2 mb-4 focus:ring-2 focus:ring-indigo-500 outline-none"
+              className="w-full border rounded p-2 mb-4 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
             />
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setMostrarModalDepto(false)}
-                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium"
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium text-sm"
               >
                 Cancelar
               </button>
               <button
                 onClick={crearDepartamento}
-                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium"
+                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium text-sm"
               >
                 Guardar Departamento
               </button>
@@ -559,7 +701,7 @@ export default function Puestos() {
               </div>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <div className="grid md:grid-cols-2 gap-4 mb-4 text-sm">
               <div>
                 <label className="block text-sm font-semibold mb-1">
                   Horarios:
@@ -597,7 +739,7 @@ export default function Puestos() {
               </div>
             </div>
 
-            <div className="mb-4">
+            <div className="mb-4 text-sm">
               <label className="block text-sm font-semibold mb-1">
                 Acciones / Responsabilidades:
               </label>
@@ -615,7 +757,7 @@ export default function Puestos() {
               ></textarea>
             </div>
 
-            <div className="mb-6">
+            <div className="mb-6 text-sm">
               <label className="block text-sm font-semibold mb-1">
                 Comentarios / Observaciones:
               </label>
@@ -636,13 +778,13 @@ export default function Puestos() {
             <div className="flex justify-end gap-2 border-t pt-4">
               <button
                 onClick={() => setPuestoSeleccionado(null)}
-                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium"
+                className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-100 font-medium text-sm"
               >
                 Cerrar
               </button>
               <button
                 onClick={guardarPerfilPuesto}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold"
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold text-sm"
               >
                 Guardar Perfil
               </button>

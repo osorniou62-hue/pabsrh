@@ -8,7 +8,6 @@ export default function ConfiguracionTablas() {
   const [columnasDetectadas, setColumnasDetectadas] = useState([]);
   
   // Mapeo dinámico: Relaciona cada columna del Excel con una Tabla de Supabase y un Campo
-  // Estructura: { "NombreColumnaExcel": { tablaDestino: "empleados", campoDestino: "nombre_completo" } }
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
   // Control de módulos activos / inactivos
@@ -106,7 +105,6 @@ export default function ConfiguracionTablas() {
               });
             });
 
-            // Si no encuentra coincidencia exacta, se deja sin asignar para que tú lo elijas
             if (!encontrada) {
               nuevaAsignacion[col] = { tablaDestino: "", campoDestino: "" };
             }
@@ -124,13 +122,13 @@ export default function ConfiguracionTablas() {
     reader.readAsBinaryString(file);
   };
 
-  // 2. Modificar la asignación de una columna específica a una tabla y campo de Supabase
-  const handleCambioAsignacion =columna, tipo, valor) => {
+  // 2. Modificar la asignación de una columna específica corregida
+  const handleCambioAsignacion = (columna, tipo, valor) => {
     setAsignacionColumnas((prev) => ({
       ...prev,
       [columna]: {
         ...(prev[columna] || { tablaDestino: "", campoDestino: "" }),
-        [tipo]: valor, // tipo puede ser 'tablaDestino' o 'campoDestino'
+        [tipo]: valor,
       },
     }));
   };
@@ -151,7 +149,6 @@ export default function ConfiguracionTablas() {
         actualizado_at: new Date().toISOString(),
       };
 
-      // Guardar en la tabla 'configuracion_tablas' de Supabase
       const { error } = await supabase
         .from("configuracion_tablas")
         .upsert({
@@ -163,7 +160,6 @@ export default function ConfiguracionTablas() {
 
       if (error) throw error;
 
-      // Respaldo local
       localStorage.setItem("config_mapeo_columnas_dinamico", JSON.stringify(payloadConfiguracion));
 
       alert("🎉 ¡Configuración guardada y tablas actualizadas en Supabase con éxito!");

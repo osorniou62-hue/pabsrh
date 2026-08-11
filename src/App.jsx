@@ -152,9 +152,7 @@ export default function App() {
 />
 
 <Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
-      </Routes>
-
-
+      
       </Routes>
 
     </BrowserRouter>

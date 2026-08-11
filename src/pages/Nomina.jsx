@@ -1,311 +1,356 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { supabase } from "../services/supabase";
 
-export default function ReciboNomina() {
-  const { empleadoId, periodoId } = useParams();
-  const [datos, setDatos] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [mostrarConfigPanel, setMostrarConfigPanel] = useState(false);
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
 
-  // Campos seleccionados para mostrar en los recibos (Configuración personalizada)
-  const [camposVisibles, setCamposVisibles] = useState({
-    sueldoBase: true,
-    sueldoVacaciones: true,
-    primaVacacional: true,
-    aguinaldo: true,
-    ptu: true,
-    bonoImportado: true,
-    vacacionesDias: true,
-    faltasJustificadas: true,
-    faltasInjustificadas: true,
-  });
+export default function Nomina() {
+  const [periodos, setPeriodos] = useState([]);
+  const [periodoId, setPeriodoId] = useState("");
+  const [nomina, setNomina] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [mapeoConfigurado, setMapeoConfigurado] = useState({});
 
   useEffect(() => {
-    cargarDatosRecibo();
-    cargarConfiguracionCamposTablas();
-  }, [empleadoId, periodoId]);
+    cargarPeriodos();
+    cargarConfiguracionTablas();
+  }, []);
 
-  const cargarDatosRecibo = async () => {
+  useEffect(() => {
+    if (periodoId) {
+      cargarNominaExistente(periodoId);
+    } else {
+      setNomina([]);
+    }
+  }, [periodoId]);
+
+  const cargarPeriodos = async () => {
+    const { data, error } = await supabase
+      .from("periodos_nomina")
+      .select("*")
+      .order("fecha_inicio", { ascending: false });
+
+    if (error) {
+      console.error("Error al cargar períodos:", error);
+      return;
+    }
+    setPeriodos(data || []);
+  };
+
+  // --- LECTURA DE CONFIGURACIÓN DE TABLAS PARA MAPEO DINÁMICO ---
+  const cargarConfiguracionTablas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("configuracion_tablas")
+        .select("*");
+
+      if (!error && data) {
+        let configsUnificadas = {};
+        data.forEach((fila) => {
+          Object.entries(fila).forEach(([key, value]) => {
+            let objAnalizar = value;
+            if (typeof value === "string" && (value.startsWith("{") || value.startsWith("["))) {
+              try { objAnalizar = JSON.parse(value); } catch (e) {}
+            }
+            if (typeof objAnalizar === "object" && objAnalizar !== null) {
+              configsUnificadas = { ...configsUnificadas, ...objAnalizar };
+            }
+          });
+        });
+        setMapeoConfigurado(configsUnificadas);
+      }
+    } catch (e) {
+      console.error("Error al leer configuración de tablas:", e);
+    }
+  };
+
+  const cargarNominaExistente = async (pId) => {
     setLoading(true);
-    const { data: nominaData, error: errNom } = await supabase
+    const { data, error } = await supabase
       .from("nomina")
       .select(`
-        *,
-        empleados (*),
-        periodos_nomina (*)
+        id,
+        empleado_id,
+        sueldo_base,
+        total_bonos,
+        total_descuentos,
+        total_horas_extra,
+        total_percepciones,
+        descuento_ausencias,
+        neto_pagar,
+        empleados (
+          numero_empleado,
+          nombre_completo,
+          puesto,
+          departamento
+        )
       `)
-      .eq("empleado_id", empleadoId)
-      .eq("periodo_id", periodoId)
-      .maybeSingle();
+      .eq("periodo_id", pId);
 
-    if (errNom || !nominaData) {
-      console.error("Error al cargar recibo:", errNom);
+    if (error) {
+      console.error("Error al consultar nómina guardada:", error);
       setLoading(false);
       return;
     }
 
-    setDatos(nominaData);
+    if (data && data.length > 0) {
+      const formateado = data.map((item) => {
+        const descGen = Number(item.total_descuentos || 0);
+        const descAus = Number(item.descuento_ausencias || 0);
+        
+        return {
+          id: item.id,
+          empleado_id: item.empleado_id,
+          numero_empleado: item.empleados?.numero_empleado,
+          nombre_completo: item.empleados?.nombre_completo,
+          puesto: item.empleados?.puesto,
+          departamento: item.empleados?.departamento,
+          sueldo_base: Number(item.sueldo_base || 0),
+          bonos: Number(item.total_bonos || 0),
+          horas_extra: Number(item.total_horas_extra || 0),
+          descuentos: descGen + descAus,
+          percepciones: Number(item.total_percepciones || 0),
+          neto: Number(item.neto_pagar || 0),
+        };
+      });
+      setNomina(formateado);
+    } else {
+      setNomina([]);
+    }
     setLoading(false);
   };
 
-  // Cargar configuración desde configuracion_tablas si existe
-  const cargarConfiguracionCamposTablas = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("configuracion_tablas")
+  const generarNomina = async () => {
+    if (!periodoId) {
+      alert("Selecciona un período");
+      return;
+    }
+
+    setLoading(true);
+
+    const { data: empleados, error: errEmp } = await supabase
+      .from("empleados")
+      .select("*")
+      .eq("activo", true);
+
+    if (errEmp) {
+      console.error("Error al obtener empleados:", errEmp);
+      setLoading(false);
+      return;
+    }
+
+    const resultado = [];
+
+    for (const empleado of empleados || []) {
+      const { data: bonos } = await supabase
+        .from("bonos_empleado")
         .select("*")
-        .ilike("tabla", "%nomina%")
-        .maybeSingle();
+        .eq("empleado_id", empleado.id)
+        .eq("periodo_id", periodoId);
 
-      if (!error && data && data.configuracion) {
-        let cfg = data.configuracion;
-        if (typeof cfg === "string") cfg = JSON.parse(cfg);
-        if (cfg) setCamposVisibles((prev) => ({ ...prev, ...cfg }));
+      const { data: descuentos } = await supabase
+        .from("descuentos_empleado")
+        .select("*")
+        .eq("empleado_id", empleado.id)
+        .eq("periodo_id", periodoId);
+
+      const { data: incidencias } = await supabase
+        .from("incidencias")
+        .select("*")
+        .eq("empleado_id", empleado.id)
+        .eq("periodo_id", periodoId);
+
+      const totalBonos = (bonos || []).reduce(
+        (acum, item) => acum + Number(item.importe || 0),
+        0
+      );
+
+      const totalDescuentos = (descuentos || []).reduce(
+        (acum, item) => acum + Number(item.importe || 0),
+        0
+      );
+
+      const horasExtra = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.horas_extra || 0),
+        0
+      );
+
+      const faltasJustificadas = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.faltas_justificadas || 0),
+        0
+      );
+
+      const faltasInjustificadas = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.faltas_injustificadas || 0),
+        0
+      );
+
+      const diasVacaciones = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.dias_vacaciones || 0),
+        0
+      );
+
+      const descuentoAusencias = (incidencias || []).reduce(
+        (acum, item) => acum + Number(item.descuento_ausencias || 0),
+        0
+      );
+
+      // Tarifa por hora dinámica o estándar
+      const pagoHorasExtra = horasExtra * 100; 
+      const sueldoBase = Number(empleado.sueldo_base || 0);
+
+      const percepciones = sueldoBase + totalBonos + pagoHorasExtra;
+      const deduccionesTotales = totalDescuentos + descuentoAusencias;
+      const neto = percepciones - deduccionesTotales;
+
+      const { data: nominaGuardada, error: errUpsert } = await supabase
+        .from("nomina")
+        .upsert(
+          [
+            {
+              empleado_id: empleado.id,
+              periodo_id: Number(periodoId),
+              sueldo_base: sueldoBase,
+              total_bonos: totalBonos,
+              total_descuentos: totalDescuentos,
+              total_horas_extra: pagoHorasExtra,
+              total_percepciones: percepciones,
+              descuento_ausencias: descuentoAusencias,
+              faltas_justificadas: faltasJustificadas,
+              faltas_injustificadas: faltasInjustificadas,
+              dias_vacaciones: diasVacaciones,
+              neto_pagar: neto,
+              estatus: "GENERADA",
+            },
+          ],
+          { onConflict: "empleado_id, periodo_id" }
+        )
+        .select();
+
+      if (errUpsert) {
+        console.error("Error guardando nómina:", errUpsert);
       }
-    } catch (e) {
-      console.error("No se encontró configuración personalizada, usando por defecto.", e);
+
+      const registroId = nominaGuardada?.[0]?.id || empleado.id;
+
+      resultado.push({
+        id: registroId,
+        empleado_id: empleado.id,
+        numero_empleado: empleado.numero_empleado,
+        nombre_completo: empleado.nombre_completo,
+        puesto: empleado.puesto,
+        departamento: empleado.departamento,
+        sueldo_base: sueldoBase,
+        bonos: totalBonos,
+        horas_extra: pagoHorasExtra,
+        descuentos: deduccionesTotales,
+        percepciones,
+        neto,
+      });
     }
+
+    setNomina(resultado);
+    setLoading(false);
   };
 
-  const guardarConfiguracionPanel = async () => {
-    try {
-      await supabase.from("configuracion_tablas").upsert([
-        {
-          tabla: "recibo_nomina_config",
-          configuracion: JSON.stringify(camposVisibles),
-        },
-      ], { onConflict: "tabla" });
-
-      alert("¡Configuración de campos guardada correctamente!");
-      setMostrarConfigPanel(false);
-    } catch (e) {
-      alert("Error al guardar la configuración: " + e.message);
-    }
-  };
-
-  if (loading) {
-    return <div className="p-10 text-center font-medium">Cargando recibos de nómina...</div>;
-  }
-
-  if (!datos) {
-    return <div className="p-10 text-center text-red-600 font-bold">No se encontró información de nómina para este recibo.</div>;
-  }
-
-  const emp = datos.empleados || {};
-  const per = datos.periodos_nomina || {};
-  const periodoTexto = `${per.fecha_inicio || ""}AL${per.fecha_fin || ""}`.replace(/-/g, "");
+  const totalEmpleados = nomina.length;
+  const totalPercepciones = nomina.reduce((a, b) => a + Number(b.percepciones || 0), 0);
+  const totalDescuentos = nomina.reduce((a, b) => a + Number(b.descuentos || 0), 0);
+  const totalNeto = nomina.reduce((a, b) => a + Number(b.neto || 0), 0);
 
   return (
-    <div className="max-w-3xl mx-auto p-6 bg-slate-100 min-h-screen print:bg-white print:p-0">
-      
-      {/* BARRA DE ACCIONES Y PANEL DE CONFIGURACIÓN */}
-      <div className="mb-6 flex justify-between items-center bg-white p-4 rounded-xl shadow-sm print:hidden">
-        <button
-          onClick={() => setMostrarConfigPanel(!mostrarConfigPanel)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm"
-        >
-          ⚙️ {mostrarConfigPanel ? "Ocultar Relación de Campos" : "Configurar Campos del Recibo"}
-        </button>
+    <Layout>
+      <div>
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold">🧮 Nómina</h1>
+          <p className="text-gray-500 mt-2">Generación y cálculo sincronizado con la relación de campos</p>
+        </div>
 
-        <button
-          onClick={() => window.print()}
-          className="bg-slate-900 text-white px-5 py-2 rounded-xl text-xs font-bold hover:bg-black transition shadow-sm"
-        >
-          🖨️ Imprimir Recibos
-        </button>
-      </div>
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
+          <KpiCard titulo="Empleados" valor={totalEmpleados} icono="👥" color="text-blue-600" />
+          <KpiCard titulo="Percepciones" valor={`$${totalPercepciones.toLocaleString("es-MX")}`} icono="💵" color="text-green-600" />
+          <KpiCard titulo="Descuentos" valor={`$${totalDescuentos.toLocaleString("es-MX")}`} icono="💳" color="text-red-600" />
+          <KpiCard titulo="Neto" valor={`$${totalNeto.toLocaleString("es-MX")}`} icono="💰" color="text-emerald-600" />
+        </div>
 
-      {/* PANEL FLOTANTE DE RELACIÓN DE CAMPOS */}
-      {mostrarConfigPanel && (
-        <div className="bg-white p-6 rounded-2xl shadow-md mb-6 border border-indigo-100 print:hidden">
-          <h3 className="font-bold text-slate-800 text-sm mb-2">Panel de Relación de Campos (Visibilidad en Recibos)</h3>
-          <p className="text-xs text-gray-500 mb-4">Selecciona qué conceptos deseas que aparezcan impresos en los recibos oficiales y complementarios.</p>
-          
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs mb-4">
-            {Object.keys(camposVisibles).map((campo) => (
-              <label key={campo} className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-lg border cursor-pointer hover:bg-slate-100">
-                <input
-                  type="checkbox"
-                  checked={camposVisibles[campo]}
-                  onChange={(e) => setCamposVisibles({ ...camposVisibles, [campo]: e.target.checked })}
-                  className="rounded text-indigo-600 focus:ring-indigo-500"
-                />
-                <span className="font-medium text-slate-700 capitalize">{campo.replace(/([A-Z])/g, ' $1')}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              onClick={guardarConfiguracionPanel}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm"
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+          <div className="flex flex-col md:flex-row gap-4">
+            <select
+              value={periodoId}
+              onChange={(e) => setPeriodoId(e.target.value)}
+              className="border rounded-xl p-3 flex-1 text-sm outline-none focus:ring-2 focus:ring-blue-500"
             >
-              💾 Guardar Configuración de Campos
+              <option value="">Seleccionar período de nómina</option>
+              {periodos.map((periodo) => (
+                <option key={periodo.id} value={periodo.id}>
+                  {periodo.descripcion} ({periodo.fecha_inicio} al {periodo.fecha_fin})
+                </option>
+              ))}
+            </select>
+
+            <button
+              onClick={generarNomina}
+              disabled={loading}
+              className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition font-semibold text-sm shadow-sm"
+            >
+              {loading ? "Procesando..." : "⚡ Calcular y Guardar Nómina"}
             </button>
           </div>
         </div>
-      )}
 
-      <div className="space-y-8">
-        
-        {/* ================= 1. RECIBO OFICIAL ================= */}
-        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 print:shadow-none print:border-none print:m-0 print:p-2">
-          <div className="text-center border-b pb-3 mb-4">
-            <h2 className="text-lg font-black tracking-wider text-slate-900">RECIBO OFICIAL</h2>
-          </div>
-
-          <div className="text-xs space-y-1 mb-4">
-            <p><strong>FECHA DE PAGO:</strong> —</p>
-            <p className="font-bold text-slate-800 text-sm">NOMBRE: {emp.nombre_completo}</p>
-            <p className="font-mono">{emp.numero_empleado}</p>
-          </div>
-
-          <div className="border-t border-b py-3 space-y-2 text-xs">
-            {camposVisibles.sueldoBase && (
-              <div className="flex justify-between">
-                <span>SUELDO BASE</span>
-                <span className="font-mono">${Number(datos.sueldo_base || 0).toFixed(2)}</span>
-              </div>
-            )}
-            {camposVisibles.sueldoVacaciones && (
-              <div className="flex justify-between">
-                <span>SUELDO VACACIONES</span>
-                <span className="font-mono">${Number(datos.sueldo_vacaciones || 0).toFixed(2)}</span>
-              </div>
-            )}
-            {camposVisibles.primaVacacional && (
-              <div className="flex justify-between">
-                <span>PRIMA VACACIONAL</span>
-                <span className="font-mono">${Number(datos.prima_vacacional || 0).toFixed(2)}</span>
-              </div>
-            )}
-            {camposVisibles.aguinaldo && (
-              <div className="flex justify-between">
-                <span>AGUINALDO</span>
-                <span className="font-mono">${Number(datos.aguinaldo || 0).toFixed(2)}</span>
-              </div>
-            )}
-            {camposVisibles.ptu && (
-              <div className="flex justify-between">
-                <span>PTU</span>
-                <span className="font-mono">${Number(datos.ptu || 0).toFixed(2)}</span>
-              </div>
-            )}
-
-            {camposVisibles.vacacionesDias && (
-              <div className="flex justify-between text-slate-600">
-                <span>V (Vacaciones)</span>
-                <span className="font-mono">{datos.dias_vacaciones || 0}</span>
-              </div>
-            )}
-            {camposVisibles.faltasJustificadas && (
-              <div className="flex justify-between text-slate-600">
-                <span>J (Faltas Justificadas)</span>
-                <span className="font-mono">{datos.faltas_justificadas || 0}</span>
-              </div>
-            )}
-            {camposVisibles.faltasInjustificadas && (
-              <div className="flex justify-between text-slate-600">
-                <span>FI (Faltas Injustificadas)</span>
-                <span className="font-mono">{datos.faltas_injustificadas || 0}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between">
-              <span>AUSENCIAS</span>
-              <span className="font-mono text-red-600">${Number(datos.descuento_ausencias || 0).toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div className="py-3 border-b space-y-2 text-xs font-semibold">
-            <div className="flex justify-between text-green-700">
-              <span>PERCEPCIONES</span>
-              <span className="font-mono">${Number(datos.total_percepciones || 0).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-red-700">
-              <span>DEDUCCIONES</span>
-              <span className="font-mono">${Number(datos.total_descuentos || 0).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-sm font-black text-slate-900 pt-1">
-              <span>TOTAL PAGO</span>
-              <span className="font-mono">${Number(datos.neto_pagar || 0).toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div className="mt-4 pt-2 text-[11px] text-slate-600 space-y-4">
-            <p>RECIBI DE CONFORMIDAD:</p>
-            <p>CORRESPONDIENTE: {periodoTexto}</p>
-            <div className="pt-12 text-center border-t border-slate-400 w-1/2 mx-auto">
-              <p className="font-bold">FIRMA</p>
-            </div>
-          </div>
+        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-slate-700">
+              <tr>
+                <th className="p-4 text-left">No.</th>
+                <th className="p-4 text-left">Empleado</th>
+                <th className="p-4 text-left">Puesto</th>
+                <th className="p-4 text-right">Sueldo</th>
+                <th className="p-4 text-right">Bonos</th>
+                <th className="p-4 text-right">Horas Extra</th>
+                <th className="p-4 text-right">Descuentos</th>
+                <th className="p-4 text-right">Percepciones</th>
+                <th className="p-4 text-right">Neto</th>
+                <th className="p-4 text-center">Recibo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nomina.length === 0 ? (
+                <tr>
+                  <td colSpan="10" className="text-center p-6 text-gray-500">
+                    No hay registros de nómina para este período. Selecciona uno y haz clic en calcular.
+                  </td>
+                </tr>
+              ) : (
+                nomina.map((registro) => (
+                  <tr key={registro.id} className="border-t hover:bg-slate-50 transition">
+                    <td className="p-4 font-mono">{registro.numero_empleado}</td>
+                    <td className="p-4 font-medium text-slate-900">{registro.nombre_completo}</td>
+                    <td className="p-4 text-slate-600 text-xs font-semibold">{registro.puesto || "N/D"}</td>
+                    <td className="p-4 text-right">${registro.sueldo_base.toFixed(2)}</td>
+                    <td className="p-4 text-right text-green-600 font-semibold">${registro.bonos.toFixed(2)}</td>
+                    <td className="p-4 text-right">${registro.horas_extra.toFixed(2)}</td>
+                    <td className="p-4 text-right text-red-600 font-semibold">${registro.descuentos.toFixed(2)}</td>
+                    <td className="p-4 text-right font-bold">${registro.percepciones.toFixed(2)}</td>
+                    <td className="p-4 text-right font-extrabold text-blue-700">${registro.neto.toFixed(2)}</td>
+                    <td className="p-4 text-center">
+                      <Link
+                        to={`/nomina/recibo/${registro.empleado_id}/${periodoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg inline-block text-xs font-semibold shadow-sm"
+                      >
+                        Ver Recibo ↗
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-
-        {/* ================= 2. RECIBO COMPLEMENTARIO / BONOS ================= */}
-        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 print:shadow-none print:border-none print:m-0 print:p-2">
-          <div className="text-center border-b pb-3 mb-4">
-            <h2 className="text-lg font-black tracking-wider text-slate-900">RECIBO COMPLEMENTARIO / BONOS</h2>
-          </div>
-
-          <div className="text-xs space-y-1 mb-4">
-            <p><strong>FECHA DE PAGO:</strong> —</p>
-            <p className="font-bold text-slate-800 text-sm">NOMBRE: {emp.nombre_completo}</p>
-            <p className="font-mono">{emp.numero_empleado}</p>
-          </div>
-
-          <div className="border-t border-b py-3 space-y-2 text-xs">
-            {camposVisibles.bonoImportado && (
-              <div className="flex justify-between">
-                <span>BONO IMPORTADO</span>
-                <span className="font-mono text-green-600">${Number(datos.total_bonos || 0).toFixed(2)}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between text-slate-600">
-              <span>V</span>
-              <span className="font-mono">0</span>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>FJ</span>
-              <span className="font-mono">0</span>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>FI</span>
-              <span className="font-mono">0</span>
-            </div>
-
-            <div className="flex justify-between">
-              <span>SIN DEDUCCIONES</span>
-              <span className="font-mono">$0.00</span>
-            </div>
-          </div>
-
-          <div className="py-3 border-b space-y-2 text-xs font-semibold">
-            <div className="flex justify-between text-green-700">
-              <span>TOTAL PERCEPCIONES</span>
-              <span className="font-mono">${Number(datos.total_bonos || 0).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-red-700">
-              <span>TOTAL DEDUCCIONES</span>
-              <span className="font-mono">$0.00</span>
-            </div>
-            <div className="flex justify-between text-sm font-black text-slate-900 pt-1">
-              <span>NETO A PAGAR</span>
-              <span className="font-mono">${Number(datos.total_bonos || 0).toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div className="mt-4 pt-2 text-[11px] text-slate-600 space-y-4">
-            <p>RECIBI DE CONFORMIDAD:</p>
-            <p>CORRESPONDIENTE: {periodoTexto}</p>
-            <div className="pt-12 text-center border-t border-slate-400 w-1/2 mx-auto">
-              <p className="font-bold">FIRMA</p>
-            </div>
-          </div>
-        </div>
-
       </div>
-    </div>
+    </Layout>
   );
 }

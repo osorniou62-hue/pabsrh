@@ -10,6 +10,14 @@ export default function Puestos() {
   const [busqueda, setBusqueda] = useState("");
   const [editandoId, setEditandoId] = useState(null);
 
+  // --- ESTADOS DE VALIDACIÓN Y DUPLICADOS ---
+  const [modalDuplicado, setModalDuplicado] = useState({
+    abierto: false,
+    puestoExistente: null,
+    nombreIngresado: "",
+    departamentoDestino: "",
+  });
+
   // Modal para Crear Departamento
   const [mostrarModalDepto, setMostrarModalDepto] = useState(false);
   const [nuevoDeptoNombre, setNuevoDeptoNombre] = useState("");
@@ -91,51 +99,101 @@ export default function Puestos() {
     }
   };
 
+  // --- VALIDACIÓN Y GUARDADO DE PUESTO CON CONTROL DE DUPLICADOS ---
   const guardarPuesto = async () => {
-    if (!nombre.trim() || !departamentoId) {
+    const nombreLimpio = nombre.trim();
+    if (!nombreLimpio || !departamentoId) {
       alert("Completa todos los campos obligatorios");
       return;
     }
 
-    if (editandoId) {
+    // 1. Validar si ya existe un puesto con el mismo nombre en Supabase (case insensitive)
+    const { data: puestoExistente, error: errBusqueda } = await supabase
+      .from("puestos")
+      .select("id, nombre, departamento_id, activo")
+      .ilike("nombre", nombreLimpio)
+      .maybeSingle();
+
+    if (!errBusqueda && puestoExistente) {
+      // Si estamos editando y el ID encontrado es el mismo que estamos editando, permitimos continuar
+      if (!editandoId || puestoExistente.id !== editandoId) {
+        // Abrimos el modal de advertencia de duplicado
+        setModalDuplicado({
+          abierto: true,
+          puestoExistente: puestoExistente,
+          nombreIngresado: nombreLimpio,
+          departamentoDestino: departamentoId,
+        });
+        return;
+      }
+    }
+
+    // 2. Proceso normal si no hay duplicados o es el mismo registro
+    await ejecutarGuardadoEnBD(nombreLimpio, departamentoId, editandoId);
+  };
+
+  const ejecutarGuardadoEnBD = async (nombrePuesto, deptoId, idEdicion) => {
+    if (idEdicion) {
       const { error } = await supabase
         .from("puestos")
         .update({
-          nombre,
-          departamento_id: Number(departamentoId),
+          nombre: nombrePuesto,
+          departamento_id: Number(deptoId),
         })
-        .eq("id", editandoId);
+        .eq("id", idEdicion);
 
       if (error) {
-        alert(error.message);
+        alert("Error al actualizar: " + error.message);
         return;
       }
       alert("Puesto actualizado correctamente");
     } else {
       const { error } = await supabase.from("puestos").insert([
         {
-          nombre,
-          departamento_id: Number(departamentoId),
+          nombre: nombrePuesto,
+          departamento_id: Number(deptoId),
+          activo: true,
         },
       ]);
 
       if (error) {
-        alert(error.message);
+        alert("Error al crear: " + error.message);
         return;
       }
       alert("Puesto creado correctamente");
     }
 
     cancelarEdicion();
+    setModalDuplicado({ abierto: false, puestoExistente: null, nombreIngresado: "", departamentoDestino: "" });
     await cargarPuestos();
   };
 
-  // Método Editar: Carga datos y sube suavemente la pantalla
+  // Opción de fusión si el usuario decide usar el puesto existente en lugar de duplicarlo
+  const fusionarPuestoExistente = async () => {
+    const { puestoExistente } = modalDuplicado;
+    if (!puestoExistente) return;
+
+    // Activamos o actualizamos su departamento si fuera necesario
+    const { error } = await supabase
+      .from("puestos")
+      .update({ departamento_id: Number(modalDuplicado.departamentoDestino), activo: true })
+      .eq("id", puestoExistente.id);
+
+    if (error) {
+      alert("Error al fusionar puesto: " + error.message);
+      return;
+    }
+
+    alert(`¡Puesto sincronizado correctamente! Se reutilizó "${puestoExistente.nombre}".`);
+    setModalDuplicado({ abierto: false, puestoExistente: null, nombreIngresado: "", departamentoDestino: "" });
+    cancelarEdicion();
+    await cargarPuestos();
+  };
+
   const editarPuesto = (puesto) => {
     setEditandoId(puesto.id);
     setNombre(puesto.nombre);
     setDepartamentoId(puesto.departamento_id || "");
-
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -202,10 +260,8 @@ export default function Puestos() {
     await cargarPuestos();
   };
 
-  // Filtro de búsqueda (Puesto o Departamento)
   const puestosFiltrados = puestos.filter((puesto) => {
     if (!busqueda.trim()) return true;
-
     const termino = busqueda.trim().toLowerCase();
 
     const coincidePuesto = puesto.nombre
@@ -223,14 +279,16 @@ export default function Puestos() {
     return coincidePuesto || coincideDepto;
   });
 
-  // Objeto del puesto que se está editando actualmente
   const puestoEnEdicion = puestos.find((p) => p.id === editandoId);
 
   return (
     <div className="max-w-6xl mx-auto p-6">
       {/* ENCABEZADO */}
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
+        <div>
+          <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
+          <p className="text-xs text-gray-500 mt-1">Gestión unificada con validación estricta anti-duplicados</p>
+        </div>
         <Link
           to="/dashboard"
           className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
@@ -296,7 +354,6 @@ export default function Puestos() {
           )}
         </div>
 
-        {/* BARRITA QUE APARECE JUSTO DEBAJO DE "ACTUALIZAR" AL EDITAR */}
         {editandoId && puestoEnEdicion && (
           <div className="mt-4 pt-3 border-t flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
             <div className="flex items-center gap-2">
@@ -404,6 +461,45 @@ export default function Puestos() {
           </tbody>
         </table>
       </div>
+
+      {/* ⚠️ MODAL DE ADVERTENCIA: PUESTO DUPLICADO ENCONTRADO */}
+      {modalDuplicado.abierto && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-amber-200">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-3xl">⚠️</span>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Puesto ya existente</h3>
+                <p className="text-xs text-amber-600 font-medium">Validación cruzada de catálogos</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Ya se encuentra registrado un puesto con el nombre <strong className="text-slate-800">"{modalDuplicado.nombreIngresado}"</strong> en el sistema con el ID <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded font-bold">#{modalDuplicado.puestoExistente?.id}</span>.
+            </p>
+
+            <div className="bg-slate-50 p-3 rounded-xl text-xs text-slate-700 mb-5 border border-slate-200 space-y-1">
+              <p>💡 <strong>¿Qué deseas hacer?</strong></p>
+              <p>Puedes cancelar la creación para evitar duplicados o fusionar/vincular el registro actual con este puesto ya existente.</p>
+            </div>
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                onClick={() => setModalDuplicado({ abierto: false, puestoExistente: null, nombreIngresado: "", departamentoDestino: "" })}
+                className="px-4 py-2.5 border rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-100 transition-all"
+              >
+                Cancelar (No duplicar)
+              </button>
+              <button
+                onClick={fusionarPuestoExistente}
+                className="px-4 py-2.5 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 shadow-sm transition-all"
+              >
+                🔄 Fusionar / Usar Existente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* POP-UP / MODAL: NUEVO DEPARTAMENTO */}
       {mostrarModalDepto && (

@@ -7,9 +7,12 @@ export default function ConfiguracionTablas() {
   const [archivo, setArchivo] = useState(null);
   const [columnasDetectadas, setColumnasDetectadas] = useState([]);
   
-  // Mapeo dinámico: Relaciona cada columna del Excel con una Tabla de Supabase y un Campo libre
+  // Mapeo dinámico: Relaciona cada columna del Excel con una Tabla de Supabase y un Campo
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
+  // Control adicional para departamento por llenado manual si se requiere
+  const [departamentoManual, setDepartamentoManual] = useState("");
+
   // Control de módulos activos / inactivos
   const [modulosActivos, setModulosActivos] = useState({
     empleados: true,
@@ -20,12 +23,30 @@ export default function ConfiguracionTablas() {
 
   const [guardando, setGuardando] = useState(false);
 
-  // Sugerencias comunes de campos por cada tabla de Supabase (puedes escribir cualquiera)
-  const sugerenciasCampos = {
-    empleados: ["numero_empleado", "nombre_completo", "puesto", "departamento", "fecha_ingreso", "sueldo_base", "bono_puesto"],
-    incidencias: ["horas_extra", "bono_puntualidad", "bono_asistencia", "monto_final_semanal"],
-    vacaciones: ["dias_vacaciones", "fecha_inicio", "fecha_fin"],
-    prestamos: ["descuento_varios", "saldo_prestamo", "monto_prestamo"],
+  // Catálogo oficial de tablas y campos existentes en Supabase
+  const esquemaTablasSupabase = {
+    empleados: [
+      { key: "numero_empleado", label: "Número de Empleado" },
+      { key: "nombre_completo", label: "Nombre Completo" },
+      { key: "puesto", label: "Puesto" },
+      { key: "departamento", label: "Departamento / Línea" },
+      { key: "fecha_ingreso", label: "Fecha de Ingreso" },
+      { key: "sueldo_base", label: "Sueldo Base" },
+      { key: "bono_puesto", label: "Bono por Puesto" },
+    ],
+    incidencias: [
+      { key: "horas_extra", label: "Horas Extra" },
+      { key: "bono_puntualidad", label: "Bono de Puntualidad" },
+      { key: "bono_asistencia", label: "Bono de Asistencia" },
+      { key: "monto_final_semanal", label: "Monto Final Semanal" },
+    ],
+    vacaciones: [
+      { key: "dias_vacaciones", label: "Días de Vacaciones" },
+    ],
+    prestamos: [
+      { key: "descuento_varios", label: "Descuento / Préstamo Semanal" },
+      { key: "saldo_prestamo", label: "Saldo / Adeudo Pendiente" },
+    ],
   };
 
   // Cargar configuración previa desde Supabase al iniciar
@@ -45,6 +66,7 @@ export default function ConfiguracionTablas() {
         if (data.configuracion.asignacion) setAsignacionColumnas(data.configuracion.asignacion);
         if (data.configuracion.modulos) setModulosActivos(data.configuracion.modulos);
         if (data.configuracion.columnas) setColumnasDetectadas(data.configuracion.columnas);
+        if (data.configuracion.departamentoManual) setDepartamentoManual(data.configuracion.departamentoManual);
       }
     } catch (err) {
       console.error("Error al cargar la configuración de Supabase:", err);
@@ -72,30 +94,28 @@ export default function ConfiguracionTablas() {
 
           setColumnasDetectadas(encabezadosValidos);
 
-          // Sugerencia automática inteligente
+          // Sugerencia automática inteligente basada en nombres similares
           const nuevaAsignacion = {};
           encabezadosValidos.forEach((col) => {
             const colUpper = col.toUpperCase();
-            let encontradaTabla = "";
-            let encontradoCampo = "";
+            let encontrada = false;
 
-            Object.keys(sugerenciasCampos).forEach((tabla) => {
-              sugerenciasCampos[tabla].forEach((campo) => {
-                if (!encontradaTabla && (colUpper.includes(campo.toUpperCase()) || colUpper.replace(/[_]/g, " ").includes(campo.replace(/[_]/g, " ")))) {
-                  encontradaTabla = tabla;
-                  encontradoCampo = campo;
+            Object.keys(esquemaTablasSupabase).forEach((tabla) => {
+              esquemaTablasSupabase[tabla].forEach((campo) => {
+                if (!encontrada && (colUpper.includes(campo.key.toUpperCase()) || colUpper.includes(campo.label.toUpperCase()))) {
+                  nuevaAsignacion[col] = { tablaDestino: tabla, campoDestino: campo.key };
+                  encontrada = true;
                 }
               });
             });
 
-            nuevaAsignacion[col] = {
-              tablaDestino: encontradaTabla || "",
-              campoDestino: encontradoCampo || col.toLowerCase().replace(/\s+/g, "_"),
-            };
+            if (!encontrada) {
+              nuevaAsignacion[col] = { tablaDestino: "", campoDestino: "" };
+            }
           });
 
           setAsignacionColumnas(nuevaAsignacion);
-          alert(`✅ ¡Se detectaron e importaron ${encabezadosValidos.length} columnas con título! Revisa o personaliza sus campos destino.`);
+          alert(`✅ ¡Se detectaron e importaron ${encabezadosValidos.length} columnas con título! Ahora asígnalas a su tabla correspondiente.`);
         }
       } catch (error) {
         console.error("Error al leer el archivo:", error);
@@ -106,7 +126,7 @@ export default function ConfiguracionTablas() {
     reader.readAsBinaryString(file);
   };
 
-  // 2. Modificar la asignación o el nombre del campo destino libremente
+  // 2. Modificar la asignación de una columna específica
   const handleCambioAsignacion = (columna, tipo, valor) => {
     setAsignacionColumnas((prev) => ({
       ...prev,
@@ -130,6 +150,7 @@ export default function ConfiguracionTablas() {
         asignacion: asignacionColumnas,
         modulos: modulosActivos,
         columnas: columnasDetectadas,
+        departamentoManual: departamentoManual,
         actualizado_at: new Date().toISOString(),
       };
 
@@ -146,7 +167,7 @@ export default function ConfiguracionTablas() {
 
       localStorage.setItem("config_mapeo_columnas_dinamico", JSON.stringify(payloadConfiguracion));
 
-      alert("🎉 ¡Configuración guardada y campos actualizados en Supabase con éxito!");
+      alert("🎉 ¡Configuración guardada y tablas actualizadas en Supabase con éxito!");
     } catch (error) {
       console.error("Error al guardar en Supabase:", error.message);
       alert("Hubo un error al actualizar las tablas en Supabase.");
@@ -159,9 +180,9 @@ export default function ConfiguracionTablas() {
     <Layout>
       <div className="p-6 max-w-7xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Mapeo de Columnas</h1>
+          <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Asignación de Columnas</h1>
           <p className="text-gray-500 mt-1">
-            Analiza las columnas de tu archivo, asígnalas a una tabla y personaliza el nombre exacto del campo destino en Supabase.
+            Analiza las columnas de tu archivo, decide a qué tabla de Supabase pertenece cada una y actualiza los módulos del sistema.
           </p>
         </div>
 
@@ -169,7 +190,7 @@ export default function ConfiguracionTablas() {
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">1. Cargar archivo Excel para importar columnas con título</h2>
           <p className="text-sm text-gray-500 mb-4">
-            Sube tu archivo de nómina para extraer de forma dinámica todas las cabeceras disponibles.
+            Sube tu archivo (ej. con columnas personalizadas como "Telempromt") para que el sistema liste todas sus cabeceras.
           </p>
           <input 
             type="file" 
@@ -182,7 +203,8 @@ export default function ConfiguracionTablas() {
         {/* PASO 2: Control de Módulos Activos */}
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">2. Módulos y Tablas Activas en el Sistema</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+          <p className="text-sm text-gray-500 mb-4">Elige qué bases de datos operarán con esta configuración.</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {Object.keys(modulosActivos).map((mod) => (
               <label key={mod} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer ${modulosActivos[mod] ? "border-blue-500 bg-blue-50/40" : "border-slate-200"}`}>
                 <span className="capitalize font-semibold text-slate-700">{mod}</span>
@@ -197,12 +219,12 @@ export default function ConfiguracionTablas() {
           </div>
         </div>
 
-        {/* PASO 3: Asignar columnas, tablas y nombre de campo libre */}
+        {/* PASO 3: Asignar cada columna detectada a una Tabla de Supabase */}
         {columnasDetectadas.length > 0 && (
           <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
-            <h2 className="text-lg font-bold text-slate-700 mb-2">3. Configurar Tabla y Campo Destino en Supabase</h2>
+            <h2 className="text-lg font-bold text-slate-700 mb-2">3. Administrar y Asignar Columnas del Excel</h2>
             <p className="text-sm text-gray-500 mb-6">
-              Indica a qué tabla pertenece la columna y escribe el nombre exacto de la columna en tu base de datos Supabase.
+              Para cada columna encontrada en tu archivo, selecciona a qué tabla de Supabase deseas enviarla y su campo correspondiente.
             </p>
 
             <div className="space-y-4">
@@ -213,7 +235,7 @@ export default function ConfiguracionTablas() {
                 return (
                   <div key={idx} className="p-4 rounded-xl border bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                     
-                    {/* Nombre de la columna original en el archivo */}
+                    {/* Nombre de la columna original */}
                     <div className="flex items-center gap-3 w-full md:w-1/3">
                       <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-lg">#{idx + 1}</span>
                       <span className="font-bold text-slate-800 text-sm break-all">{colOriginal}</span>
@@ -221,36 +243,56 @@ export default function ConfiguracionTablas() {
 
                     {/* Selector de Tabla de Supabase */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
-                      <label className="text-xs text-gray-500 font-medium">Tabla Destino:</label>
+                      <label className="text-xs text-gray-500 font-medium">Asignar a Tabla en Supabase:</label>
                       <select
                         value={tablaSeleccionada}
                         onChange={(e) => handleCambioAsignacion(colOriginal, "tablaDestino", e.target.value)}
                         className="border rounded-lg p-2 bg-white text-sm font-medium"
                       >
                         <option value="">-- Ignorar / No usar --</option>
-                        <option value="empleados">👥 Empleados</option>
-                        <option value="incidencias">⚡ Incidencias</option>
-                        <option value="vacaciones">🌴 Vacaciones</option>
-                        <option value="prestamos">💳 Préstamos</option>
+                        <option value="empleados">👥 Tabla: Empleados</option>
+                        <option value="incidencias">⚡ Tabla: Incidencias</option>
+                        <option value="vacaciones">🌴 Tabla: Vacaciones</option>
+                        <option value="prestamos">💳 Tabla: Préstamos</option>
                       </select>
                     </div>
 
-                    {/* Campo Específico Destino (Editable / Libre) */}
+                    {/* Selector de Campo Específico dentro de esa Tabla */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
-                      <label className="text-xs text-gray-500 font-medium">Nombre del Campo en Supabase:</label>
-                      <input 
-                        type="text"
-                        value={asignacionActual.campoDestino || ""}
+                      <label className="text-xs text-gray-500 font-medium">Campo específico destino:</label>
+                      <select
+                        value={asignacionActual.campoDestino}
                         onChange={(e) => handleCambioAsignacion(colOriginal, "campoDestino", e.target.value)}
-                        placeholder="Ej. sueldo_base, prestamo..."
-                        className="border rounded-lg p-2 bg-white text-sm font-mono text-slate-700"
+                        className="border rounded-lg p-2 bg-white text-sm"
                         disabled={!tablaSeleccionada}
-                      />
+                      >
+                        <option value="">-- Selecciona campo --</option>
+                        {tablaSeleccionada && esquemaTablasSupabase[tablaSeleccionada]?.map((campo) => (
+                          <option key={campo.key} value={campo.key}>
+                            {campo.label} ({campo.key})
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                   </div>
                 );
               })}
+            </div>
+
+            {/* 🌟 OPCIÓN ADICIONAL: Llenado manual del Departamento */}
+            <div className="mt-8 p-5 bg-blue-50/60 rounded-2xl border border-blue-100">
+              <h3 className="text-md font-bold text-slate-800 mb-1">🏢 Opción Adicional: Asignación Manual de Departamento</h3>
+              <p className="text-xs text-gray-600 mb-3">
+                Si tu archivo no cuenta con una columna específica de departamento, puedes escribir aquí un nombre por defecto para asignarlo manualmente.
+              </p>
+              <input 
+                type="text"
+                value={departamentoManual}
+                onChange={(e) => setDepartamentoManual(e.target.value)}
+                placeholder="Ej. Administración, Ventas, Operaciones..."
+                className="border rounded-xl p-3 bg-white text-sm w-full md:w-1/2 font-medium"
+              />
             </div>
 
             {/* Botón de Guardado General */}

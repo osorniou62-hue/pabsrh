@@ -78,12 +78,12 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN ACTUALIZADA: LECTURA LIMPIA DE MAPEOS Y CAMPOS ---
+  // --- LECTURA UNIFICADA Y SIN DUPLICADOS DESDE CONFIGURACIÓN Y EMPLEADOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
 
-      // 1. Consultar la tabla de configuración
+      // 1. Consultar la tabla de configuración de tablas
       const { data: dataConfig, error } = await supabase
         .from("configuracion_tablas")
         .select("*");
@@ -137,7 +137,7 @@ export default function Puestos() {
         });
       }
 
-      // 2. Consulta de respaldo en la tabla empleados
+      // 2. Consulta en la tabla empleados para mantener coherencia
       const { data: empleadosData, error: errorEmp } = await supabase
         .from("empleados")
         .select("puesto, departamento");
@@ -153,21 +153,27 @@ export default function Puestos() {
         });
       }
 
-      // Filtrar basura, duplicados y nombres técnicos puros en minúsculas
-      const unicos = Array.from(
-        new Map(
-          listaExtraida
-            .filter(item => {
-              const p = item.puesto;
-              return p && 
-                     p !== p.toLowerCase() && 
-                     !["columnas", "configuracion", "ignorada"].includes(p.toLowerCase());
-            })
-            .map((item) => [item.puesto, item])
-        ).values()
-      );
+      // 3. FILTRADO ESTRICTO Y ELIMINACIÓN DE DUPLICADOS UNIFICADOS
+      const mapaUnicos = new Map();
+      listaExtraida.forEach((item) => {
+        const nombreLimpio = item.puesto;
+        const claveUnica = nombreLimpio.toLowerCase();
 
-      setPuestosConfiguradosLista(unicos);
+        if (
+          nombreLimpio &&
+          nombreLimpio !== claveUnica &&
+          !["columnas", "configuracion", "ignorada"].includes(claveUnica)
+        ) {
+          if (!mapaUnicos.has(claveUnica)) {
+            mapaUnicos.set(claveUnica, {
+              puesto: nombreLimpio,
+              departamento: item.departamento
+            });
+          }
+        }
+      });
+
+      setPuestosConfiguradosLista(Array.from(mapaUnicos.values()));
     } catch (e) {
       console.error("Error al cargar puestos desde relación de campos:", e);
     }
@@ -206,6 +212,7 @@ export default function Puestos() {
       return;
     }
 
+    // Validación cruzada estricta para evitar duplicidad exacta por nombre
     const { data: puestoExistente, error: errBusqueda } = await supabase
       .from("puestos")
       .select("id, nombre, departamento_id, activo")
@@ -401,11 +408,10 @@ export default function Puestos() {
 
   return (
     <div className="max-w-6xl mx-auto p-6">
-      {/* ENCABEZADO */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
-          <p className="text-xs text-gray-500 mt-1">Gestión unificada sincronizada con la relación de campos</p>
+          <p className="text-xs text-gray-500 mt-1">Gestión unificada sincronizada con configuración_tablas</p>
         </div>
         <Link
           to="/dashboard"
@@ -415,7 +421,6 @@ export default function Puestos() {
         </Link>
       </div>
 
-      {/* FORMULARIO: CREAR / EDITAR PUESTO */}
       <div className="bg-white shadow rounded p-4 mb-6">
         <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
           <h2 className="text-xl font-bold">
@@ -505,7 +510,6 @@ export default function Puestos() {
         )}
       </div>
 
-      {/* BUSCADOR */}
       <div className="bg-white shadow rounded p-4 mb-6">
         <input
           type="text"
@@ -516,7 +520,6 @@ export default function Puestos() {
         />
       </div>
 
-      {/* TABLA DE RESULTADOS */}
       <div className="bg-white shadow rounded p-4 overflow-x-auto">
         <table className="w-full border text-left text-sm">
           <thead>
@@ -606,14 +609,13 @@ export default function Puestos() {
         </table>
       </div>
 
-      {/* 📋 MODAL: PUESTOS DESDE RELACIÓN DE CAMPOS */}
       {mostrarModalConfigurados && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-xl w-full shadow-2xl border border-slate-200">
             <div className="flex justify-between items-center pb-3 border-b mb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">📋 Puestos por Relación de Campos</h3>
-                <p className="text-xs text-gray-500">Listado sincronizado desde configuración y registros</p>
+                <p className="text-xs text-gray-500">Listado sincronizado desde configuración_tablas (Sin Duplicados)</p>
               </div>
               <button
                 onClick={() => setMostrarModalConfigurados(false)}
@@ -631,7 +633,7 @@ export default function Puestos() {
                       <p className="font-bold text-slate-800 text-sm">{item.puesto}</p>
                       <p className="text-gray-500 mt-0.5">Destino: <span className="text-blue-600 font-semibold">{item.departamento}</span></p>
                     </div>
-                    <span className="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold">Sincronizado</span>
+                    <span className="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold">Único</span>
                   </div>
                 ))
               ) : (
@@ -653,7 +655,6 @@ export default function Puestos() {
         </div>
       )}
 
-      {/* ⚠️ MODAL DE ADVERTENCIA: PUESTO DUPLICADO ENCONTRADO */}
       {modalDuplicado.abierto && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-amber-200">
@@ -692,7 +693,6 @@ export default function Puestos() {
         </div>
       )}
 
-      {/* POP-UP / MODAL: NUEVO DEPARTAMENTO */}
       {mostrarModalDepto && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
@@ -722,7 +722,6 @@ export default function Puestos() {
         </div>
       )}
 
-      {/* POP-UP / MODAL: PERFIL COMPLETO Y DETALLES DEL PUESTO */}
       {puestoSeleccionado && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full shadow-2xl">

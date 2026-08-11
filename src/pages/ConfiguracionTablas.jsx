@@ -10,9 +10,6 @@ export default function ConfiguracionTablas() {
   // Mapeo dinámico: Relaciona cada columna del Excel con una Tabla de Supabase y un Campo
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
-  // Control adicional para departamento por llenado manual si se requiere
-  const [departamentoManual, setDepartamentoManual] = useState("");
-
   // Control de módulos activos / inactivos
   const [modulosActivos, setModulosActivos] = useState({
     empleados: true,
@@ -22,6 +19,10 @@ export default function ConfiguracionTablas() {
   });
 
   const [guardando, setGuardando] = useState(false);
+
+  // Estados para el Modal / Pop-up de verificación
+  const [mostrarModal, setMostrarModal] = useState(false);
+  const [datosGuardadosResumen, setDatosGuardadosResumen] = useState(null);
 
   // Catálogo oficial de tablas y campos existentes en Supabase
   const esquemaTablasSupabase = {
@@ -66,7 +67,6 @@ export default function ConfiguracionTablas() {
         if (data.configuracion.asignacion) setAsignacionColumnas(data.configuracion.asignacion);
         if (data.configuracion.modulos) setModulosActivos(data.configuracion.modulos);
         if (data.configuracion.columnas) setColumnasDetectadas(data.configuracion.columnas);
-        if (data.configuracion.departamentoManual) setDepartamentoManual(data.configuracion.departamentoManual);
       }
     } catch (err) {
       console.error("Error al cargar la configuración de Supabase:", err);
@@ -150,7 +150,6 @@ export default function ConfiguracionTablas() {
         asignacion: asignacionColumnas,
         modulos: modulosActivos,
         columnas: columnasDetectadas,
-        departamentoManual: departamentoManual,
         actualizado_at: new Date().toISOString(),
       };
 
@@ -167,7 +166,10 @@ export default function ConfiguracionTablas() {
 
       localStorage.setItem("config_mapeo_columnas_dinamico", JSON.stringify(payloadConfiguracion));
 
-      alert("🎉 ¡Configuración guardada y tablas actualizadas en Supabase con éxito!");
+      // Guardar resumen para mostrar en el Pop-up y abrirlo
+      setDatosGuardadosResumen(payloadConfiguracion);
+      setMostrarModal(true);
+
     } catch (error) {
       console.error("Error al guardar en Supabase:", error.message);
       alert("Hubo un error al actualizar las tablas en Supabase.");
@@ -178,7 +180,7 @@ export default function ConfiguracionTablas() {
 
   return (
     <Layout>
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-6 max-w-7xl mx-auto relative">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Asignación de Columnas</h1>
           <p className="text-gray-500 mt-1">
@@ -280,21 +282,6 @@ export default function ConfiguracionTablas() {
               })}
             </div>
 
-            {/* 🌟 OPCIÓN ADICIONAL: Llenado manual del Departamento */}
-            <div className="mt-8 p-5 bg-blue-50/60 rounded-2xl border border-blue-100">
-              <h3 className="text-md font-bold text-slate-800 mb-1">🏢 Opción Adicional: Asignación Manual de Departamento</h3>
-              <p className="text-xs text-gray-600 mb-3">
-                Si tu archivo no cuenta con una columna específica de departamento, puedes escribir aquí un nombre por defecto para asignarlo manualmente.
-              </p>
-              <input 
-                type="text"
-                value={departamentoManual}
-                onChange={(e) => setDepartamentoManual(e.target.value)}
-                placeholder="Ej. Administración, Ventas, Operaciones..."
-                className="border rounded-xl p-3 bg-white text-sm w-full md:w-1/2 font-medium"
-              />
-            </div>
-
             {/* Botón de Guardado General */}
             <div className="mt-8 flex justify-end">
               <button 
@@ -306,6 +293,89 @@ export default function ConfiguracionTablas() {
               </button>
             </div>
 
+          </div>
+        )}
+
+        {/* 🌟 POP-UP / MODAL DE VERIFICACIÓN DE ACTUALIZACIÓN EN SUPABASE */}
+        {mostrarModal && datosGuardadosResumen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+              
+              <div className="flex justify-between items-center pb-4 border-b mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-800">🎉 ¡Actualización Exitosa en Supabase!</h2>
+                  <p className="text-xs text-emerald-600 font-semibold mt-1">
+                    Última sincronización: {new Date(datosGuardadosResumen.actualizado_at).toLocaleString()}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setMostrarModal(false)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-sm transition-all"
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Resumen de Módulos Activos */}
+                <div>
+                  <h3 className="text-sm font-bold text-slate-700 mb-2">📌 Estado de Módulos Activos:</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.keys(datosGuardadosResumen.modulos).map((mod) => (
+                      <span key={mod} className={`text-xs px-3 py-1.5 rounded-lg font-semibold ${datosGuardadosResumen.modulos[mod] ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-500"}`}>
+                        {mod.toUpperCase()}: {datosGuardadosResumen.modulos[mod] ? "ACTIVO" : "INACTIVO"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Resumen Detallado de Asignaciones por Tabla */}
+                <div>
+                  <h3 className="text-sm font-bold text-slate-700 mb-3">📊 Detalle de Columnas y Campos Destino Registrados:</h3>
+                  
+                  <div className="border rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-100 text-slate-700 uppercase font-semibold">
+                        <tr>
+                          <th className="p-3 border-b">Columna Archivo</th>
+                          <th className="p-3 border-b">Tabla Supabase</th>
+                          <th className="p-3 border-b">Campo Destino</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {Object.entries(datosGuardadosResumen.asignacion).map(([col, info], i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="p-3 font-medium text-slate-800">{col}</td>
+                            <td className="p-3">
+                              {info.tablaDestino ? (
+                                <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">
+                                  {info.tablaDestino}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400 italic">Ignorada</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-mono text-slate-600">
+                              {info.campoDestino || <span className="text-gray-400 italic">-</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t flex justify-end">
+                <button
+                  onClick={() => setMostrarModal(false)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-sm font-medium shadow-md transition-all"
+                >
+                  Entendido, Verificado
+                </button>
+              </div>
+
+            </div>
           </div>
         )}
 

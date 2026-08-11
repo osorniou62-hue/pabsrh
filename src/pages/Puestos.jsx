@@ -78,43 +78,55 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN ROBUSTA: CARGAR PUESTOS DESDE LA RELACIÓN DE CAMPOS ---
+  // --- FUNCIÓN CON DEPURACIÓN EN CONSOLA ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
+      console.log("🔍 Iniciando búsqueda de configuración en Supabase...");
 
-      // 1. Consultar la tabla de configuración con tolerancia a nombres y estructuras
+      // 1. Consultar la tabla de configuración
       const { data: dataConfig, error } = await supabase
         .from("configuracion_tablas")
         .select("*");
 
-      if (!error && dataConfig && dataConfig.length > 0) {
-        dataConfig.forEach((fila) => {
-          const posibleJson = [
-            fila.configuracion,
-            fila.datos,
-            fila.mapeo,
-            fila.asignacion,
-            fila
-          ];
+      if (error) {
+        console.warn("⚠️ Error o tabla 'configuracion_tablas' no accesible:", error.message);
+      } else {
+        console.log("📦 Datos obtenidos de configuracion_tablas:", dataConfig);
+        
+        if (dataConfig && dataConfig.length > 0) {
+          dataConfig.forEach((fila, idx) => {
+            console.log(`--- Analizando fila ${idx} ---`, fila);
+            
+            const posibleJson = [
+              fila.configuracion,
+              fila.datos,
+              fila.mapeo,
+              fila.asignacion,
+              fila
+            ];
 
-          posibleJson.forEach((jsonObj) => {
-            if (jsonObj && typeof jsonObj === "object") {
-              const asignaciones = jsonObj.asignacion || (jsonObj.tablaDestino ? { [jsonObj.columna || 'Columna']: jsonObj } : jsonObj);
+            posibleJson.forEach((jsonObj) => {
+              if (jsonObj && typeof jsonObj === "object") {
+                const asignaciones = jsonObj.asignacion || (jsonObj.tablaDestino ? { [jsonObj.columna || 'Columna']: jsonObj } : jsonObj);
 
-              if (asignaciones && typeof asignaciones === "object") {
-                Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
-                  if (info && (info.tablaDestino === "puestos" || info.tabla === "puestos")) {
-                    listaExtraida.push({
-                      puesto: String(columnaOriginal).trim(),
-                      departamento: info.campoDestino || "Relación de Campos"
-                    });
-                  }
-                });
+                if (asignaciones && typeof asignaciones === "object") {
+                  Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
+                    console.log(`Evaluando columna: ${columnaOriginal}`, info);
+                    if (info && (info.tablaDestino === "puestos" || info.tabla === "puestos")) {
+                      listaExtraida.push({
+                        puesto: String(columnaOriginal).trim(),
+                        departamento: info.campoDestino || "Relación de Campos"
+                      });
+                    }
+                  });
+                }
               }
-            }
+            });
           });
-        });
+        } else {
+          console.log("ℹ️ La tabla 'configuracion_tablas' está vacía.");
+        }
       }
 
       // 2. Consulta de respaldo en empleados
@@ -138,9 +150,10 @@ export default function Puestos() {
         new Map(listaExtraida.map((item) => [item.puesto, item])).values()
       );
 
+      console.log("✨ Puestos finales extraídos para el modal:", unicos);
       setPuestosConfiguradosLista(unicos);
     } catch (e) {
-      console.error("Error al cargar puestos desde relación de campos:", e);
+      console.error("❌ Error crítico en cargarPuestosDesdeRelacionCampos:", e);
     }
   };
 
@@ -607,7 +620,7 @@ export default function Puestos() {
                 ))
               ) : (
                 <div className="py-8 text-center text-gray-500 text-xs">
-                  ⚠️ No se encontraron puestos en la relación de campos activa.
+                  ⚠️ No se encontraron puestos en la relación de campos activa. Revisa la consola (F12) para más detalles.
                 </div>
               )}
             </div>

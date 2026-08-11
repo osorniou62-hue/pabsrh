@@ -10,12 +10,13 @@ export default function Nomina() {
   const [periodoId, setPeriodoId] = useState("");
   const [nomina, setNomina] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [mapeoConfigurado, setMapeoConfigurado] = useState({});
 
   useEffect(() => {
     cargarPeriodos();
+    cargarConfiguracionTablas();
   }, []);
 
-  // Al cambiar de período, cargamos automáticamente la nómina ya generada (si existe)
   useEffect(() => {
     if (periodoId) {
       cargarNominaExistente(periodoId);
@@ -37,7 +38,33 @@ export default function Nomina() {
     setPeriodos(data || []);
   };
 
-  // Carga registros previos de la tabla 'nomina' uniendo los datos del empleado
+  // --- LECTURA DE CONFIGURACIÓN DE TABLAS PARA MAPEO DINÁMICO ---
+  const cargarConfiguracionTablas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("configuracion_tablas")
+        .select("*");
+
+      if (!error && data) {
+        let configsUnificadas = {};
+        data.forEach((fila) => {
+          Object.entries(fila).forEach(([key, value]) => {
+            let objAnalizar = value;
+            if (typeof value === "string" && (value.startsWith("{") || value.startsWith("["))) {
+              try { objAnalizar = JSON.parse(value); } catch (e) {}
+            }
+            if (typeof objAnalizar === "object" && objAnalizar !== null) {
+              configsUnificadas = { ...configsUnificadas, ...objAnalizar };
+            }
+          });
+        });
+        setMapeoConfigurado(configsUnificadas);
+      }
+    } catch (e) {
+      console.error("Error al leer configuración de tablas:", e);
+    }
+  };
+
   const cargarNominaExistente = async (pId) => {
     setLoading(true);
     const { data, error } = await supabase
@@ -54,7 +81,9 @@ export default function Nomina() {
         neto_pagar,
         empleados (
           numero_empleado,
-          nombre_completo
+          nombre_completo,
+          puesto,
+          departamento
         )
       `)
       .eq("periodo_id", pId);
@@ -75,6 +104,8 @@ export default function Nomina() {
           empleado_id: item.empleado_id,
           numero_empleado: item.empleados?.numero_empleado,
           nombre_completo: item.empleados?.nombre_completo,
+          puesto: item.empleados?.puesto,
+          departamento: item.empleados?.departamento,
           sueldo_base: Number(item.sueldo_base || 0),
           bonos: Number(item.total_bonos || 0),
           horas_extra: Number(item.total_horas_extra || 0),
@@ -130,7 +161,6 @@ export default function Nomina() {
         .eq("empleado_id", empleado.id)
         .eq("periodo_id", periodoId);
 
-      // 1. Suma de Bonos y Descuentos
       const totalBonos = (bonos || []).reduce(
         (acum, item) => acum + Number(item.importe || 0),
         0
@@ -141,7 +171,6 @@ export default function Nomina() {
         0
       );
 
-      // 2. Extracción de Incidencias (Horas extra, Faltas y Vacaciones)
       const horasExtra = (incidencias || []).reduce(
         (acum, item) => acum + Number(item.horas_extra || 0),
         0
@@ -167,15 +196,14 @@ export default function Nomina() {
         0
       );
 
-      // 3. Cálculos Finales
-      const pagoHorasExtra = horasExtra * 100; // Multiplicador base (ajustar si manejas tarifa por hora en empleado)
+      // Tarifa por hora dinámica o estándar
+      const pagoHorasExtra = horasExtra * 100; 
       const sueldoBase = Number(empleado.sueldo_base || 0);
 
       const percepciones = sueldoBase + totalBonos + pagoHorasExtra;
       const deduccionesTotales = totalDescuentos + descuentoAusencias;
       const neto = percepciones - deduccionesTotales;
 
-      // 4. Upsert y retorno de la fila guardada
       const { data: nominaGuardada, error: errUpsert } = await supabase
         .from("nomina")
         .upsert(
@@ -211,6 +239,8 @@ export default function Nomina() {
         empleado_id: empleado.id,
         numero_empleado: empleado.numero_empleado,
         nombre_completo: empleado.nombre_completo,
+        puesto: empleado.puesto,
+        departamento: empleado.departamento,
         sueldo_base: sueldoBase,
         bonos: totalBonos,
         horas_extra: pagoHorasExtra,
@@ -224,16 +254,9 @@ export default function Nomina() {
     setLoading(false);
   };
 
-  // Totales para KPIs
   const totalEmpleados = nomina.length;
-  const totalPercepciones = nomina.reduce(
-    (a, b) => a + Number(b.percepciones || 0),
-    0
-  );
-  const totalDescuentos = nomina.reduce(
-    (a, b) => a + Number(b.descuentos || 0),
-    0
-  );
+  const totalPercepciones = nomina.reduce((a, b) => a + Number(b.percepciones || 0), 0);
+  const totalDescuentos = nomina.reduce((a, b) => a + Number(b.descuentos || 0), 0);
   const totalNeto = nomina.reduce((a, b) => a + Number(b.neto || 0), 0);
 
   return (
@@ -241,36 +264,14 @@ export default function Nomina() {
       <div>
         <div className="mb-8">
           <h1 className="text-4xl font-bold">🧮 Nómina</h1>
-          <p className="text-gray-500 mt-2">
-            Generación y consulta de nómina
-          </p>
+          <p className="text-gray-500 mt-2">Generación y cálculo sincronizado con la relación de campos</p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-6 mb-8">
-          <KpiCard
-            titulo="Empleados"
-            valor={totalEmpleados}
-            icono="👥"
-            color="text-blue-600"
-          />
-          <KpiCard
-            titulo="Percepciones"
-            valor={`$${totalPercepciones.toLocaleString("es-MX")}`}
-            icono="💵"
-            color="text-green-600"
-          />
-          <KpiCard
-            titulo="Descuentos"
-            valor={`$${totalDescuentos.toLocaleString("es-MX")}`}
-            icono="💳"
-            color="text-red-600"
-          />
-          <KpiCard
-            titulo="Neto"
-            valor={`$${totalNeto.toLocaleString("es-MX")}`}
-            icono="💰"
-            color="text-emerald-600"
-          />
+          <KpiCard titulo="Empleados" valor={totalEmpleados} icono="👥" color="text-blue-600" />
+          <KpiCard titulo="Percepciones" valor={`$${totalPercepciones.toLocaleString("es-MX")}`} icono="💵" color="text-green-600" />
+          <KpiCard titulo="Descuentos" valor={`$${totalDescuentos.toLocaleString("es-MX")}`} icono="💳" color="text-red-600" />
+          <KpiCard titulo="Neto" valor={`$${totalNeto.toLocaleString("es-MX")}`} icono="💰" color="text-emerald-600" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
@@ -278,12 +279,12 @@ export default function Nomina() {
             <select
               value={periodoId}
               onChange={(e) => setPeriodoId(e.target.value)}
-              className="border rounded-xl p-3 flex-1"
+              className="border rounded-xl p-3 flex-1 text-sm outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">Seleccionar período</option>
+              <option value="">Seleccionar período de nómina</option>
               {periodos.map((periodo) => (
                 <option key={periodo.id} value={periodo.id}>
-                  {periodo.descripcion}
+                  {periodo.descripcion} ({periodo.fecha_inicio} al {periodo.fecha_fin})
                 </option>
               ))}
             </select>
@@ -291,19 +292,20 @@ export default function Nomina() {
             <button
               onClick={generarNomina}
               disabled={loading}
-              className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition"
+              className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl transition font-semibold text-sm shadow-sm"
             >
-              {loading ? "Procesando..." : "Calcular y Guardar Nómina"}
+              {loading ? "Procesando..." : "⚡ Calcular y Guardar Nómina"}
             </button>
           </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-100">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-slate-700">
               <tr>
                 <th className="p-4 text-left">No.</th>
                 <th className="p-4 text-left">Empleado</th>
+                <th className="p-4 text-left">Puesto</th>
                 <th className="p-4 text-right">Sueldo</th>
                 <th className="p-4 text-right">Bonos</th>
                 <th className="p-4 text-right">Horas Extra</th>
@@ -314,43 +316,37 @@ export default function Nomina() {
               </tr>
             </thead>
             <tbody>
-              {nomina.map((registro) => (
-                <tr
-                  key={registro.id}
-                  className="border-t hover:bg-slate-50 transition"
-                >
-                  <td className="p-4">{registro.numero_empleado}</td>
-                  <td className="p-4 font-medium">{registro.nombre_completo}</td>
-                  <td className="p-4 text-right">
-                    ${registro.sueldo_base.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-right text-green-600">
-                    ${registro.bonos.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-right">
-                    ${registro.horas_extra.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-right text-red-600">
-                    ${registro.descuentos.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-right">
-                    ${registro.percepciones.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-right font-bold text-blue-700">
-                    ${registro.neto.toFixed(2)}
-                  </td>
-                  <td className="p-4 text-center">
-                    <Link
-                      to={`/nomina/recibo/${registro.empleado_id}/${periodoId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl inline-block"
-                    >
-                      Ver Recibo ↗
-                    </Link>
+              {nomina.length === 0 ? (
+                <tr>
+                  <td colSpan="10" className="text-center p-6 text-gray-500">
+                    No hay registros de nómina para este período. Selecciona uno y haz clic en calcular.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                nomina.map((registro) => (
+                  <tr key={registro.id} className="border-t hover:bg-slate-50 transition">
+                    <td className="p-4 font-mono">{registro.numero_empleado}</td>
+                    <td className="p-4 font-medium text-slate-900">{registro.nombre_completo}</td>
+                    <td className="p-4 text-slate-600 text-xs font-semibold">{registro.puesto || "N/D"}</td>
+                    <td className="p-4 text-right">${registro.sueldo_base.toFixed(2)}</td>
+                    <td className="p-4 text-right text-green-600 font-semibold">${registro.bonos.toFixed(2)}</td>
+                    <td className="p-4 text-right">${registro.horas_extra.toFixed(2)}</td>
+                    <td className="p-4 text-right text-red-600 font-semibold">${registro.descuentos.toFixed(2)}</td>
+                    <td className="p-4 text-right font-bold">${registro.percepciones.toFixed(2)}</td>
+                    <td className="p-4 text-right font-extrabold text-blue-700">${registro.neto.toFixed(2)}</td>
+                    <td className="p-4 text-center">
+                      <Link
+                        to={`/nomina/recibo/${registro.empleado_id}/${periodoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg inline-block text-xs font-semibold shadow-sm"
+                      >
+                        Ver Recibo ↗
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

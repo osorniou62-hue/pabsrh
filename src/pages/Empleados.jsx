@@ -14,16 +14,34 @@ export default function Empleados() {
   const [departamentoFiltro, setDepartamentoFiltro] = useState("TODOS");
   const [loading, setLoading] = useState(true);
 
-  // --- ESTADOS DE MODALES ---
+  // --- ESTADOS DE MODALES Y CONFIGURACIÓN ---
   const [modalEdicionRapida, setModalEdicionRapida] = useState({ abierto: false, datos: null });
   const [modalRelacion, setModalRelacion] = useState(false);
+  const [modalConfigColumnas, setModalConfigColumnas] = useState(false);
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
+
+  // --- COLUMNAS OPCIONALES VISIBLES ---
+  // Las obligatorias por defecto no se pueden quitar: numero_empleado, nombre_completo, departamento, puesto
+  const [columnasVisibles, setColumnasVisibles] = useState({
+    sueldo_base: true,
+    sueldo_diario: true,
+    bono_puesto: true,
+    bono_puntualidad: true,
+    bono_asistencia: true,
+    bono_multiplicador: true,
+    bono_desempeno: true,
+    bono_extra: true,
+    apoyo_medico: true,
+    gratificacion_especial: true,
+    total_bonos: true,
+  });
 
   useEffect(() => {
     cargarCatalogos();
     cargarEmpleados();
     cargarRelacionCamposConfiguracion();
+    cargarPreferenciasColumnas();
   }, []);
 
   const cargarCatalogos = async () => {
@@ -52,7 +70,6 @@ export default function Empleados() {
 
   const cargarEmpleados = async () => {
     setLoading(true);
-
     try {
       const { data: emps, error: errorEmps } = await supabase
         .from("empleados")
@@ -86,10 +103,8 @@ export default function Empleados() {
     }
   };
 
-  // Cargar la relación de campos guardada desde ConfiguracionTablas
   const cargarRelacionCamposConfiguracion = async () => {
     try {
-      // Intentar leer de Supabase primero
       const { data } = await supabase
         .from("configuracion_tablas")
         .select("configuracion")
@@ -99,7 +114,6 @@ export default function Empleados() {
       if (data && data.configuracion) {
         setConfiguracionMapeo(data.configuracion);
       } else {
-        // Fallback a localStorage si no está en Supabase
         const local = localStorage.getItem("config_mapeo_columnas_dinamico");
         if (local) {
           setConfiguracionMapeo(JSON.parse(local));
@@ -108,6 +122,26 @@ export default function Empleados() {
     } catch (err) {
       console.error("Error cargando configuración de mapeo:", err);
     }
+  };
+
+  const cargarPreferenciasColumnas = () => {
+    const saved = localStorage.getItem("empleados_columnas_visibles");
+    if (saved) {
+      try {
+        setColumnasVisibles(JSON.parse(saved));
+      } catch (e) {
+        console.error("Error leyendo preferencias de columnas", e);
+      }
+    }
+  };
+
+  const cambiarVisibilidadColumna = (key) => {
+    const nuevasColumnas = {
+      ...columnasVisibles,
+      [key]: !columnasVisibles[key],
+    };
+    setColumnasVisibles(nuevasColumnas);
+    localStorage.setItem("empleados_columnas_visibles", JSON.stringify(nuevasColumnas));
   };
 
   const obtenerValoresEmpleado = (emp) => {
@@ -236,12 +270,19 @@ export default function Empleados() {
           <div>
             <h1 className="text-4xl font-bold text-gray-800">👥 Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Gestión de empleados, sueldo base semanal y desglose exacto de bonos de nómina
+              Gestión de empleados, sueldo base semanal y desglose exacto de bonos de nómina sincronizados
             </p>
           </div>
 
-          {/* NUEVOS BOTONES SOLICITADOS */}
-          <div className="flex gap-3 mt-4 md:mt-0">
+          {/* BOTONES SUPERIORES */}
+          <div className="flex flex-wrap gap-2.5 mt-4 md:mt-0">
+            <button
+              onClick={() => setModalConfigColumnas(true)}
+              className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
+            >
+              ⚙️ Columnas Visibles
+            </button>
+
             <button
               onClick={() => setModalRelacion(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
@@ -307,34 +348,43 @@ export default function Empleados() {
           </div>
         </div>
 
-        <div className="mb-4 text-gray-600 font-medium">
-          Mostrando <strong>{empleadosFiltrados.length}</strong> empleados
+        <div className="mb-4 text-gray-600 font-medium flex justify-between items-center">
+          <span>Mostrando <strong>{empleadosFiltrados.length}</strong> empleados</span>
+          <span className="text-xs text-slate-500 bg-slate-100 px-3 py-1 rounded-lg">
+            * Número, Colaborador, Departamento y Puesto son campos obligatorios fijos.
+          </span>
         </div>
 
-        {/* TABLA PRINCIPAL */}
+        {/* TABLA PRINCIPAL CON CAMPOS CONDICIONALES */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="bg-slate-100 text-gray-700 font-bold border-b">
               <tr>
+                {/* CAMPOS OBLIGATORIOS FIJOS */}
                 <th className="p-3">No.</th>
                 <th className="p-3">Colaborador</th>
                 <th className="p-3">Departamento</th>
                 <th className="p-3">Puesto</th>
-                <th className="p-3 text-right bg-blue-50 text-blue-900">Sueldo Base</th>
-                <th className="p-3 text-right bg-indigo-50 text-indigo-900">Sueldo Diario</th>
 
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puesto</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puntualidad</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Asistencia</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Multiplicador</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Desempeño</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Extra</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Apoyo Médico</th>
-                <th className="p-3 text-right bg-emerald-50 text-emerald-800">Gratificación Esp.</th>
+                {/* CAMPOS OPCIONALES */}
+                {columnasVisibles.sueldo_base && <th className="p-3 text-right bg-blue-50 text-blue-900">Sueldo Base</th>}
+                {columnasVisibles.sueldo_diario && <th className="p-3 text-right bg-indigo-50 text-indigo-900">Sueldo Diario</th>}
 
-                <th className="p-3 text-right bg-emerald-100 text-emerald-900 font-black">
-                  Total Bonos
-                </th>
+                {columnasVisibles.bono_puesto && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puesto</th>}
+                {columnasVisibles.bono_puntualidad && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Puntualidad</th>}
+                {columnasVisibles.bono_asistencia && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Asistencia</th>}
+                {columnasVisibles.bono_multiplicador && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Multiplicador</th>}
+                {columnasVisibles.bono_desempeno && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Desempeño</th>}
+                {columnasVisibles.bono_extra && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Bono Extra</th>}
+                {columnasVisibles.apoyo_medico && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Apoyo Médico</th>}
+                {columnasVisibles.gratificacion_especial && <th className="p-3 text-right bg-emerald-50 text-emerald-800">Gratificación Esp.</th>}
+
+                {columnasVisibles.total_bonos && (
+                  <th className="p-3 text-right bg-emerald-100 text-emerald-900 font-black">
+                    Total Bonos
+                  </th>
+                )}
+                
                 <th className="p-3 text-center">Estatus</th>
                 <th className="p-3 text-center">Acciones</th>
               </tr>
@@ -343,7 +393,7 @@ export default function Empleados() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={17} className="p-6 text-center text-gray-500">
+                  <td colSpan={20} className="p-6 text-center text-gray-500">
                     Cargando lista de empleados...
                   </td>
                 </tr>
@@ -369,6 +419,7 @@ export default function Empleados() {
 
                   return (
                     <tr key={empleado.id} className="border-t hover:bg-slate-50 transition">
+                      {/* OBLIGATORIOS */}
                       <td className="p-3 font-mono">{empleado.numero_empleado || "S/N"}</td>
                       <td className="p-3 font-semibold text-gray-800">
                         {empleado.nombre_completo || "Sin nombre"}
@@ -376,44 +427,39 @@ export default function Empleados() {
                       <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
                       <td className="p-3">{empleado.puestos?.nombre || "Sin Asignar"}</td>
 
-                      <td className="p-3 text-right font-bold text-gray-800 bg-blue-50/40">
-                        {salarioBaseSemanal > 0 ? (
-                          `$${salarioBaseSemanal.toFixed(2)}`
-                        ) : (
-                          <span className="text-amber-600 font-normal">$0.00</span>
-                        )}
-                      </td>
+                      {/* OPCIONALES */}
+                      {columnasVisibles.sueldo_base && (
+                        <td className="p-3 text-right font-bold text-gray-800 bg-blue-50/40">
+                          {salarioBaseSemanal > 0 ? `$${salarioBaseSemanal.toFixed(2)}` : <span className="text-amber-600 font-normal">$0.00</span>}
+                        </td>
+                      )}
 
-                      <td className="p-3 text-right font-bold text-indigo-900 bg-indigo-50/40">
-                        {salarioDiario > 0 ? (
-                          `$${salarioDiario.toFixed(2)}`
-                        ) : (
-                          <span className="text-amber-600 font-normal">$0.00</span>
-                        )}
-                      </td>
+                      {columnasVisibles.sueldo_diario && (
+                        <td className="p-3 text-right font-bold text-indigo-900 bg-indigo-50/40">
+                          {salarioDiario > 0 ? `$${salarioDiario.toFixed(2)}` : <span className="text-amber-600 font-normal">$0.00</span>}
+                        </td>
+                      )}
 
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuesto.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuntualidad.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoAsistencia.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoMultiplicador.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoDesempeno.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoExtra.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${apoyoMedico.toFixed(2)}</td>
-                      <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${gratificacionEspecial.toFixed(2)}</td>
+                      {columnasVisibles.bono_puesto && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuesto.toFixed(2)}</td>}
+                      {columnasVisibles.bono_puntualidad && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoPuntualidad.toFixed(2)}</td>}
+                      {columnasVisibles.bono_asistencia && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoAsistencia.toFixed(2)}</td>}
+                      {columnasVisibles.bono_multiplicador && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoMultiplicador.toFixed(2)}</td>}
+                      {columnasVisibles.bono_desempeno && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoDesempeno.toFixed(2)}</td>}
+                      {columnasVisibles.bono_extra && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${bonoExtra.toFixed(2)}</td>}
+                      {columnasVisibles.apoyo_medico && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${apoyoMedico.toFixed(2)}</td>}
+                      {columnasVisibles.gratificacion_especial && <td className="p-3 text-right text-gray-700 bg-emerald-50/20">${gratificacionEspecial.toFixed(2)}</td>}
 
-                      <td className="p-3 text-right bg-emerald-100/50 font-black text-emerald-900">
-                        ${totalBonos.toFixed(2)}
-                      </td>
+                      {columnasVisibles.total_bonos && (
+                        <td className="p-3 text-right bg-emerald-100/50 font-black text-emerald-900">
+                          ${totalBonos.toFixed(2)}
+                        </td>
+                      )}
 
                       <td className="p-3 text-center">
                         {estaActivo ? (
-                          <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">
-                            Activo
-                          </span>
+                          <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span>
                         ) : (
-                          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">
-                            Baja
-                          </span>
+                          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>
                         )}
                       </td>
 
@@ -453,7 +499,7 @@ export default function Empleados() {
 
               {!loading && empleadosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={17} className="p-6 text-center text-gray-500">
+                  <td colSpan={20} className="p-6 text-center text-gray-500">
                     No se encontraron empleados.
                   </td>
                 </tr>
@@ -463,16 +509,69 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* 🌟 MODAL: RELACIÓN DE CAMPOS SEGÚN CONFIGURACIÓN DE TABLAS */}
+      {/* ⚙️ MODAL: SELECCIONAR QUÉ COLUMNAS APARECEN */}
+      {modalConfigColumnas && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-5">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar Columnas Visibles</h3>
+                <p className="text-xs text-gray-500">Selecciona qué columnas opcionales deseas reflejar en la tabla de empleados.</p>
+              </div>
+              <button onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold">✕</button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-medium">
+              🔒 Nota: Los campos <strong>Número, Colaborador, Departamento y Puesto</strong> son obligatorios y siempre se mostrarán.
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto pr-1 text-xs">
+              {[
+                { key: "sueldo_base", label: "Sueldo Base" },
+                { key: "sueldo_diario", label: "Sueldo Diario" },
+                { key: "bono_puesto", label: "Bono Puesto" },
+                { key: "bono_puntualidad", label: "Bono Puntualidad" },
+                { key: "bono_asistencia", label: "Bono Asistencia" },
+                { key: "bono_multiplicador", label: "Bono Multiplicador" },
+                { key: "bono_desempeno", label: "Bono Desempeño" },
+                { key: "bono_extra", label: "Bono Extra" },
+                { key: "apoyo_medico", label: "Apoyo Médico" },
+                { key: "gratificacion_especial", label: "Gratificación Especial" },
+                { key: "total_bonos", label: "Total Bonos" },
+              ].map((col) => (
+                <label key={col.key} className="flex items-center gap-2.5 p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl cursor-pointer border border-slate-100 transition">
+                  <input
+                    type="checkbox"
+                    checked={columnasVisibles[col.key]}
+                    onChange={() => cambiarVisibilidadColumna(col.key)}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                  />
+                  <span className="font-semibold text-slate-700">{col.label}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="pt-3 border-t flex justify-end">
+              <button
+                onClick={() => setModalConfigColumnas(false)}
+                className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition"
+              >
+                Aplicar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🔗 MODAL: RELACIÓN DE CAMPOS CONFIGURADOS */}
       {modalRelacion && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 border border-slate-100">
-            
             <div className="flex justify-between items-center pb-4 border-b mb-4">
               <div>
-                <h2 className="text-xl font-bold text-slate-800">🔗 Relación de Campos Configurados</h2>
+                <h2 className="text-xl font-bold text-slate-800">🔗 Relación Completa de Campos del Excel</h2>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Mapeo actual heredado desde la sección de <strong>Configuración de Tablas</strong>.
+                  Cruces de información configurados desde <strong>Configuración de Tablas</strong> y alimentando la base de datos.
                 </p>
               </div>
               <button 
@@ -486,7 +585,7 @@ export default function Empleados() {
             {configuracionMapeo && configuracionMapeo.asignacion ? (
               <div className="space-y-4">
                 <div className="text-xs text-emerald-700 bg-emerald-50 p-3 rounded-xl border border-emerald-100 font-medium">
-                  ✅ Sincronizado correctamente. Total de columnas mapeadas: <strong>{Object.keys(configuracionMapeo.asignacion).length}</strong>
+                  ✅ Mapeo activo enlazado a Supabase. Total de columnas procesadas: <strong>{Object.keys(configuracionMapeo.asignacion).length}</strong>
                 </div>
 
                 <div className="border rounded-xl overflow-hidden">
@@ -494,8 +593,8 @@ export default function Empleados() {
                     <thead className="bg-slate-100 text-slate-700 uppercase font-semibold">
                       <tr>
                         <th className="p-3 border-b">Columna Excel Original</th>
-                        <th className="p-3 border-b">Tabla Destino Supabase</th>
-                        <th className="p-3 border-b">Campo / Depto Destino</th>
+                        <th className="p-3 border-b">Tabla Supabase Destino</th>
+                        <th className="p-3 border-b">Campo Mapeado / Asignación</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -510,7 +609,7 @@ export default function Empleados() {
                                   {info.tablaDestino}
                                 </span>
                               ) : (
-                                <span className="text-gray-400 italic">Ignorada / No usada</span>
+                                <span className="text-gray-400 italic">Omitida</span>
                               )}
                             </td>
                             <td className="p-3 font-mono text-slate-600">
@@ -529,8 +628,8 @@ export default function Empleados() {
               </div>
             ) : (
               <div className="py-12 text-center text-gray-500">
-                <p className="text-sm">⚠️ No se encontró una configuración previa.</p>
-                <p className="text-xs mt-1">Ve primero a <strong>Configuración de Tablas</strong> para analizar y guardar tu archivo Excel.</p>
+                <p className="text-sm">⚠️ No se encontró una relación previa establecida.</p>
+                <p className="text-xs mt-1">Visita primero <strong>Configuración de Tablas</strong> para guardar tu mapeo.</p>
               </div>
             )}
 
@@ -542,12 +641,11 @@ export default function Empleados() {
                 Cerrar Ventana
               </button>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* MODAL EDICIÓN RÁPIDA (CON DEPARTAMENTO, PUESTO Y ORGANIGRAMA) */}
+      {/* MODAL EDICIÓN RÁPIDA */}
       {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -556,7 +654,7 @@ export default function Empleados() {
           >
             <div className="border-b pb-3 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">
-                ✏️ Editar Empleado, Departamento, Puesto y Organigrama
+                ✏️ Editar Empleado y Atributos
               </h3>
               <button
                 type="button"
@@ -622,9 +720,6 @@ export default function Empleados() {
                   <label className="block font-bold text-blue-900 mb-1">
                     👥 Organigrama / Empleados a su cargo:
                   </label>
-                  <p className="text-[11px] text-gray-500 mb-2">
-                    Selecciona al subordinado directo que reporta con este supervisor.
-                  </p>
                   <select
                     value={modalEdicionRapida.datos?.supervisor_id || ""}
                     onChange={(e) =>

@@ -78,7 +78,7 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN ACTUALIZADA: EXTRACCIÓN FILTRADA DE PUESTOS ---
+  // --- FUNCIÓN ACTUALIZADA: ESCANEO UNIVERSAL DE PUESTOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
@@ -96,38 +96,50 @@ export default function Puestos() {
               try { objAnalizar = JSON.parse(value); } catch (e) {}
             }
 
-            const extraerPuestosRecursivo = (elemento) => {
+            const extraerTodoUniversal = (elemento) => {
               if (!elemento || typeof elemento !== "object") return;
 
               Object.entries(elemento).forEach(([subKey, subVal]) => {
-                if (subVal && typeof subVal === "object") {
-                  if (
-                    subVal.tablaDestino === "puestos" || 
-                    subVal.tabla === "puestos" || 
-                    subVal.destino === "puestos" ||
-                    String(subVal.campoDestino).toLowerCase().includes("puesto")
-                  ) {
-                    if (subKey.toLowerCase() !== "columnas" && subKey.toLowerCase() !== "configuracion") {
+                const subKeyLower = String(subKey).toLowerCase();
+                const esGenerico = ["columnas", "configuracion", "id", "created_at", "updated_at", "activo"].includes(subKeyLower);
+
+                if (!esGenerico) {
+                  if (subVal && typeof subVal === "object") {
+                    if (
+                      subVal.tablaDestino === "puestos" || 
+                      subVal.tabla === "puestos" || 
+                      subVal.destino === "puestos" ||
+                      String(subVal.campoDestino || "").toLowerCase().includes("puesto") ||
+                      subKeyLower.includes("puesto") ||
+                      subKeyLower.includes("cargo") ||
+                      subKeyLower.includes("rol")
+                    ) {
                       listaExtraida.push({
                         puesto: String(subKey).trim(),
-                        departamento: subVal.departamento || subVal.campoDestino || "Relación de Campos"
+                        departamento: subVal.departamento || subVal.campoDestino || subVal.tablaDestino || "Relación de Campos"
+                      });
+                    }
+                    extraerTodoUniversal(subVal);
+                  } else if (typeof subVal === "string" && subVal.trim() !== "") {
+                    if (
+                      subKeyLower.includes("puesto") || 
+                      subKeyLower.includes("cargo") || 
+                      subKeyLower.includes("rol") ||
+                      String(subVal).toLowerCase().includes("puesto")
+                    ) {
+                      listaExtraida.push({
+                        puesto: String(subVal).trim(),
+                        departamento: subKey.trim()
                       });
                     }
                   }
-                  extraerPuestosRecursivo(subVal);
-                } else if (
-                  (subKey.toLowerCase() === "puesto" || subKey.toLowerCase() === "puestos") && 
-                  typeof subVal === "string"
-                ) {
-                  listaExtraida.push({
-                    puesto: String(subVal).trim(),
-                    departamento: "Relación de Campos"
-                  });
+                } else {
+                  extraerTodoUniversal(subVal);
                 }
               });
             };
 
-            extraerPuestosRecursivo(objAnalizar);
+            extraerTodoUniversal(objAnalizar);
           });
         });
       }
@@ -148,11 +160,11 @@ export default function Puestos() {
         });
       }
 
-      // Eliminar duplicados y filtrar palabras genéricas
+      // Eliminar duplicados y limpiar nombres genéricos
       const unicos = Array.from(
         new Map(
           listaExtraida
-            .filter(item => item.puesto && item.puesto.toLowerCase() !== "columnas")
+            .filter(item => item.puesto && !["columnas", "configuracion"].includes(item.puesto.toLowerCase()))
             .map((item) => [item.puesto, item])
         ).values()
       );

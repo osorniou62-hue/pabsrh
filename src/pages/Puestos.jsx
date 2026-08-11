@@ -78,17 +78,21 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // --- FUNCIÓN DE CARGA DE PUESTOS DESDE LA RELACIÓN DE CAMPOS ---
+  // --- FUNCIÓN CORREGIDA: CARGAR PUESTOS DESDE LA RELACIÓN DE CAMPOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
 
-      const nombresPosibles = ["configuraciontablas", "configuracion_tablas", "ConfiguracionTablas"];
+      // 1. Consultar la configuración dinámica guardada en configuracion_tablas
+      const nombresPosibles = ["configuracion_tablas", "ConfiguracionTablas"];
       let dataConfig = null;
 
       for (let nombreTabla of nombresPosibles) {
-        const { data, error } = await supabase.from(nombreTabla).select("*");
-        if (!error && data) {
+        const { data, error } = await supabase
+          .from(nombreTabla)
+          .select("*");
+        
+        if (!error && data && data.length > 0) {
           dataConfig = data;
           break;
         }
@@ -96,25 +100,23 @@ export default function Puestos() {
 
       if (dataConfig && dataConfig.length > 0) {
         dataConfig.forEach((fila) => {
-          if (fila.puesto || fila.nombre_puesto) {
-            listaExtraida.push({
-              puesto: String(fila.puesto || fila.nombre_puesto).trim(),
-              departamento: fila.departamento ? String(fila.departamento).trim() : "Relación de Campos"
-            });
-          }
+          const cfg = fila.configuracion || fila.datos || fila.mapeo || fila;
+          const asignaciones = cfg.asignacion || cfg;
 
-          const cfg = fila.configuracion || fila.datos || fila.mapeo || {};
-          if (cfg.puestos && Array.isArray(cfg.puestos)) {
-            cfg.puestos.forEach((p) => {
-              listaExtraida.push({
-                puesto: typeof p === 'string' ? p : (p.nombre || p.puesto),
-                departamento: p.departamento || "Relación de Campos"
-              });
+          if (asignaciones && typeof asignaciones === "object") {
+            Object.entries(asignaciones).forEach(([columnaOriginal, info]) => {
+              if (info && info.tablaDestino === "puestos") {
+                listaExtraida.push({
+                  puesto: String(columnaOriginal).trim(),
+                  departamento: "Configuración Dinámica"
+                });
+              }
             });
           }
         });
       }
 
+      // 2. Mantener lectura opcional desde empleados si existen registros previos
       const { data: empleadosData, error: errorEmp } = await supabase
         .from("empleados")
         .select("puesto, departamento");
@@ -130,6 +132,7 @@ export default function Puestos() {
         });
       }
 
+      // Eliminar duplicados
       const unicos = Array.from(
         new Map(listaExtraida.map((item) => [item.puesto, item])).values()
       );

@@ -8,6 +8,7 @@ import KpiCard from "../components/KpiCard";
 export default function Empleados() {
   const [empleados, setEmpleados] = useState([]);
   const [puestosLista, setPuestosLista] = useState([]);
+  const [departamentosLista, setDepartamentosLista] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [estatus, setEstatus] = useState("ACTIVOS");
   const [departamentoFiltro, setDepartamentoFiltro] = useState("TODOS");
@@ -18,16 +19,32 @@ export default function Empleados() {
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
-    cargarPuestos();
+    cargarCatalogos();
     cargarEmpleados();
   }, []);
 
-  const cargarPuestos = async () => {
+  const cargarCatalogos = async () => {
     try {
-      const { data } = await supabase.from("puestos").select("*").order("nombre");
-      setPuestosLista(data || []);
+      const [resPuestos, resDepts] = await Promise.all([
+        supabase.from("puestos").select("*").order("nombre"),
+        supabase.from("departamentos").select("*").order("nombre")
+      ]);
+
+      // Filtrar puestos vacíos o con espacios sobrantes y evitar duplicados
+      const puestosCrudos = resPuestos.data || [];
+      const puestosUnicosMap = new Map();
+      
+      puestosCrudos.forEach((p) => {
+        const nombreLimpio = String(p.nombre || "").trim();
+        if (nombreLimpio !== "" && !puestosUnicosMap.has(nombreLimpio.toLowerCase())) {
+          puestosUnicosMap.set(nombreLimpio.toLowerCase(), { ...p, nombre: nombreLimpio });
+        }
+      });
+
+      setPuestosLista(Array.from(puestosUnicosMap.values()));
+      setDepartamentosLista(resDepts.data || []);
     } catch (e) {
-      console.error("Error cargando puestos:", e);
+      console.error("Error cargando catálogos:", e);
     }
   };
 
@@ -35,18 +52,13 @@ export default function Empleados() {
     setLoading(true);
 
     try {
-      // 1. Cargar empleados solos sin joins conflictivos para evitar PGRST201
       const { data: emps, error: errorEmps } = await supabase
         .from("empleados")
         .select("*")
         .order("nombre_completo");
 
-      if (errorEmps) {
-        console.error("❌ Error detallado en tabla 'empleados':", JSON.stringify(errorEmps, null, 2));
-        throw errorEmps;
-      }
+      if (errorEmps) throw errorEmps;
 
-      // 2. Cargar departamentos y puestos de forma independiente
       const [resDepts, resPuestos] = await Promise.all([
         supabase.from("departamentos").select("*"),
         supabase.from("puestos").select("*")
@@ -55,19 +67,15 @@ export default function Empleados() {
       const departamentosMap = new Map((resDepts.data || []).map(d => [d.id, d]));
       const puestosMap = new Map((resPuestos.data || []).map(p => [p.id, p]));
 
-      // 3. Vincular los objetos correspondientes a cada empleado en memoria
       const empleadosMapeados = (emps || []).map(emp => {
         return {
           ...emp,
           departamentos: departamentosMap.get(emp.departamento_id) || null,
           puestos: puestosMap.get(emp.puesto_id) || null,
-          empleado_bonos: [] 
         };
       });
 
-      console.log("🔍 [DEBUG] Empleados listos y mapeados:", empleadosMapeados);
       setEmpleados(empleadosMapeados);
-
     } catch (err) {
       console.error("❌ Error al cargar empleados:", err?.message || err);
       setEmpleados([]);
@@ -76,7 +84,6 @@ export default function Empleados() {
     }
   };
 
-  // --- EXTRACCIÓN DE VALORES ADAPTADA A LAS COLUMNAS REALES DE SUPABASE ---
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) {
       return {
@@ -97,7 +104,6 @@ export default function Empleados() {
     const salarioBaseSemanal = Number(emp?.sueldo_base ?? 0);
     const salarioDiario = salarioBaseSemanal > 0 ? salarioBaseSemanal / 7 : 0;
 
-    // Extracción usando exactamente los nombres de columnas confirmados en Supabase
     const bonoPuesto = Number(emp?.bono_puesto ?? 0);
     const bonoPuntualidad = Number(emp?.bono_puntualidad ?? 0);
     const bonoAsistencia = Number(emp?.bono_asistencia ?? 0);
@@ -143,9 +149,11 @@ export default function Empleados() {
     const { error } = await supabase
       .from("empleados")
       .update({
+        departamento_id: d.departamento_id || null,
         puesto_id: d.puesto_id || null,
         activo: Boolean(d.activo),
         sueldo_base: Number(d.sueldo_base) || 0,
+        supervisor_id: d.supervisor_id || null, // Guardar organigrama
         fecha_baja: d.activo ? null : (d.fecha_baja || new Date().toISOString().split("T")[0]),
       })
       .eq("id", d.id);
@@ -160,7 +168,14 @@ export default function Empleados() {
     }
   };
 
-  // --- FILTROS DE TABLA ---
+  // Identificar si un puesto seleccionado corresponde a rol de supervisión/liderazgo
+  const esPuestoSupervisor = (puestoId) => {
+    const puestoObj = puestosLista.find(p => p.id === puestoId);
+    if (!puestoObj) return false;
+    const nombrePuesto = puestoObj.nombre.toLowerCase();
+    return nombrePuesto.includes("supervisor") || nombrePuesto.includes("jefe") || nombrePuesto.includes("líder") || nombrePuesto.includes("lider") || nombrePuesto.includes("encargado");
+  };
+
   const departamentos = [
     "TODOS",
     ...new Set(empleados.map((e) => e?.departamentos?.nombre).filter(Boolean)),
@@ -378,9 +393,11 @@ export default function Empleados() {
                                 datos: {
                                   id: empleado.id,
                                   nombre_completo: empleado.nombre_completo,
+                                  departamento_id: empleado.departamento_id || "",
                                   puesto_id: empleado.puesto_id || "",
                                   activo: estaActivo,
                                   sueldo_base: salarioBaseSemanal,
+                                  supervisor_id: empleado.supervisor_id || "",
                                 },
                               })
                             }
@@ -413,16 +430,16 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* MODAL EDICIÓN RÁPIDA */}
+      {/* MODAL EDICIÓN RÁPIDA (CON DEPARTAMENTO, PUESTO Y FLUJO ORGANIGRAMA) */}
       {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
             onSubmit={guardarEdicionRapida}
-            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5"
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto"
           >
             <div className="border-b pb-3 flex justify-between items-center">
               <h3 className="text-lg font-bold text-gray-800">
-                ✏️ Editar Puesto y Sueldo Base Semanal
+                ✏️ Editar Empleado, Departamento, Puesto y Organigrama
               </h3>
               <button
                 type="button"
@@ -434,13 +451,36 @@ export default function Empleados() {
             </div>
 
             <p className="text-xs text-gray-500">
-              Empleado:{" "}
+              Colaborador:{" "}
               <strong className="text-gray-800">
                 {modalEdicionRapida.datos?.nombre_completo || "S/D"}
               </strong>
             </p>
 
             <div className="space-y-4 text-xs md:text-sm">
+              {/* Selector de Departamento */}
+              <div>
+                <label className="block font-semibold text-gray-700 mb-1">Departamento</label>
+                <select
+                  value={modalEdicionRapida.datos?.departamento_id || ""}
+                  onChange={(e) =>
+                    setModalEdicionRapida({
+                      ...modalEdicionRapida,
+                      datos: { ...modalEdicionRapida.datos, departamento_id: e.target.value },
+                    })
+                  }
+                  className="w-full border p-2.5 rounded-lg outline-none bg-white"
+                >
+                  <option value="">-- Seleccionar Departamento --</option>
+                  {departamentosLista.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Selector de Puesto (Limpio y ordenado) */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Puesto</label>
                 <select
@@ -451,7 +491,7 @@ export default function Empleados() {
                       datos: { ...modalEdicionRapida.datos, puesto_id: e.target.value },
                     })
                   }
-                  className="w-full border p-2.5 rounded-lg outline-none"
+                  className="w-full border p-2.5 rounded-lg outline-none bg-white"
                 >
                   <option value="">-- Seleccionar Puesto --</option>
                   {puestosLista.map((p) => (
@@ -462,6 +502,38 @@ export default function Empleados() {
                 </select>
               </div>
 
+              {/* FLUJO ORGANIGRAMA: Si el puesto es de supervisor, permite elegir a quién supervisa */}
+              {esPuestoSupervisor(modalEdicionRapida.datos?.puesto_id) && (
+                <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                  <label className="block font-bold text-blue-900 mb-1">
+                    👥 Organigrama / Empleados a su cargo:
+                  </label>
+                  <p className="text-[11px] text-gray-500 mb-2">
+                    Selecciona al subordinado directo que reporta con este supervisor.
+                  </p>
+                  <select
+                    value={modalEdicionRapida.datos?.supervisor_id || ""}
+                    onChange={(e) =>
+                      setModalEdicionRapida({
+                        ...modalEdicionRapida,
+                        datos: { ...modalEdicionRapida.datos, supervisor_id: e.target.value },
+                      })
+                    }
+                    className="w-full border p-2 rounded-lg bg-white text-xs"
+                  >
+                    <option value="">-- Sin subordinado directo asociado --</option>
+                    {empleados
+                      .filter((emp) => emp.id !== modalEdicionRapida.datos?.id) // Evitar autoasignarse
+                      .map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.nombre_completo} ({emp.puestos?.nombre || "Sin puesto"})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Selector de Estatus */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Estatus</label>
                 <select
@@ -475,13 +547,14 @@ export default function Empleados() {
                       },
                     })
                   }
-                  className="w-full border p-2.5 rounded-lg outline-none"
+                  className="w-full border p-2.5 rounded-lg outline-none bg-white"
                 >
                   <option value="ACTIVO">Activo</option>
                   <option value="INACTIVO">Baja / Inactivo</option>
                 </select>
               </div>
 
+              {/* Sueldo Base */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">
                   Sueldo Base Semanal ($)

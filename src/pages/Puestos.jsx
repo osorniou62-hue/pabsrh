@@ -22,7 +22,7 @@ export default function Puestos() {
   const [mostrarModalDepto, setMostrarModalDepto] = useState(false);
   const [nuevoDeptoNombre, setNuevoDeptoNombre] = useState("");
 
-  // --- ESTADO PARA PUESTOS CONFIGURADOS DESDE CONFIGURACIONPUESTO ---
+  // --- ESTADO PARA PUESTOS CONFIGURADOS DESDE CONFIGURACIONTABLAS ---
   const [mostrarModalConfigurados, setMostrarModalConfigurados] = useState(false);
   const [puestosConfiguradosLista, setPuestosConfiguradosLista] = useState([]);
 
@@ -78,72 +78,86 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // Carga los puestos y departamentos definidos directamente en configuracionpuesto
+  // Carga los puestos y departamentos directamente desde configuraciontablas
   const cargarPuestosConfiguradosTablas = async () => {
     try {
       let listaExtraida = [];
 
-      // 1. Intentamos consultar la tabla configuracionpuesto
+      // Consultamos la tabla configuraciontablas
       const { data, error } = await supabase
-        .from("configuracionpuesto")
+        .from("configuraciontablas")
         .select("*");
 
       if (!error && data && data.length > 0) {
         data.forEach((fila) => {
-          // Buscamos nombres de puestos o estructuras comunes
-          if (fila.nombre) {
+          // Revisamos si la fila en sí tiene propiedades directas de puesto/departamento
+          if (fila.puesto || fila.nombre_puesto) {
             listaExtraida.push({
-              puesto: fila.nombre,
+              puesto: fila.puesto || fila.nombre_puesto,
               departamento: fila.departamento || fila.departamento_nombre || "Sin Asignar"
             });
           }
-          // Si guardan JSON o configuraciones anidadas
-          const config = fila.configuracion || fila.datos || {};
+
+          // Si los datos están estructurados en un campo JSON (configuracion, datos, o mapeo)
+          const config = fila.configuracion || fila.datos || fila.mapeo || {};
+          
           if (config.puestos && Array.isArray(config.puestos)) {
             config.puestos.forEach(p => {
-              listaExtraida.push({ puesto: typeof p === 'string' ? p : p.nombre, departamento: p.departamento || "Sin Asignar" });
+              listaExtraida.push({
+                puesto: typeof p === 'string' ? p : (p.nombre || p.puesto),
+                departamento: p.departamento || p.departamento_nombre || "Sin Asignar"
+              });
             });
           }
+
+          // Si viene dentro de asignaciones del Excel/Mapeo
+          if (config.asignacion && typeof config.asignacion === 'object') {
+            Object.values(config.asignacion).forEach((val) => {
+              if (val && (val.tablaDestino === "puestos" || val.tabla === "puestos") && val.campoDestino) {
+                listaExtraida.push({ puesto: val.campoDestino, departamento: "Mapeo de Tabla" });
+              }
+            });
+          }
+
+          // Analizar de manera genérica cualquier llave que parezca contener arreglos de puestos
+          Object.keys(config).forEach(key => {
+            if (Array.isArray(config[key])) {
+              config[key].forEach(item => {
+                if (typeof item === 'string' && (key.toLowerCase().includes('puesto') || item.toLowerCase().includes('puesto'))) {
+                  listaExtraida.push({ puesto: item, departamento: "Configuración general" });
+                } else if (item && typeof item === 'object' && (item.puesto || item.nombre)) {
+                  listaExtraida.push({
+                    puesto: item.puesto || item.nombre,
+                    departamento: item.departamento || "Sin Asignar"
+                  });
+                }
+              });
+            }
+          });
         });
       }
 
-      // 2. Si la tabla anterior estuviera vacía o con otro esquema, consultamos también la tabla general configuracion_tablas por respaldo
-      const { data: dataGen, error: errGen } = await supabase
-        .from("configuracion_tablas")
-        .select("*");
-
-      if (!errGen && dataGen && dataGen.length > 0) {
-        dataGen.forEach((fila) => {
-          const config = fila.configuracion || fila.datos || {};
-          if (config.puestosConfigurados && Array.isArray(config.puestosConfigurados)) {
-            config.puestosConfigurados.forEach(p => {
-              listaExtraida.push({ puesto: p, departamento: "Configurado general" });
-            });
-          }
-        });
-      }
-
-      // 3. Respaldo local por si acaso
+      // Respaldo secundario: LocalStorage si el usuario realizó configuraciones locales previas
       if (listaExtraida.length === 0) {
         const local = localStorage.getItem("config_mapeo_columnas_dinamico");
         if (local) {
           const parsed = JSON.parse(local);
           if (parsed.puestosConfigurados && Array.isArray(parsed.puestosConfigurados)) {
             parsed.puestosConfigurados.forEach(p => {
-              listaExtraida.push({ puesto: p, departamento: "Local" });
+              listaExtraida.push({ puesto: p, departamento: "Configuración Local" });
             });
           }
         }
       }
 
-      // Quitamos duplicados basados en el nombre del puesto
+      // Eliminamos puestos duplicados basándonos en el nombre del puesto
       const unicos = Array.from(
         new Map(listaExtraida.map(item => [item.puesto, item])).values()
       );
 
       setPuestosConfiguradosLista(unicos);
     } catch (e) {
-      console.error("Error al cargar puestos configurados:", e);
+      console.error("Error al cargar puestos configurados desde configuraciontablas:", e);
     }
   };
 
@@ -583,14 +597,14 @@ export default function Puestos() {
         </table>
       </div>
 
-      {/* 📋 MODAL: PUESTOS Y DEPARTAMENTOS CONFIGURADOS EN CONFIGURACIONPUESTO */}
+      {/* 📋 MODAL: PUESTOS Y DEPARTAMENTOS CONFIGURADOS EN CONFIGURACIONTABLAS */}
       {mostrarModalConfigurados && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-xl w-full shadow-2xl border border-slate-200">
             <div className="flex justify-between items-center pb-3 border-b mb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">📋 Puestos Configurados</h3>
-                <p className="text-xs text-gray-500">Listado extraído desde la configuración de puestos y departamentos</p>
+                <p className="text-xs text-gray-500">Listado extraído de la tabla <code className="text-indigo-600 font-bold">configuraciontablas</code></p>
               </div>
               <button
                 onClick={() => setMostrarModalConfigurados(false)}
@@ -613,7 +627,7 @@ export default function Puestos() {
                 ))
               ) : (
                 <div className="py-8 text-center text-gray-500 text-xs">
-                  ⚠️ No se encontraron puestos registrados en la tabla de configuración (`configuracionpuesto`).
+                  ⚠️ No se encontraron puestos almacenados en la tabla <code className="font-bold text-slate-700">configuraciontablas</code>.
                 </div>
               )}
             </div>

@@ -16,11 +16,14 @@ export default function Empleados() {
 
   // --- ESTADOS DE MODALES ---
   const [modalEdicionRapida, setModalEdicionRapida] = useState({ abierto: false, datos: null });
+  const [modalRelacion, setModalRelacion] = useState(false);
+  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
     cargarCatalogos();
     cargarEmpleados();
+    cargarRelacionCamposConfiguracion();
   }, []);
 
   const cargarCatalogos = async () => {
@@ -30,7 +33,6 @@ export default function Empleados() {
         supabase.from("departamentos").select("*").order("nombre")
       ]);
 
-      // Filtrar puestos vacíos o con espacios sobrantes y evitar duplicados
       const puestosCrudos = resPuestos.data || [];
       const puestosUnicosMap = new Map();
       
@@ -81,6 +83,30 @@ export default function Empleados() {
       setEmpleados([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Cargar la relación de campos guardada desde ConfiguracionTablas
+  const cargarRelacionCamposConfiguracion = async () => {
+    try {
+      // Intentar leer de Supabase primero
+      const { data } = await supabase
+        .from("configuracion_tablas")
+        .select("configuracion")
+        .eq("clave", "config_mapeo_columnas_dinamico")
+        .maybeSingle();
+
+      if (data && data.configuracion) {
+        setConfiguracionMapeo(data.configuracion);
+      } else {
+        // Fallback a localStorage si no está en Supabase
+        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+        if (local) {
+          setConfiguracionMapeo(JSON.parse(local));
+        }
+      }
+    } catch (err) {
+      console.error("Error cargando configuración de mapeo:", err);
     }
   };
 
@@ -138,7 +164,6 @@ export default function Empleados() {
     };
   };
 
-  // --- MÉTODOS DE EDICIÓN RÁPIDA ---
   const guardarEdicionRapida = async (e) => {
     e.preventDefault();
     if (!modalEdicionRapida.datos) return;
@@ -153,7 +178,7 @@ export default function Empleados() {
         puesto_id: d.puesto_id || null,
         activo: Boolean(d.activo),
         sueldo_base: Number(d.sueldo_base) || 0,
-        supervisor_id: d.supervisor_id || null, // Guardar organigrama
+        supervisor_id: d.supervisor_id || null,
         fecha_baja: d.activo ? null : (d.fecha_baja || new Date().toISOString().split("T")[0]),
       })
       .eq("id", d.id);
@@ -168,7 +193,6 @@ export default function Empleados() {
     }
   };
 
-  // Identificar si un puesto seleccionado corresponde a rol de supervisión/liderazgo
   const esPuestoSupervisor = (puestoId) => {
     const puestoObj = puestosLista.find(p => p.id === puestoId);
     if (!puestoObj) return false;
@@ -216,16 +240,25 @@ export default function Empleados() {
             </p>
           </div>
 
+          {/* NUEVOS BOTONES SOLICITADOS */}
           <div className="flex gap-3 mt-4 md:mt-0">
+            <button
+              onClick={() => setModalRelacion(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
+            >
+              🔗 Relación campos
+            </button>
+
             <Link
               to="/empleados/importar"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
             >
-              📥 Importar Excel/CSV
+              📝 Editar Empleados
             </Link>
+
             <Link
               to="/empleados/nuevo"
-              className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm"
+              className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm shadow-sm"
             >
               + Nuevo Empleado
             </Link>
@@ -430,7 +463,91 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* MODAL EDICIÓN RÁPIDA (CON DEPARTAMENTO, PUESTO Y FLUJO ORGANIGRAMA) */}
+      {/* 🌟 MODAL: RELACIÓN DE CAMPOS SEGÚN CONFIGURACIÓN DE TABLAS */}
+      {modalRelacion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 border border-slate-100">
+            
+            <div className="flex justify-between items-center pb-4 border-b mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">🔗 Relación de Campos Configurados</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Mapeo actual heredado desde la sección de <strong>Configuración de Tablas</strong>.
+                </p>
+              </div>
+              <button 
+                onClick={() => setModalRelacion(false)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-sm transition-all"
+              >
+                ✕ Cerrar
+              </button>
+            </div>
+
+            {configuracionMapeo && configuracionMapeo.asignacion ? (
+              <div className="space-y-4">
+                <div className="text-xs text-emerald-700 bg-emerald-50 p-3 rounded-xl border border-emerald-100 font-medium">
+                  ✅ Sincronizado correctamente. Total de columnas mapeadas: <strong>{Object.keys(configuracionMapeo.asignacion).length}</strong>
+                </div>
+
+                <div className="border rounded-xl overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-100 text-slate-700 uppercase font-semibold">
+                      <tr>
+                        <th className="p-3 border-b">Columna Excel Original</th>
+                        <th className="p-3 border-b">Tabla Destino Supabase</th>
+                        <th className="p-3 border-b">Campo / Depto Destino</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {Object.entries(configuracionMapeo.asignacion).map(([columnaOriginal, info], idx) => {
+                        const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+                        return (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="p-3 font-semibold text-slate-800">{columnaOriginal}</td>
+                            <td className="p-3">
+                              {info.tablaDestino ? (
+                                <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">
+                                  {info.tablaDestino}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400 italic">Ignorada / No usada</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-mono text-slate-600">
+                              {info.esManual ? (
+                                <span className="text-blue-700 font-bold">✏️ Manual: {info.campoManual}</span>
+                              ) : (
+                                campoFinal || <span className="text-gray-400 italic">Sin definir</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="py-12 text-center text-gray-500">
+                <p className="text-sm">⚠️ No se encontró una configuración previa.</p>
+                <p className="text-xs mt-1">Ve primero a <strong>Configuración de Tablas</strong> para analizar y guardar tu archivo Excel.</p>
+              </div>
+            )}
+
+            <div className="mt-6 pt-4 border-t flex justify-end">
+              <button
+                onClick={() => setModalRelacion(false)}
+                className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition-all"
+              >
+                Cerrar Ventana
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDICIÓN RÁPIDA (CON DEPARTAMENTO, PUESTO Y ORGANIGRAMA) */}
       {modalEdicionRapida.abierto && modalEdicionRapida.datos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <form
@@ -458,7 +575,6 @@ export default function Empleados() {
             </p>
 
             <div className="space-y-4 text-xs md:text-sm">
-              {/* Selector de Departamento */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Departamento</label>
                 <select
@@ -480,7 +596,6 @@ export default function Empleados() {
                 </select>
               </div>
 
-              {/* Selector de Puesto (Limpio y ordenado) */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Puesto</label>
                 <select
@@ -502,7 +617,6 @@ export default function Empleados() {
                 </select>
               </div>
 
-              {/* FLUJO ORGANIGRAMA: Si el puesto es de supervisor, permite elegir a quién supervisa */}
               {esPuestoSupervisor(modalEdicionRapida.datos?.puesto_id) && (
                 <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                   <label className="block font-bold text-blue-900 mb-1">
@@ -523,7 +637,7 @@ export default function Empleados() {
                   >
                     <option value="">-- Sin subordinado directo asociado --</option>
                     {empleados
-                      .filter((emp) => emp.id !== modalEdicionRapida.datos?.id) // Evitar autoasignarse
+                      .filter((emp) => emp.id !== modalEdicionRapida.datos?.id)
                       .map((emp) => (
                         <option key={emp.id} value={emp.id}>
                           {emp.nombre_completo} ({emp.puestos?.nombre || "Sin puesto"})
@@ -533,7 +647,6 @@ export default function Empleados() {
                 </div>
               )}
 
-              {/* Selector de Estatus */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">Estatus</label>
                 <select
@@ -554,7 +667,6 @@ export default function Empleados() {
                 </select>
               </div>
 
-              {/* Sueldo Base */}
               <div>
                 <label className="block font-semibold text-gray-700 mb-1">
                   Sueldo Base Semanal ($)

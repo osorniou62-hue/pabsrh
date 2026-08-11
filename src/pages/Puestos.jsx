@@ -78,122 +78,77 @@ export default function Puestos() {
     setDepartamentos(data || []);
   };
 
-  // Carga los puestos y departamentos basándose en la configuración de "Relación de Campos"
+  // --- FUNCIÓN EXACTA IGUAL A EMPLEADOS PARA EXTRAER PUESTOS Y DEPARTAMENTOS ---
   const cargarPuestosDesdeRelacionCampos = async () => {
     try {
       let listaExtraida = [];
 
-      // 1. Consultamos la tabla configuraciontablas (donde se guardan los mapeos y relaciones de campos)
-      const { data, error } = await supabase
+      // 1. Consultamos la tabla empleados directamente (igual que hace la relación de campos en empleados)
+      const { data: empleadosData, error: errorEmp } = await supabase
+        .from("empleados")
+        .select("puesto, departamento, puesto_id, departamento_id");
+
+      if (!errorEmp && empleadosData && empleadosData.length > 0) {
+        empleadosData.forEach((emp) => {
+          const puestoVal = emp.puesto || emp.nombre_puesto;
+          const deptoVal = emp.departamento || emp.departamento_nombre;
+          
+          if (puestoVal) {
+            listaExtraida.push({
+              puesto: String(puestoVal).trim(),
+              departamento: deptoVal ? String(deptoVal).trim() : "Sin Departamento"
+            });
+          }
+        });
+      }
+
+      // 2. Buscamos también en las configuraciones de tablas / mapeo guardadas
+      const { data: configData, error: errorConfig } = await supabase
         .from("configuraciontablas")
         .select("*");
 
-      if (!error && data && data.length > 0) {
-        data.forEach((fila) => {
-          // Revisamos si la fila contiene propiedades directas de puestos/departamentos
-          if (fila.puesto || fila.nombre_puesto) {
+      if (!errorConfig && configData && configData.length > 0) {
+        configData.forEach((fila) => {
+          if (fila.puesto) {
             listaExtraida.push({
-              puesto: fila.puesto || fila.nombre_puesto,
-              departamento: fila.departamento || fila.departamento_nombre || "Sin Asignar"
+              puesto: String(fila.puesto).trim(),
+              departamento: fila.departamento ? String(fila.departamento).trim() : "Relación de Campos"
             });
           }
-
-          // Analizamos objetos JSON o configuraciones de mapeo (relación de campos)
-          const config = fila.configuracion || fila.datos || fila.mapeo || fila.relacion || {};
-          
-          // Si hay un arreglo explícito de puestos en la configuración
-          if (config.puestos && Array.isArray(config.puestos)) {
-            config.puestos.forEach(p => {
+          // Si el registro guarda metadatos en JSON
+          const cfg = fila.configuracion || fila.datos || fila.mapeo || {};
+          if (cfg.puestos && Array.isArray(cfg.puestos)) {
+            cfg.puestos.forEach(p => {
               listaExtraida.push({
                 puesto: typeof p === 'string' ? p : (p.nombre || p.puesto),
-                departamento: p.departamento || p.departamento_nombre || "Sin Asignar"
+                departamento: p.departamento || "Relación de Campos"
               });
             });
-          }
-
-          // Si la relación de campos guarda asignaciones por columnas o tablas
-          if (config.asignacion && typeof config.asignacion === 'object') {
-            Object.values(config.asignacion).forEach((val) => {
-              if (val && (val.tablaDestino === "puestos" || val.tabla === "puestos" || val.campo === "puesto")) {
-                listaExtraida.push({
-                  puesto: val.campoDestino || val.valor || "Puesto Mapeado",
-                  departamento: val.departamento || "Relación de Campos"
-                });
-              }
-            });
-          }
-
-          // Si la configuración guarda catálogos internos de puestos y departamentos
-          if (config.catalogos && typeof config.catalogos === 'object') {
-            const catPuestos = config.catalogos.puestos || config.catalogos.puesto;
-            if (Array.isArray(catPuestos)) {
-              catPuestos.forEach(p => {
-                listaExtraida.push({
-                  puesto: typeof p === 'string' ? p : (p.nombre || p.descripcion),
-                  departamento: p.departamento || "Catálogo Relacionado"
-                });
-              });
-            }
           }
         });
       }
 
-      // 2. Respaldo por LocalStorage (por si la relación de campos se guarda de forma local en el navegador)
-      if (listaExtraida.length === 0) {
-        const clavesLocales = [
-          "config_mapeo_columnas_dinamico", 
-          "relacion_campos_empleados", 
-          "configuracion_columnas",
-          "mapeo_empleados"
-        ];
-        
-        clavesLocales.forEach(clave => {
-          const local = localStorage.getItem(clave);
-          if (local) {
-            try {
-              const parsed = JSON.parse(local);
-              if (parsed.puestosConfigurados && Array.isArray(parsed.puestosConfigurados)) {
-                parsed.puestosConfigurados.forEach(p => {
-                  listaExtraida.push({ puesto: p, departamento: "Relación Local" });
+      // 3. Respaldo por LocalStorage (por si la relación de campos se gestiona localmente)
+      const localMapeo = localStorage.getItem("config_mapeo_columnas_dinamico") || localStorage.getItem("relacion_campos_empleados");
+      if (localMapeo) {
+        try {
+          const parsed = JSON.parse(localMapeo);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(item => {
+              if (item.puesto) {
+                listaExtraida.push({
+                  puesto: item.puesto,
+                  departamento: item.departamento || "Relación Local"
                 });
               }
-              if (Array.isArray(parsed)) {
-                parsed.forEach(item => {
-                  if (item.puesto || item.nombrePuesto) {
-                    listaExtraida.push({
-                      puesto: item.puesto || item.nombrePuesto,
-                      departamento: item.departamento || "Relación Local"
-                    });
-                  }
-                });
-              }
-            } catch (err) {
-              console.error("Error al parsear localstorage:", err);
-            }
+            });
           }
-        });
-      }
-
-      // Si aún no hay registros estáticos en la configuración, extraemos dinámicamente los puestos existentes en la base de datos de empleados (si aplica)
-      if (listaExtraida.length === 0) {
-        const { data: dataEmp } = await supabase
-          .from("empleados")
-          .select("puesto, departamento")
-          .not("puesto", "is", null);
-
-        if (dataEmp && dataEmp.length > 0) {
-          dataEmp.forEach(emp => {
-            if (emp.puesto) {
-              listaExtraida.push({
-                puesto: emp.puesto,
-                departamento: emp.departamento || "Asignado en Empleados"
-              });
-            }
-          });
+        } catch (e) {
+          console.error("Error al leer localStorage:", e);
         }
       }
 
-      // Eliminamos puestos duplicados basándonos en el nombre del puesto
+      // Eliminamos duplicados basándonos en el nombre del puesto
       const unicos = Array.from(
         new Map(listaExtraida.map(item => [item.puesto, item])).values()
       );
@@ -438,7 +393,7 @@ export default function Puestos() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">💼 Puestos y Departamentos</h1>
-          <p className="text-xs text-gray-500 mt-1">Gestión unificada sincronizada con la relación de campos</p>
+          <p className="text-xs text-gray-500 mt-1">Gestión sincronizada con la relación de campos del módulo de empleados</p>
         </div>
         <Link
           to="/dashboard"
@@ -456,7 +411,7 @@ export default function Puestos() {
           </h2>
 
           <div className="flex items-center gap-2">
-            {/* BOTÓN: RELACIÓN DE CAMPOS / PUESTOS CONFIGURADOS */}
+            {/* BOTÓN: RELACIÓN DE CAMPOS */}
             <button
               onClick={() => {
                 cargarPuestosDesdeRelacionCampos();
@@ -640,14 +595,14 @@ export default function Puestos() {
         </table>
       </div>
 
-      {/* 📋 MODAL: PUESTOS Y DEPARTAMENTOS DESDE RELACIÓN DE CAMPOS */}
+      {/* 📋 MODAL: PUESTOS DESDE RELACIÓN DE CAMPOS */}
       {mostrarModalConfigurados && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-xl w-full shadow-2xl border border-slate-200">
             <div className="flex justify-between items-center pb-3 border-b mb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">📋 Puestos por Relación de Campos</h3>
-                <p className="text-xs text-gray-500">Listado sincronizado desde la configuración de empleados</p>
+                <p className="text-xs text-gray-500">Listado extraído directamente desde la tabla de empleados y mapeos</p>
               </div>
               <button
                 onClick={() => setMostrarModalConfigurados(false)}
@@ -665,7 +620,7 @@ export default function Puestos() {
                       <p className="font-bold text-slate-800 text-sm">{item.puesto}</p>
                       <p className="text-gray-500 mt-0.5">Departamento: <span className="text-blue-600 font-semibold">{item.departamento}</span></p>
                     </div>
-                    <span className="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold">Vinculado</span>
+                    <span className="bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold">Sincronizado</span>
                   </div>
                 ))
               ) : (

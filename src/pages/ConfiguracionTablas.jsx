@@ -7,7 +7,8 @@ export default function ConfiguracionTablas() {
   const [archivo, setArchivo] = useState(null);
   const [columnasDetectadas, setColumnasDetectadas] = useState([]);
   
-  // Mapeo dinámico: Relaciona cada columna del Excel con una Tabla de Supabase y un Campo
+  // Mapeo dinámico: Relaciona cada columna del Excel con su Tabla, Campo y si usa Manual
+  // Estructura: { "NombreColumna": { tablaDestino: "", campoDestino: "", esManual: false, campoManual: "" } }
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
   // Control de módulos activos / inactivos
@@ -94,28 +95,32 @@ export default function ConfiguracionTablas() {
 
           setColumnasDetectadas(encabezadosValidos);
 
-          // Sugerencia automática inteligente basada en nombres similares
+          // Sugerencia automática inteligente
           const nuevaAsignacion = {};
           encabezadosValidos.forEach((col) => {
             const colUpper = col.toUpperCase();
-            let encontrada = false;
+            let encontradaTabla = "";
+            let encontradoCampo = "";
 
             Object.keys(esquemaTablasSupabase).forEach((tabla) => {
               esquemaTablasSupabase[tabla].forEach((campo) => {
-                if (!encontrada && (colUpper.includes(campo.key.toUpperCase()) || colUpper.includes(campo.label.toUpperCase()))) {
-                  nuevaAsignacion[col] = { tablaDestino: tabla, campoDestino: campo.key };
-                  encontrada = true;
+                if (!encontradaTabla && (colUpper.includes(campo.key.toUpperCase()) || colUpper.includes(campo.label.toUpperCase()))) {
+                  encontradaTabla = tabla;
+                  encontradoCampo = campo.key;
                 }
               });
             });
 
-            if (!encontrada) {
-              nuevaAsignacion[col] = { tablaDestino: "", campoDestino: "" };
-            }
+            nuevaAsignacion[col] = { 
+              tablaDestino: encontradaTabla || "", 
+              campoDestino: encontradoCampo || "", 
+              esManual: false, 
+              campoManual: "" 
+            };
           });
 
           setAsignacionColumnas(nuevaAsignacion);
-          alert(`✅ ¡Se detectaron e importaron ${encabezadosValidos.length} columnas con título! Ahora asígnalas a su tabla correspondiente.`);
+          alert(`✅ ¡Se detectaron e importaron ${encabezadosValidos.length} columnas con título!`);
         }
       } catch (error) {
         console.error("Error al leer el archivo:", error);
@@ -126,15 +131,32 @@ export default function ConfiguracionTablas() {
     reader.readAsBinaryString(file);
   };
 
-  // 2. Modificar la asignación de una columna específica
+  // 2. Modificar la asignación de una columna específica de forma dinámica
   const handleCambioAsignacion = (columna, tipo, valor) => {
-    setAsignacionColumnas((prev) => ({
-      ...prev,
-      [columna]: {
-        ...(prev[columna] || { tablaDestino: "", campoDestino: "" }),
-        [tipo]: valor,
-      },
-    }));
+    setAsignacionColumnas((prev) => {
+      const actual = prev[columna] || { tablaDestino: "", campoDestino: "", esManual: false, campoManual: "" };
+      
+      let nuevoValor = { ...actual, [tipo]: valor };
+
+      // Si cambia de tabla, limpiamos el campo destino anterior por seguridad
+      if (tipo === "tablaDestino") {
+        nuevoValor.campoDestino = "";
+        nuevoValor.esManual = false;
+      }
+
+      // Si selecciona la opción manual en el campo destino
+      if (tipo === "campoDestino" && valor === "MANUAL") {
+        nuevoValor.esManual = true;
+        nuevoValor.campoManual = "";
+      } else if (tipo === "campoDestino" && valor !== "MANUAL") {
+        nuevoValor.esManual = false;
+      }
+
+      return {
+        ...prev,
+        [columna]: nuevoValor,
+      };
+    });
   };
 
   const toggleModulo = (modulo) => {
@@ -166,7 +188,6 @@ export default function ConfiguracionTablas() {
 
       localStorage.setItem("config_mapeo_columnas_dinamico", JSON.stringify(payloadConfiguracion));
 
-      // Guardar resumen para mostrar en el Pop-up y abrirlo
       setDatosGuardadosResumen(payloadConfiguracion);
       setMostrarModal(true);
 
@@ -184,7 +205,7 @@ export default function ConfiguracionTablas() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Asignación de Columnas</h1>
           <p className="text-gray-500 mt-1">
-            Analiza las columnas de tu archivo, decide a qué tabla de Supabase pertenece cada una y actualiza los módulos del sistema.
+            Analiza las columnas de tu archivo, asígnalas a su tabla y elige un campo predefinido o escribe uno de forma manual.
           </p>
         </div>
 
@@ -192,7 +213,7 @@ export default function ConfiguracionTablas() {
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">1. Cargar archivo Excel para importar columnas con título</h2>
           <p className="text-sm text-gray-500 mb-4">
-            Sube tu archivo (ej. con columnas personalizadas como "Telempromt") para que el sistema liste todas sus cabeceras.
+            Sube tu archivo de nómina para extraer de forma dinámica todas las cabeceras disponibles.
           </p>
           <input 
             type="file" 
@@ -205,8 +226,7 @@ export default function ConfiguracionTablas() {
         {/* PASO 2: Control de Módulos Activos */}
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">2. Módulos y Tablas Activas en el Sistema</h2>
-          <p className="text-sm text-gray-500 mb-4">Elige qué bases de datos operarán con esta configuración.</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
             {Object.keys(modulosActivos).map((mod) => (
               <label key={mod} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer ${modulosActivos[mod] ? "border-blue-500 bg-blue-50/40" : "border-slate-200"}`}>
                 <span className="capitalize font-semibold text-slate-700">{mod}</span>
@@ -221,17 +241,17 @@ export default function ConfiguracionTablas() {
           </div>
         </div>
 
-        {/* PASO 3: Asignar cada columna detectada a una Tabla de Supabase */}
+        {/* PASO 3: Asignar cada columna detectada a una Tabla y Campo (con opción de Llenado Manual) */}
         {columnasDetectadas.length > 0 && (
           <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
-            <h2 className="text-lg font-bold text-slate-700 mb-2">3. Administrar y Asignar Columnas del Excel</h2>
+            <h2 className="text-lg font-bold text-slate-700 mb-2">3. Configurar Tabla y Campo Destino en Supabase</h2>
             <p className="text-sm text-gray-500 mb-6">
-              Para cada columna encontrada en tu archivo, selecciona a qué tabla de Supabase deseas enviarla y su campo correspondiente.
+              Selecciona la tabla destino y elige el campo específico o selecciona <b>"Llenado manual"</b> para escribirlo tú mismo.
             </p>
 
             <div className="space-y-4">
               {columnasDetectadas.map((colOriginal, idx) => {
-                const asignacionActual = asignacionColumnas[colOriginal] || { tablaDestino: "", campoDestino: "" };
+                const asignacionActual = asignacionColumnas[colOriginal] || { tablaDestino: "", campoDestino: "", esManual: false, campoManual: "" };
                 const tablaSeleccionada = asignacionActual.tablaDestino;
 
                 return (
@@ -245,36 +265,68 @@ export default function ConfiguracionTablas() {
 
                     {/* Selector de Tabla de Supabase */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
-                      <label className="text-xs text-gray-500 font-medium">Asignar a Tabla en Supabase:</label>
+                      <label className="text-xs text-gray-500 font-medium">Tabla Destino:</label>
                       <select
                         value={tablaSeleccionada}
                         onChange={(e) => handleCambioAsignacion(colOriginal, "tablaDestino", e.target.value)}
                         className="border rounded-lg p-2 bg-white text-sm font-medium"
                       >
                         <option value="">-- Ignorar / No usar --</option>
-                        <option value="empleados">👥 Tabla: Empleados</option>
-                        <option value="incidencias">⚡ Tabla: Incidencias</option>
-                        <option value="vacaciones">🌴 Tabla: Vacaciones</option>
-                        <option value="prestamos">💳 Tabla: Préstamos</option>
+                        <option value="empleados">👥 Empleados</option>
+                        <option value="incidencias">⚡ Incidencias</option>
+                        <option value="vacaciones">🌴 Vacaciones</option>
+                        <option value="prestamos">💳 Préstamos</option>
                       </select>
                     </div>
 
-                    {/* Selector de Campo Específico dentro de esa Tabla */}
+                    {/* Selector de Campo Específico con opción de Llenado Manual */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
                       <label className="text-xs text-gray-500 font-medium">Campo específico destino:</label>
-                      <select
-                        value={asignacionActual.campoDestino}
-                        onChange={(e) => handleCambioAsignacion(colOriginal, "campoDestino", e.target.value)}
-                        className="border rounded-lg p-2 bg-white text-sm"
-                        disabled={!tablaSeleccionada}
-                      >
-                        <option value="">-- Selecciona campo --</option>
-                        {tablaSeleccionada && esquemaTablasSupabase[tablaSeleccionada]?.map((campo) => (
-                          <option key={campo.key} value={campo.key}>
-                            {campo.label} ({campo.key})
-                          </option>
-                        ))}
-                      </select>
+                      
+                      {!asignacionActual.esManual ? (
+                        <select
+                          value={asignacionActual.campoDestino}
+                          onChange={(e) => handleCambioAsignacion(colOriginal, "campoDestino", e.target.value)}
+                          className="border rounded-lg p-2 bg-white text-sm"
+                          disabled={!tablaSeleccionada}
+                        >
+                          <option value="">-- Selecciona campo --</option>
+                          {tablaSeleccionada && esquemaTablasSupabase[tablaSeleccionada]?.map((campo) => (
+                            <option key={campo.key} value={campo.key}>
+                              {campo.label} ({campo.key})
+                            </option>
+                          ))}
+                          {tablaSeleccionada && (
+                            <option value="MANUAL" className="font-bold text-blue-600">
+                              ✏️ Llenado manual (Escribir campo...)
+                            </option>
+                          )}
+                        </select>
+                      ) : (
+                        <div className="flex gap-2 items-center">
+                          <input 
+                            type="text"
+                            value={asignacionActual.campoManual}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setAsignacionColumnas((prev) => ({
+                                ...prev,
+                                [colOriginal]: { ...prev[colOriginal], campoManual: val }
+                              }));
+                            }}
+                            placeholder="Escribe el nombre del campo..."
+                            className="border rounded-lg p-2 bg-white text-sm w-full font-mono text-slate-700"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleCambioAsignacion(colOriginal, "campoDestino", "")}
+                            className="text-xs text-red-600 hover:underline px-1 whitespace-nowrap"
+                            title="Regresar a lista"
+                          >
+                            Volver
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                   </div>
@@ -339,27 +391,30 @@ export default function ConfiguracionTablas() {
                         <tr>
                           <th className="p-3 border-b">Columna Archivo</th>
                           <th className="p-3 border-b">Tabla Supabase</th>
-                          <th className="p-3 border-b">Campo Destino</th>
+                          <th className="p-3 border-b">Campo Destino Final</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {Object.entries(datosGuardadosResumen.asignacion).map(([col, info], i) => (
-                          <tr key={i} className="hover:bg-slate-50">
-                            <td className="p-3 font-medium text-slate-800">{col}</td>
-                            <td className="p-3">
-                              {info.tablaDestino ? (
-                                <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">
-                                  {info.tablaDestino}
-                                </span>
-                              ) : (
-                                <span className="text-gray-400 italic">Ignorada</span>
-                              )}
-                            </td>
-                            <td className="p-3 font-mono text-slate-600">
-                              {info.campoDestino || <span className="text-gray-400 italic">-</span>}
-                            </td>
-                          </tr>
-                        ))}
+                        {Object.entries(datosGuardadosResumen.asignacion).map(([col, info], i) => {
+                          const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+                          return (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="p-3 font-medium text-slate-800">{col}</td>
+                              <td className="p-3">
+                                {info.tablaDestino ? (
+                                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">
+                                    {info.tablaDestino}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400 italic">Ignorada</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-mono text-slate-600">
+                                {campoFinal || <span className="text-gray-400 italic">-</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

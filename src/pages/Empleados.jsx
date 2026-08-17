@@ -13,6 +13,12 @@ const COLUMNAS_MONEDA = [
   "descuento", "abono", "saldo", "prestamo", "adeudo"
 ];
 
+// 🔥 TABLAS QUE SON CATÁLOGOS (no tienen empleado_id, no se pueden unir)
+const TABLAS_CATALOGO = ["puestos", "departamentos"];
+
+// 🔥 TABLAS RELACIONALES VÁLIDAS (tienen empleado_id)
+const TABLAS_RELACIONALES_VALIDAS = ["empleados", "incidencias", "vacaciones", "prestamos"];
+
 const ETIQUETAS_COLUMNAS = {
   sueldo_base: "Sueldo Base", sueldo_diario: "Sueldo Diario",
   bono_puesto: "Bono Puesto", bono_puntualidad: "Bono Puntualidad",
@@ -70,6 +76,30 @@ const formatearValorCelda = (valor, columna) => {
   return String(valor);
 };
 
+// 🔥 NUEVA FUNCIÓN: Descubre qué columnas existen realmente en una tabla
+const descubrirColumnasTabla = async (nombreTabla) => {
+  try {
+    const { data, error } = await supabase
+      .from(nombreTabla)
+      .select("*")
+      .limit(1);
+    
+    if (error) {
+      console.warn(`⚠️ La tabla '${nombreTabla}' no existe o no es accesible:`, error.message);
+      return [];
+    }
+    
+    if (data && data.length > 0) {
+      return Object.keys(data[0]);
+    }
+    
+    return [];
+  } catch (err) {
+    console.warn(`⚠️ Error descubriendo columnas de '${nombreTabla}':`, err);
+    return [];
+  }
+};
+
 export default function Empleados() {
   const [empleados, setEmpleados] = useState([]);
   const [puestosLista, setPuestosLista] = useState([]);
@@ -85,6 +115,9 @@ export default function Empleados() {
   const [modalConfigColumnas, setModalConfigColumnas] = useState(false);
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  
+  // 🔥 NUEVO: Almacena las columnas REALES que existen en cada tabla
+  const [esquemaReal, setEsquemaReal] = useState({});
 
   const [columnasDisponibles, setColumnasDisponibles] = useState([]);
   const [columnasVisibles, setColumnasVisibles] = useState(() => {
@@ -96,41 +129,81 @@ export default function Empleados() {
     }
   });
 
-  // 🔥 NUEVO: Procesar mapeo SIN filtrar por tabla (incluye todos los módulos excepto ignoradas)
+  // 🔥 NUEVO: Procesar mapeo filtrando SOLO columnas que SÍ existen en las tablas
   const columnasDelMapeo = useMemo(() => {
-    if (!configuracionMapeo?.asignacion) return [];
+    if (!configuracionMapeo?.asignacion || Object.keys(esquemaReal).length === 0) return [];
     
-    console.log("🔍 Total de entradas en la configuración de Supabase:", Object.keys(configuracionMapeo.asignacion).length);
+    console.log("🔍 Total de entradas en la configuración:", Object.keys(configuracionMapeo.asignacion).length);
 
-    // 🔥 FILTRO: Solo columnas que tengan tabla destino Y campo definido (no ignoradas)
-    const mapeoProcesado = Object.entries(configuracionMapeo.asignacion)
-      .filter(([_, info]) => info.tablaDestino && info.tablaDestino !== "" && (info.campoDestino || info.campoManual))
-      .map(([colOriginal, info]) => ({
+    const columnasOmitidas = [];
+    const columnasValidas = [];
+
+    Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
+      // Ignorar si no tiene tabla destino o campo
+      if (!info.tablaDestino || !info.tablaDestino.trim()) {
+        columnasOmitidas.push({ col: colOriginal, razon: "Marcada como ignorada" });
+        return;
+      }
+
+      // Ignorar si es tabla catálogo (puestos, departamentos)
+      if (TABLAS_CATALOGO.includes(info.tablaDestino)) {
+        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' es catálogo, no relacional` });
+        return;
+      }
+
+      // Ignorar si la tabla no existe o no fue descubierta
+      if (!esquemaReal[info.tablaDestino]) {
+        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' no existe o no es accesible` });
+        return;
+      }
+
+      const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+      if (!campoFinal) {
+        columnasOmitidas.push({ col: colOriginal, razon: "No tiene campo destino definido" });
+        return;
+      }
+
+      // 🔥 VERIFICACIÓN CLAVE: ¿Existe esta columna en la tabla real?
+      const columnasExistentes = esquemaReal[info.tablaDestino] || [];
+      if (!columnasExistentes.includes(campoFinal)) {
+        columnasOmitidas.push({ 
+          col: colOriginal, 
+          razon: `Campo '${campoFinal}' NO existe en tabla '${info.tablaDestino}'` 
+        });
+        return;
+      }
+
+      columnasValidas.push({
         original: colOriginal,
         tabla: info.tablaDestino,
-        campo: info.esManual ? info.campoManual : info.campoDestino,
-        etiqueta: formatearNombreColumna(info.esManual ? info.campoManual : info.campoDestino)
-      }));
+        campo: campoFinal,
+        etiqueta: formatearNombreColumna(campoFinal)
+      });
+    });
 
     // Deduplicar por campo
     const unicasMap = new Map();
-    mapeoProcesado.forEach(item => {
+    columnasValidas.forEach(item => {
       if (!unicasMap.has(item.campo)) {
         unicasMap.set(item.campo, item);
       }
     });
 
-    const columnasUnicas = Array.from(unicasMap.values());
-    console.log("✅ Columnas válidas (todos los módulos):", columnasUnicas.length);
-    console.log("📊 Distribución por tabla:", columnasUnicas.reduce((acc, c) => {
+    const resultado = Array.from(unicasMap.values());
+    
+    console.log(`✅ Columnas válidas: ${resultado.length}`);
+    console.log(`⚠️ Columnas omitidas: ${columnasOmitidas.length}`);
+    if (columnasOmitidas.length > 0) {
+      console.table(columnasOmitidas);
+    }
+    console.log("📊 Distribución por tabla:", resultado.reduce((acc, c) => {
       acc[c.tabla] = (acc[c.tabla] || 0) + 1;
       return acc;
     }, {}));
     
-    return columnasUnicas;
-  }, [configuracionMapeo]);
+    return resultado;
+  }, [configuracionMapeo, esquemaReal]);
 
-  // 🔥 NUEVO: Agrupar columnas por tabla para hacer consultas separadas
   const columnasPorTabla = useMemo(() => {
     const agrupado = {};
     columnasDelMapeo.forEach(col => {
@@ -179,16 +252,52 @@ export default function Empleados() {
     }
   };
 
-  // 🔥 NUEVO: Consultar múltiples tablas y combinar datos
+  // 🔥 NUEVO: Descubrir el esquema real de todas las tablas relevantes
+  const descubrirEsquemaTablas = async () => {
+    const tablasAExplorar = new Set(TABLAS_RELACIONALES_VALIDAS);
+    
+    // También explorar las tablas del mapeo (por si hay otras válidas)
+    if (configuracionMapeo?.asignacion) {
+      Object.values(configuracionMapeo.asignacion).forEach(info => {
+        if (info.tablaDestino && !TABLAS_CATALOGO.includes(info.tablaDestino)) {
+          tablasAExplorar.add(info.tablaDestino);
+        }
+      });
+    }
+
+    console.log("🔎 Descubriendo esquema de tablas:", Array.from(tablasAExplorar));
+
+    const resultados = await Promise.all(
+      Array.from(tablasAExplorar).map(async (tabla) => {
+        const columnas = await descubrirColumnasTabla(tabla);
+        return { tabla, columnas };
+      })
+    );
+
+    const esquema = {};
+    resultados.forEach(({ tabla, columnas }) => {
+      if (columnas.length > 0) {
+        esquema[tabla] = columnas;
+        console.log(`📋 Tabla '${tabla}': ${columnas.length} columnas`);
+      }
+    });
+
+    setEsquemaReal(esquema);
+    return esquema;
+  };
+
   const cargarEmpleados = async () => {
     setLoading(true);
     try {
       // 1. Consultar tabla principal 'empleados'
       const columnasEmpleados = columnasPorTabla.empleados || [];
       const columnasEsenciales = ["id", "numero_empleado", "nombre_completo", "departamento_id", "puesto_id", "supervisor_id", "activo", "created_at", "updated_at"];
-      const selectEmpleados = [...new Set([...columnasEsenciales, ...columnasEmpleados])].join(",");
-
-      console.log("📊 Consultando empleados con columnas:", selectEmpleados);
+      
+      // 🔥 Filtrar solo columnas que SÍ existen en empleados
+      const columnasExistentesEmpleados = esquemaReal.empleados || [];
+      const columnasEmpleadosValidas = columnasEmpleados.filter(c => columnasExistentesEmpleados.includes(c));
+      
+      const selectEmpleados = [...new Set([...columnasEsenciales, ...columnasEmpleadosValidas])].join(",");
 
       const { data: empleadosData, error: empleadosError } = await supabase
         .from("empleados")
@@ -197,15 +306,32 @@ export default function Empleados() {
 
       if (empleadosError) throw empleadosError;
 
-      // 2. Consultar tablas relacionadas (incidencias, vacaciones, prestamos, puestos)
-      const tablasRelacionadas = Object.keys(columnasPorTabla).filter(t => t !== 'empleados');
+      // 2. Consultar tablas relacionadas (SOLO las que tienen empleado_id)
+      const tablasRelacionadas = Object.keys(columnasPorTabla).filter(
+        t => t !== 'empleados' && !TABLAS_CATALOGO.includes(t)
+      );
       const datosRelacionados = {};
 
       if (tablasRelacionadas.length > 0) {
         const consultas = tablasRelacionadas.map(async (tabla) => {
           const columnasTabla = columnasPorTabla[tabla];
-          // Incluir empleado_id para hacer el JOIN en el frontend
-          const selectRelacion = [...new Set(["empleado_id", ...columnasTabla, "created_at"])].join(",");
+          const columnasExistentes = esquemaReal[tabla] || [];
+          
+          // 🔥 Filtrar solo columnas que SÍ existen en esta tabla
+          const columnasValidas = columnasTabla.filter(c => columnasExistentes.includes(c));
+          
+          if (columnasValidas.length === 0) {
+            console.warn(`⚠️ Tabla '${tabla}': ninguna columna del mapeo existe. Omitiendo.`);
+            return { tabla, data: [] };
+          }
+          
+          // Verificar que la tabla tenga empleado_id
+          if (!columnasExistentes.includes('empleado_id')) {
+            console.warn(`⚠️ Tabla '${tabla}': no tiene columna 'empleado_id'. Omitiendo.`);
+            return { tabla, data: [] };
+          }
+
+          const selectRelacion = [...new Set(["empleado_id", ...columnasValidas, "created_at"])].join(",");
           
           try {
             const { data, error } = await supabase
@@ -214,7 +340,7 @@ export default function Empleados() {
               .order("created_at", { ascending: false });
             
             if (error) {
-              console.warn(`⚠️ No se pudo consultar la tabla '${tabla}':`, error.message);
+              console.warn(`⚠️ Error consultando '${tabla}':`, error.message);
               return { tabla, data: [] };
             }
             
@@ -231,7 +357,7 @@ export default function Empleados() {
         });
       }
 
-      // 3. Combinar todos los datos en el frontend
+      // 3. Combinar datos
       const empleadosCombinados = (empleadosData || []).map((empleado) => {
         const empleadoCombinado = {
           ...empleado,
@@ -239,16 +365,15 @@ export default function Empleados() {
           puestos: puestosLista.find(p => p.id === empleado.puesto_id) || null,
         };
 
-        // Agregar datos de cada tabla relacionada
         tablasRelacionadas.forEach(tabla => {
           const registros = datosRelacionados[tabla] || [];
-          // Tomar el registro más reciente para este empleado
           const registroReciente = registros.find(r => r.empleado_id === empleado.id);
           
           if (registroReciente) {
-            // Agregar cada columna de la tabla relacionada al empleado
-            columnasPorTabla[tabla].forEach(campo => {
-              empleadoCombinado[campo] = registroReciente[campo];
+            (columnasPorTabla[tabla] || []).forEach(campo => {
+              if (campo in registroReciente) {
+                empleadoCombinado[campo] = registroReciente[campo];
+              }
             });
           }
         });
@@ -256,14 +381,11 @@ export default function Empleados() {
         return empleadoCombinado;
       });
 
-      console.log(`✅ Se cargaron ${empleadosCombinados.length} empleados con datos de ${tablasRelacionadas.length + 1} tablas`);
+      console.log(`✅ Se cargaron ${empleadosCombinados.length} empleados`);
       setEmpleados(empleadosCombinados);
     } catch (error) {
-      console.error("Error al cargar empleados:", error);
-      
-      if (error?.message?.includes("column") || error?.message?.includes("does not exist")) {
-        alert("⚠️ ERROR: Una de las columnas mapeadas no existe en la tabla correspondiente. Revisa tu configuración.");
-      }
+      console.error("❌ Error al cargar empleados:", error);
+      alert(`⚠️ Error al cargar empleados: ${error?.message || "Desconocido"}`);
       setEmpleados([]);
     } finally {
       setLoading(false);
@@ -281,13 +403,18 @@ export default function Empleados() {
       if (error) throw error;
 
       if (data?.configuracion) {
-        console.log("📥 Configuración cargada desde Supabase exitosamente");
         setConfiguracionMapeo(data.configuracion);
+        // 🔥 Descubrir esquema DESPUÉS de cargar el mapeo
+        await descubrirEsquemaTablas();
         return;
       }
 
       const local = localStorage.getItem("config_mapeo_columnas_dinamico");
-      if (local) setConfiguracionMapeo(JSON.parse(local));
+      if (local) {
+        const parsed = JSON.parse(local);
+        setConfiguracionMapeo(parsed);
+        await descubrirEsquemaTablas();
+      }
     } catch (error) {
       console.error("Error cargando configuración:", error);
     }
@@ -302,7 +429,7 @@ export default function Empleados() {
     columnasDelMapeo.forEach(col => { nuevoEstado[col.campo] = true; });
     setColumnasVisibles(nuevoEstado);
     localStorage.setItem("empleados_columnas_visibles_dinamicas", JSON.stringify(nuevoEstado));
-    alert("✅ Preferencias reiniciadas. Todas las columnas mapeadas ahora están visibles.");
+    alert("✅ Preferencias reiniciadas.");
   };
 
   const guardarEdicionRapida = async (evento) => {
@@ -370,7 +497,7 @@ export default function Empleados() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
           <div>
             <h1 className="text-4xl font-bold text-gray-800">👥 Empleados</h1>
-            <p className="text-gray-500 mt-2">Gestión sincronizada con todos los módulos (empleados, incidencias, vacaciones, préstamos)</p>
+            <p className="text-gray-500 mt-2">Gestión sincronizada con todos los módulos</p>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-4 md:mt-0">
             <button type="button" onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">
@@ -466,14 +593,14 @@ export default function Empleados() {
             <div className="flex justify-between items-start pb-3 border-b">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar columnas visibles</h3>
-                <p className="text-xs text-gray-500 mt-1">Columnas de todos los módulos (excepto ignoradas)</p>
+                <p className="text-xs text-gray-500 mt-1">Solo se muestran columnas que existen en las tablas de Supabase</p>
               </div>
               <button type="button" onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
 
             <div className="flex flex-wrap justify-between items-center gap-3 bg-slate-50 p-3 rounded-xl">
               <span className="text-xs text-slate-600 font-medium">
-                Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDisponibles.length}</strong> columnas mapeadas
+                Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDisponibles.length}</strong> columnas válidas
               </span>
               <div className="flex gap-2">
                 <button type="button" onClick={restablecerPreferenciasColumnas} className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-2 rounded-lg text-xs font-semibold">
@@ -495,7 +622,6 @@ export default function Empleados() {
                         {tabla === 'incidencias' && '⚡'}
                         {tabla === 'vacaciones' && '🌴'}
                         {tabla === 'prestamos' && '💳'}
-                        {tabla === 'puestos' && '💼'}
                         {tabla} ({columnasTabla.length} columnas)
                       </h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
@@ -520,8 +646,8 @@ export default function Empleados() {
               </div>
             ) : (
               <div className="py-8 text-center text-sm text-gray-500 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                <p>⚠️ No se encontró configuración de mapeo.</p>
-                <p className="text-xs mt-1">Ve a "Configuración de Tablas", carga el Excel, mapea las columnas y guarda.</p>
+                <p>⚠️ No se encontraron columnas válidas.</p>
+                <p className="text-xs mt-1">Verifica la consola del navegador para ver qué columnas fueron omitidas y por qué.</p>
               </div>
             )}
 
@@ -545,7 +671,7 @@ export default function Empleados() {
             {configuracionMapeo?.asignacion ? (
               <div className="space-y-4">
                 <div className="text-xs text-emerald-700 bg-emerald-50 p-3 rounded-xl border border-emerald-100 font-medium">
-                  ✅ Mapeo activo. Total de columnas procesadas: <strong>{Object.keys(configuracionMapeo.asignacion).length}</strong>
+                  ✅ Mapeo activo. Total: <strong>{Object.keys(configuracionMapeo.asignacion).length}</strong> columnas
                 </div>
                 <div className="border rounded-xl overflow-hidden">
                   <table className="w-full text-left border-collapse text-xs">
@@ -554,11 +680,15 @@ export default function Empleados() {
                         <th className="p-3 border-b">Columna Excel</th>
                         <th className="p-3 border-b">Tabla Destino</th>
                         <th className="p-3 border-b">Campo Mapeado</th>
+                        <th className="p-3 border-b">Estado</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {Object.entries(configuracionMapeo.asignacion).map(([colOrig, info]) => {
                         const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+                        const tablaExiste = esquemaReal[info.tablaDestino];
+                        const campoExiste = tablaExiste && campoFinal && tablaExiste.includes(campoFinal);
+                        
                         return (
                           <tr key={colOrig} className="hover:bg-slate-50">
                             <td className="p-3 font-semibold text-slate-800">{colOrig}</td>
@@ -566,7 +696,20 @@ export default function Empleados() {
                               {info.tablaDestino ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">{info.tablaDestino}</span> : <span className="text-gray-400 italic">Omitida</span>}
                             </td>
                             <td className="p-3 font-mono text-slate-600">
-                              {info.esManual ? <span className="text-blue-700 font-bold">✏️ Manual: {info.campoManual}</span> : (campoFinal || <span className="text-gray-400 italic">Sin definir</span>)}
+                              {info.esManual ? <span className="text-blue-700 font-bold">✏️ {info.campoManual}</span> : (campoFinal || <span className="text-gray-400 italic">Sin definir</span>)}
+                            </td>
+                            <td className="p-3">
+                              {!info.tablaDestino ? (
+                                <span className="text-gray-400 text-xs">⊘ Ignorada</span>
+                              ) : TABLAS_CATALOGO.includes(info.tablaDestino) ? (
+                                <span className="text-amber-600 text-xs">📚 Catálogo</span>
+                              ) : !tablaExiste ? (
+                                <span className="text-red-600 text-xs">❌ Tabla no existe</span>
+                              ) : !campoExiste ? (
+                                <span className="text-red-600 text-xs">❌ Campo no existe</span>
+                              ) : (
+                                <span className="text-emerald-600 text-xs">✓ Válida</span>
+                              )}
                             </td>
                           </tr>
                         );

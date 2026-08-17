@@ -13,10 +13,7 @@ const COLUMNAS_MONEDA = [
   "descuento", "abono", "saldo", "prestamo", "adeudo"
 ];
 
-// 🔥 TABLAS QUE SON CATÁLOGOS (no tienen empleado_id, no se pueden unir)
 const TABLAS_CATALOGO = ["puestos", "departamentos"];
-
-// 🔥 TABLAS RELACIONALES VÁLIDAS (tienen empleado_id)
 const TABLAS_RELACIONALES_VALIDAS = ["empleados", "incidencias", "vacaciones", "prestamos"];
 
 const ETIQUETAS_COLUMNAS = {
@@ -76,26 +73,13 @@ const formatearValorCelda = (valor, columna) => {
   return String(valor);
 };
 
-// 🔥 NUEVA FUNCIÓN: Descubre qué columnas existen realmente en una tabla
 const descubrirColumnasTabla = async (nombreTabla) => {
   try {
-    const { data, error } = await supabase
-      .from(nombreTabla)
-      .select("*")
-      .limit(1);
-    
-    if (error) {
-      console.warn(`⚠️ La tabla '${nombreTabla}' no existe o no es accesible:`, error.message);
-      return [];
-    }
-    
-    if (data && data.length > 0) {
-      return Object.keys(data[0]);
-    }
-    
+    const { data, error } = await supabase.from(nombreTabla).select("*").limit(1);
+    if (error) return [];
+    if (data && data.length > 0) return Object.keys(data[0]);
     return [];
   } catch (err) {
-    console.warn(`⚠️ Error descubriendo columnas de '${nombreTabla}':`, err);
     return [];
   }
 };
@@ -115,11 +99,20 @@ export default function Empleados() {
   const [modalConfigColumnas, setModalConfigColumnas] = useState(false);
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
-  
-  // 🔥 NUEVO: Almacena las columnas REALES que existen en cada tabla
   const [esquemaReal, setEsquemaReal] = useState({});
 
   const [columnasDisponibles, setColumnasDisponibles] = useState([]);
+  
+  // 🔥 NUEVO: Estado para el orden personalizado de columnas
+  const [ordenColumnas, setOrdenColumnas] = useState(() => {
+    try {
+      const guardadas = localStorage.getItem("empleados_orden_columnas");
+      return guardadas ? JSON.parse(guardadas) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [columnasVisibles, setColumnasVisibles] = useState(() => {
     try {
       const guardadas = localStorage.getItem("empleados_columnas_visibles_dinamicas");
@@ -129,50 +122,35 @@ export default function Empleados() {
     }
   });
 
-  // 🔥 NUEVO: Procesar mapeo filtrando SOLO columnas que SÍ existen en las tablas
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion || Object.keys(esquemaReal).length === 0) return [];
     
-    console.log("🔍 Total de entradas en la configuración:", Object.keys(configuracionMapeo.asignacion).length);
-
     const columnasOmitidas = [];
     const columnasValidas = [];
 
     Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
-      // Ignorar si no tiene tabla destino o campo
       if (!info.tablaDestino || !info.tablaDestino.trim()) {
         columnasOmitidas.push({ col: colOriginal, razon: "Marcada como ignorada" });
         return;
       }
-
-      // Ignorar si es tabla catálogo (puestos, departamentos)
       if (TABLAS_CATALOGO.includes(info.tablaDestino)) {
-        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' es catálogo, no relacional` });
+        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' es catálogo` });
         return;
       }
-
-      // Ignorar si la tabla no existe o no fue descubierta
       if (!esquemaReal[info.tablaDestino]) {
-        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' no existe o no es accesible` });
+        columnasOmitidas.push({ col: colOriginal, razon: `Tabla '${info.tablaDestino}' no existe` });
         return;
       }
-
       const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
       if (!campoFinal) {
-        columnasOmitidas.push({ col: colOriginal, razon: "No tiene campo destino definido" });
+        columnasOmitidas.push({ col: colOriginal, razon: "No tiene campo destino" });
         return;
       }
-
-      // 🔥 VERIFICACIÓN CLAVE: ¿Existe esta columna en la tabla real?
       const columnasExistentes = esquemaReal[info.tablaDestino] || [];
       if (!columnasExistentes.includes(campoFinal)) {
-        columnasOmitidas.push({ 
-          col: colOriginal, 
-          razon: `Campo '${campoFinal}' NO existe en tabla '${info.tablaDestino}'` 
-        });
+        columnasOmitidas.push({ col: colOriginal, razon: `Campo '${campoFinal}' NO existe en '${info.tablaDestino}'` });
         return;
       }
-
       columnasValidas.push({
         original: colOriginal,
         tabla: info.tablaDestino,
@@ -181,27 +159,12 @@ export default function Empleados() {
       });
     });
 
-    // Deduplicar por campo
     const unicasMap = new Map();
     columnasValidas.forEach(item => {
-      if (!unicasMap.has(item.campo)) {
-        unicasMap.set(item.campo, item);
-      }
+      if (!unicasMap.has(item.campo)) unicasMap.set(item.campo, item);
     });
 
-    const resultado = Array.from(unicasMap.values());
-    
-    console.log(`✅ Columnas válidas: ${resultado.length}`);
-    console.log(`⚠️ Columnas omitidas: ${columnasOmitidas.length}`);
-    if (columnasOmitidas.length > 0) {
-      console.table(columnasOmitidas);
-    }
-    console.log("📊 Distribución por tabla:", resultado.reduce((acc, c) => {
-      acc[c.tabla] = (acc[c.tabla] || 0) + 1;
-      return acc;
-    }, {}));
-    
-    return resultado;
+    return Array.from(unicasMap.values());
   }, [configuracionMapeo, esquemaReal]);
 
   const columnasPorTabla = useMemo(() => {
@@ -213,10 +176,23 @@ export default function Empleados() {
     return agrupado;
   }, [columnasDelMapeo]);
 
+  // 🔥 NUEVO: Actualizar orden cuando cambian las columnas disponibles
   useEffect(() => {
     if (columnasDelMapeo.length > 0) {
       const nuevasColumnas = columnasDelMapeo.map(c => c.campo);
       setColumnasDisponibles(nuevasColumnas);
+      
+      // Actualizar orden: agregar nuevas columnas al final, mantener las existentes
+      setOrdenColumnas(prev => {
+        const ordenActualizado = [...prev];
+        nuevasColumnas.forEach(col => {
+          if (!ordenActualizado.includes(col)) {
+            ordenActualizado.push(col);
+          }
+        });
+        // Remover columnas que ya no existen
+        return ordenActualizado.filter(col => nuevasColumnas.includes(col));
+      });
       
       setColumnasVisibles(prev => {
         const nuevoEstado = {};
@@ -233,6 +209,11 @@ export default function Empleados() {
   useEffect(() => {
     localStorage.setItem("empleados_columnas_visibles_dinamicas", JSON.stringify(columnasVisibles));
   }, [columnasVisibles]);
+
+  // 🔥 NUEVO: Guardar orden en localStorage
+  useEffect(() => {
+    localStorage.setItem("empleados_orden_columnas", JSON.stringify(ordenColumnas));
+  }, [ordenColumnas]);
 
   useEffect(() => {
     cargarCatalogos();
@@ -252,11 +233,8 @@ export default function Empleados() {
     }
   };
 
-  // 🔥 NUEVO: Descubrir el esquema real de todas las tablas relevantes
   const descubrirEsquemaTablas = async () => {
     const tablasAExplorar = new Set(TABLAS_RELACIONALES_VALIDAS);
-    
-    // También explorar las tablas del mapeo (por si hay otras válidas)
     if (configuracionMapeo?.asignacion) {
       Object.values(configuracionMapeo.asignacion).forEach(info => {
         if (info.tablaDestino && !TABLAS_CATALOGO.includes(info.tablaDestino)) {
@@ -264,24 +242,16 @@ export default function Empleados() {
         }
       });
     }
-
-    console.log("🔎 Descubriendo esquema de tablas:", Array.from(tablasAExplorar));
-
     const resultados = await Promise.all(
       Array.from(tablasAExplorar).map(async (tabla) => {
         const columnas = await descubrirColumnasTabla(tabla);
         return { tabla, columnas };
       })
     );
-
     const esquema = {};
     resultados.forEach(({ tabla, columnas }) => {
-      if (columnas.length > 0) {
-        esquema[tabla] = columnas;
-        console.log(`📋 Tabla '${tabla}': ${columnas.length} columnas`);
-      }
+      if (columnas.length > 0) esquema[tabla] = columnas;
     });
-
     setEsquemaReal(esquema);
     return esquema;
   };
@@ -289,14 +259,10 @@ export default function Empleados() {
   const cargarEmpleados = async () => {
     setLoading(true);
     try {
-      // 1. Consultar tabla principal 'empleados'
       const columnasEmpleados = columnasPorTabla.empleados || [];
       const columnasEsenciales = ["id", "numero_empleado", "nombre_completo", "departamento_id", "puesto_id", "supervisor_id", "activo", "created_at", "updated_at"];
-      
-      // 🔥 Filtrar solo columnas que SÍ existen en empleados
       const columnasExistentesEmpleados = esquemaReal.empleados || [];
       const columnasEmpleadosValidas = columnasEmpleados.filter(c => columnasExistentesEmpleados.includes(c));
-      
       const selectEmpleados = [...new Set([...columnasEsenciales, ...columnasEmpleadosValidas])].join(",");
 
       const { data: empleadosData, error: empleadosError } = await supabase
@@ -306,86 +272,52 @@ export default function Empleados() {
 
       if (empleadosError) throw empleadosError;
 
-      // 2. Consultar tablas relacionadas (SOLO las que tienen empleado_id)
-      const tablasRelacionadas = Object.keys(columnasPorTabla).filter(
-        t => t !== 'empleados' && !TABLAS_CATALOGO.includes(t)
-      );
+      const tablasRelacionadas = Object.keys(columnasPorTabla).filter(t => t !== 'empleados' && !TABLAS_CATALOGO.includes(t));
       const datosRelacionados = {};
 
       if (tablasRelacionadas.length > 0) {
         const consultas = tablasRelacionadas.map(async (tabla) => {
           const columnasTabla = columnasPorTabla[tabla];
           const columnasExistentes = esquemaReal[tabla] || [];
-          
-          // 🔥 Filtrar solo columnas que SÍ existen en esta tabla
           const columnasValidas = columnasTabla.filter(c => columnasExistentes.includes(c));
-          
-          if (columnasValidas.length === 0) {
-            console.warn(`⚠️ Tabla '${tabla}': ninguna columna del mapeo existe. Omitiendo.`);
+          if (columnasValidas.length === 0 || !columnasExistentes.includes('empleado_id')) {
             return { tabla, data: [] };
           }
-          
-          // Verificar que la tabla tenga empleado_id
-          if (!columnasExistentes.includes('empleado_id')) {
-            console.warn(`⚠️ Tabla '${tabla}': no tiene columna 'empleado_id'. Omitiendo.`);
-            return { tabla, data: [] };
-          }
-
           const selectRelacion = [...new Set(["empleado_id", ...columnasValidas, "created_at"])].join(",");
-          
           try {
-            const { data, error } = await supabase
-              .from(tabla)
-              .select(selectRelacion)
-              .order("created_at", { ascending: false });
-            
-            if (error) {
-              console.warn(`⚠️ Error consultando '${tabla}':`, error.message);
-              return { tabla, data: [] };
-            }
-            
+            const { data, error } = await supabase.from(tabla).select(selectRelacion).order("created_at", { ascending: false });
+            if (error) return { tabla, data: [] };
             return { tabla, data: data || [] };
           } catch (err) {
-            console.warn(`⚠️ Error consultando '${tabla}':`, err);
             return { tabla, data: [] };
           }
         });
-
         const resultados = await Promise.all(consultas);
-        resultados.forEach(({ tabla, data }) => {
-          datosRelacionados[tabla] = data;
-        });
+        resultados.forEach(({ tabla, data }) => { datosRelacionados[tabla] = data; });
       }
 
-      // 3. Combinar datos
       const empleadosCombinados = (empleadosData || []).map((empleado) => {
         const empleadoCombinado = {
           ...empleado,
           departamentos: departamentosLista.find(d => d.id === empleado.departamento_id) || null,
           puestos: puestosLista.find(p => p.id === empleado.puesto_id) || null,
         };
-
         tablasRelacionadas.forEach(tabla => {
           const registros = datosRelacionados[tabla] || [];
           const registroReciente = registros.find(r => r.empleado_id === empleado.id);
-          
           if (registroReciente) {
             (columnasPorTabla[tabla] || []).forEach(campo => {
-              if (campo in registroReciente) {
-                empleadoCombinado[campo] = registroReciente[campo];
-              }
+              if (campo in registroReciente) empleadoCombinado[campo] = registroReciente[campo];
             });
           }
         });
-
         return empleadoCombinado;
       });
 
-      console.log(`✅ Se cargaron ${empleadosCombinados.length} empleados`);
       setEmpleados(empleadosCombinados);
     } catch (error) {
-      console.error("❌ Error al cargar empleados:", error);
-      alert(`⚠️ Error al cargar empleados: ${error?.message || "Desconocido"}`);
+      console.error("Error al cargar empleados:", error);
+      alert(`Error: ${error?.message || "Desconocido"}`);
       setEmpleados([]);
     } finally {
       setLoading(false);
@@ -404,15 +336,13 @@ export default function Empleados() {
 
       if (data?.configuracion) {
         setConfiguracionMapeo(data.configuracion);
-        // 🔥 Descubrir esquema DESPUÉS de cargar el mapeo
         await descubrirEsquemaTablas();
         return;
       }
 
       const local = localStorage.getItem("config_mapeo_columnas_dinamico");
       if (local) {
-        const parsed = JSON.parse(local);
-        setConfiguracionMapeo(parsed);
+        setConfiguracionMapeo(JSON.parse(local));
         await descubrirEsquemaTablas();
       }
     } catch (error) {
@@ -422,6 +352,27 @@ export default function Empleados() {
 
   const cambiarVisibilidadColumna = (columna) => {
     setColumnasVisibles(prev => ({ ...prev, [columna]: !prev[columna] }));
+  };
+
+  // 🔥 NUEVO: Funciones para reordenar columnas
+  const moverColumna = (columna, direccion) => {
+    setOrdenColumnas(prev => {
+      const indice = prev.indexOf(columna);
+      if (indice === -1) return prev;
+      
+      const nuevoOrden = [...prev];
+      if (direccion === 'arriba' && indice > 0) {
+        [nuevoOrden[indice - 1], nuevoOrden[indice]] = [nuevoOrden[indice], nuevoOrden[indice - 1]];
+      } else if (direccion === 'abajo' && indice < prev.length - 1) {
+        [nuevoOrden[indice], nuevoOrden[indice + 1]] = [nuevoOrden[indice + 1], nuevoOrden[indice]];
+      }
+      return nuevoOrden;
+    });
+  };
+
+  const restablecerOrdenColumnas = () => {
+    setOrdenColumnas(columnasDelMapeo.map(c => c.campo));
+    alert("✅ Orden restablecido al predeterminado.");
   };
 
   const restablecerPreferenciasColumnas = () => {
@@ -488,7 +439,19 @@ export default function Empleados() {
   const total = empleados.length;
   const activos = empleados.filter((e) => e?.activo ?? true).length;
   const bajas = empleados.filter((e) => !(e?.activo ?? true)).length;
-  const columnasActivas = columnasDisponibles.filter((c) => columnasVisibles[c]);
+  
+  // 🔥 NUEVO: Aplicar orden personalizado a las columnas activas
+  const columnasActivas = useMemo(() => {
+    const visibles = columnasDisponibles.filter(c => columnasVisibles[c]);
+    // Ordenar según el orden personalizado
+    return visibles.sort((a, b) => {
+      const indexA = ordenColumnas.indexOf(a);
+      const indexB = ordenColumnas.indexOf(b);
+      // Si no están en el orden, ponerlas al final
+      return (indexA === -1 ? 9999 : indexA) - (indexB === -1 ? 9999 : indexB);
+    });
+  }, [columnasDisponibles, columnasVisibles, ordenColumnas]);
+
   const totalColumnasTabla = 4 + columnasActivas.length + 2;
 
   return (
@@ -539,13 +502,11 @@ export default function Empleados() {
                 <th className="p-3">Colaborador</th>
                 <th className="p-3">Departamento</th>
                 <th className="p-3">Puesto</th>
-                {columnasDisponibles.map((columna) =>
-                  columnasVisibles[columna] && (
-                    <th key={columna} className={`p-3 text-center ${esColumnaMoneda(columna) ? "bg-emerald-50 text-emerald-900" : "bg-gray-50 text-gray-800"}`}>
-                      {formatearNombreColumna(columna)}
-                    </th>
-                  )
-                )}
+                {columnasActivas.map((columna) => (
+                  <th key={columna} className={`p-3 text-center ${esColumnaMoneda(columna) ? "bg-emerald-50 text-emerald-900" : "bg-gray-50 text-gray-800"}`}>
+                    {formatearNombreColumna(columna)}
+                  </th>
+                ))}
                 <th className="p-3 text-center">Estatus</th>
                 <th className="p-3 text-center">Acciones</th>
               </tr>
@@ -560,15 +521,13 @@ export default function Empleados() {
                     <td className="p-3 font-semibold text-gray-800">{empleado.nombre_completo || "Sin nombre"}</td>
                     <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
                     <td className="p-3">{empleado.puestos?.nombre || "Sin asignar"}</td>
-                    {columnasDisponibles.map((columna) =>
-                      columnasVisibles[columna] && (
-                        <td key={`${empleado.id}-${columna}`} className={`p-3 ${esColumnaMoneda(columna) ? "text-right bg-emerald-50/20 font-medium" : "text-center text-gray-700"}`}>
-                          {columna === "activo" ? (
-                            estaActivo ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span> : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>
-                          ) : formatearValorCelda(empleado[columna], columna)}
-                        </td>
-                      )
-                    )}
+                    {columnasActivas.map((columna) => (
+                      <td key={`${empleado.id}-${columna}`} className={`p-3 ${esColumnaMoneda(columna) ? "text-right bg-emerald-50/20 font-medium" : "text-center text-gray-700"}`}>
+                        {columna === "activo" ? (
+                          estaActivo ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span> : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>
+                        ) : formatearValorCelda(empleado[columna], columna)}
+                      </td>
+                    ))}
                     <td className="p-3 text-center">
                       {estaActivo ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span> : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>}
                     </td>
@@ -587,24 +546,28 @@ export default function Empleados() {
         </div>
       </div>
 
+      {/* 🔥 MODAL MEJORADO CON REORDENAMIENTO */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start pb-3 border-b">
               <div>
-                <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar columnas visibles</h3>
-                <p className="text-xs text-gray-500 mt-1">Solo se muestran columnas que existen en las tablas de Supabase</p>
+                <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar columnas visibles y orden</h3>
+                <p className="text-xs text-gray-500 mt-1">Activa/desactiva columnas y usa las flechas para reordenarlas</p>
               </div>
               <button type="button" onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
 
             <div className="flex flex-wrap justify-between items-center gap-3 bg-slate-50 p-3 rounded-xl">
               <span className="text-xs text-slate-600 font-medium">
-                Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDisponibles.length}</strong> columnas válidas
+                Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDisponibles.length}</strong> columnas
               </span>
               <div className="flex gap-2">
+                <button type="button" onClick={restablecerOrdenColumnas} className="bg-purple-100 hover:bg-purple-200 text-purple-800 px-3 py-2 rounded-lg text-xs font-semibold">
+                  🔄 Orden original
+                </button>
                 <button type="button" onClick={restablecerPreferenciasColumnas} className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-2 rounded-lg text-xs font-semibold">
-                  🔄 Restablecer todas
+                  ✓ Todas visibles
                 </button>
               </div>
             </div>
@@ -624,21 +587,47 @@ export default function Empleados() {
                         {tabla === 'prestamos' && '💳'}
                         {tabla} ({columnasTabla.length} columnas)
                       </h4>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                        {columnasTabla.map((colInfo) => (
-                          <label key={colInfo.campo} className="flex items-start gap-2.5 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl cursor-pointer border border-slate-100 transition">
-                            <input
-                              type="checkbox"
-                              checked={columnasVisibles[colInfo.campo] || false}
-                              onChange={() => cambiarVisibilidadColumna(colInfo.campo)}
-                              className="w-4 h-4 mt-0.5 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <div className="flex-1">
-                              <div className="font-semibold text-slate-700">{colInfo.etiqueta}</div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">📄 Excel: <span className="font-mono text-slate-600">{colInfo.original}</span></div>
+                      <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+                        {columnasTabla.map((colInfo, index) => {
+                          const posicionEnOrden = ordenColumnas.indexOf(colInfo.campo);
+                          const puedeSubir = posicionEnOrden > 0;
+                          const puedeBajar = posicionEnOrden < ordenColumnas.length - 1;
+                          
+                          return (
+                            <div key={colInfo.campo} className="flex items-center gap-2 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition">
+                              <input
+                                type="checkbox"
+                                checked={columnasVisibles[colInfo.campo] || false}
+                                onChange={() => cambiarVisibilidadColumna(colInfo.campo)}
+                                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                              />
+                              <div className="flex-1">
+                                <div className="font-semibold text-slate-700 text-sm">{colInfo.etiqueta}</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">📄 Excel: <span className="font-mono">{colInfo.original}</span></div>
+                              </div>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => moverColumna(colInfo.campo, 'arriba')}
+                                  disabled={!puedeSubir}
+                                  className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold transition"
+                                  title="Mover arriba"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moverColumna(colInfo.campo, 'abajo')}
+                                  disabled={!puedeBajar}
+                                  className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold transition"
+                                  title="Mover abajo"
+                                >
+                                  ↓
+                                </button>
+                              </div>
                             </div>
-                          </label>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -647,7 +636,6 @@ export default function Empleados() {
             ) : (
               <div className="py-8 text-center text-sm text-gray-500 bg-slate-50 rounded-xl border border-dashed border-slate-300">
                 <p>⚠️ No se encontraron columnas válidas.</p>
-                <p className="text-xs mt-1">Verifica la consola del navegador para ver qué columnas fueron omitidas y por qué.</p>
               </div>
             )}
 

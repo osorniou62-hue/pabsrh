@@ -10,13 +10,13 @@ export default function ConfiguracionTablas() {
   // Mapeo dinámico: Relaciona cada columna del Excel con su Tabla, Campo y si usa Manual
   const [asignacionColumnas, setAsignacionColumnas] = useState({});
   
-  // Control de módulos activos / inactivos (Añadido "puestos")
+  // Control de módulos activos / inactivos
   const [modulosActivos, setModulosActivos] = useState({
     empleados: true,
     incidencias: true,
     vacaciones: true,
     prestamos: true,
-    puestos: true, // <-- Módulo de puestos integrado
+    puestos: true,
   });
 
   const [guardando, setGuardando] = useState(false);
@@ -25,7 +25,7 @@ export default function ConfiguracionTablas() {
   const [mostrarModal, setMostrarModal] = useState(false);
   const [datosGuardadosResumen, setDatosGuardadosResumen] = useState(null);
 
-  // Catálogo oficial de tablas y campos existentes en Supabase (Añadido esquema para "puestos")
+  // Catálogo oficial de tablas y campos existentes en Supabase
   const esquemaTablasSupabase = {
     empleados: [
       { key: "numero_empleado", label: "Número de Empleado" },
@@ -49,7 +49,7 @@ export default function ConfiguracionTablas() {
       { key: "descuento_varios", label: "Descuento / Préstamo Semanal" },
       { key: "saldo_prestamo", label: "Saldo / Adeudo Pendiente" },
     ],
-    puestos: [ // <-- Catálogo de campos para el módulo de puestos
+    puestos: [
       { key: "nombre_puesto", label: "Nombre del Puesto" },
       { key: "nivel_jerarquico", label: "Nivel Jerárquico" },
       { key: "descripcion", label: "Descripción de Puesto" },
@@ -73,7 +73,6 @@ export default function ConfiguracionTablas() {
 
       if (data && data.configuracion) {
         if (data.configuracion.asignacion) setAsignacionColumnas(data.configuracion.asignacion);
-        // Combinamos los módulos guardados asegurando que si hay nuevos (como puestos) aparezcan
         if (data.configuracion.modulos) {
           setModulosActivos((prev) => ({ ...prev, ...data.configuracion.modulos }));
         }
@@ -105,7 +104,7 @@ export default function ConfiguracionTablas() {
 
           setColumnasDetectadas(encabezadosValidos);
 
-          // Sugerencia automática inteligente iterando sobre todos los esquemas (incluyendo puestos)
+          // Sugerencia automática inteligente iterando sobre todos los esquemas
           const nuevaAsignacion = {};
           encabezadosValidos.forEach((col) => {
             const colUpper = col.toUpperCase();
@@ -148,13 +147,11 @@ export default function ConfiguracionTablas() {
       
       let nuevoValor = { ...actual, [tipo]: valor };
 
-      // Si cambia de tabla, limpiamos el campo destino anterior por seguridad
       if (tipo === "tablaDestino") {
         nuevoValor.campoDestino = "";
         nuevoValor.esManual = false;
       }
 
-      // Si selecciona la opción manual en el campo destino
       if (tipo === "campoDestino" && valor === "MANUAL") {
         nuevoValor.esManual = true;
         nuevoValor.campoManual = "";
@@ -173,11 +170,65 @@ export default function ConfiguracionTablas() {
     setModulosActivos((prev) => ({ ...prev, [modulo]: !prev[modulo] }));
   };
 
-  // 3. Guardar y actualizar las tablas en Supabase
+  // 🔥 3. Guardar, CREAR COLUMNAS FALTANTES y actualizar las tablas en Supabase
   const guardarYActualizarSupabase = async () => {
     try {
       setGuardando(true);
 
+      // PASO A: Crear automáticamente las columnas que faltan en la base de datos
+      const promesasCreacion = [];
+      
+      Object.entries(asignacionColumnas).forEach(([colOriginal, info]) => {
+        if (info.tablaDestino && info.tablaDestino.trim() !== "") {
+          const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+          
+          if (campoFinal && campoFinal.trim() !== "") {
+            // Determinar el tipo de dato inteligentemente según el nombre del campo
+            let tipoDato = "TEXT";
+            const nombreCampo = campoFinal.toLowerCase();
+            
+            if (nombreCampo.includes("sueldo") || nombreCampo.includes("bono") || 
+                nombreCampo.includes("total") || nombreCampo.includes("saldo") || 
+                nombreCampo.includes("descuento") || nombreCampo.includes("valor") ||
+                nombreCampo.includes("porcentaje") || nombreCampo.includes("dias") ||
+                nombreCampo.includes("horas") || nombreCampo.includes("monto") ||
+                nombreCampo.includes("neto") || nombreCampo.includes("prestamo") ||
+                nombreCampo.includes("adeudo") || nombreCampo.includes("abono") ||
+                nombreCampo.includes("cantidad")) {
+              tipoDato = "NUMERIC";
+            } else if (nombreCampo.includes("fecha") || nombreCampo.includes("alta") || nombreCampo.includes("baja") || nombreCampo.includes("ingreso")) {
+              tipoDato = "DATE";
+            } else if (nombreCampo.includes("activo") || nombreCampo.includes("estatus")) {
+              tipoDato = "BOOLEAN";
+            }
+
+            // Llamar a la función "mágica" de Supabase para crear la columna si no existe
+            promesasCreacion.push(
+              supabase.rpc("agregar_columna_dinamica", {
+                p_tabla: info.tablaDestino,
+                p_columna: campoFinal,
+                p_tipo: tipoDato,
+              })
+            );
+          }
+        }
+      });
+
+      // Esperar a que todas las columnas sean creadas (o verificadas)
+      if (promesasCreacion.length > 0) {
+        console.log(`🔨 Creando/Verificando ${promesasCreacion.length} columnas en la base de datos...`);
+        const resultados = await Promise.all(promesasCreacion);
+        
+        const errores = resultados.filter(r => r.error);
+        if (errores.length > 0) {
+          console.warn("⚠️ Algunas columnas no pudieron crearse (¿Ejecutaste el script SQL de la función?):", errores);
+          alert("⚠️ Advertencia: No se pudieron crear algunas columnas automáticamente. Asegúrate de haber ejecutado el script SQL de 'agregar_columna_dinamica' en Supabase.");
+        } else {
+          console.log("✅ Todas las columnas necesarias existen o fueron creadas exitosamente.");
+        }
+      }
+
+      // PASO B: Guardar la configuración del mapeo
       const payloadConfiguracion = {
         asignacion: asignacionColumnas,
         modulos: modulosActivos,
@@ -203,7 +254,7 @@ export default function ConfiguracionTablas() {
 
     } catch (error) {
       console.error("Error al guardar en Supabase:", error.message);
-      alert("Hubo un error al actualizar las tablas en Supabase.");
+      alert("Hubo un error al actualizar las tablas en Supabase: " + error.message);
     } finally {
       setGuardando(false);
     }
@@ -216,6 +267,8 @@ export default function ConfiguracionTablas() {
           <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Asignación de Columnas</h1>
           <p className="text-gray-500 mt-1">
             Analiza las columnas de tu archivo, asígnalas a su tabla y elige un campo predefinido o escribe uno de forma manual.
+            <br/>
+            <span className="text-xs text-emerald-600 font-semibold">💡 Al guardar, el sistema creará automáticamente las columnas que falten en la base de datos.</span>
           </p>
         </div>
 
@@ -233,7 +286,7 @@ export default function ConfiguracionTablas() {
           />
         </div>
 
-        {/* PASO 2: Control de Módulos Activos (Se renderizan de forma dinámica todos los módulos definidos) */}
+        {/* PASO 2: Control de Módulos Activos */}
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
           <h2 className="text-lg font-bold text-slate-700 mb-3">2. Módulos y Tablas Activas en el Sistema</h2>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-3">
@@ -273,7 +326,7 @@ export default function ConfiguracionTablas() {
                       <span className="font-bold text-slate-800 text-sm break-all">{colOriginal}</span>
                     </div>
 
-                    {/* Selector Dinámico de Tabla de Supabase (Generado a partir de las llaves de esquemaTablasSupabase) */}
+                    {/* Selector Dinámico de Tabla de Supabase */}
                     <div className="w-full md:w-1/3 flex flex-col gap-1">
                       <label className="text-xs text-gray-500 font-medium">Tabla Destino:</label>
                       <select
@@ -330,7 +383,7 @@ export default function ConfiguracionTablas() {
                                 [colOriginal]: { ...prev[colOriginal], campoManual: val }
                               }));
                             }}
-                            placeholder="Escribe el nombre del campo..."
+                            placeholder="Escribe el nombre del campo (ej: sueldo_neto)..."
                             className="border rounded-lg p-2 bg-white text-sm w-full font-mono text-slate-700"
                           />
                           <button
@@ -355,9 +408,15 @@ export default function ConfiguracionTablas() {
               <button 
                 onClick={guardarYActualizarSupabase}
                 disabled={guardando}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium shadow-lg transition-all"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium shadow-lg transition-all flex items-center gap-2"
               >
-                {guardando ? "Actualizando tablas en Supabase..." : "💾 Guardar y Actualizar Tablas en Supabase"}
+                {guardando ? (
+                  <>
+                    <span className="animate-spin">⏳</span> Creando columnas y guardando...
+                  </>
+                ) : (
+                  "💾 Guardar y Crear Columnas en Supabase"
+                )}
               </button>
             </div>
 
@@ -371,7 +430,7 @@ export default function ConfiguracionTablas() {
               
               <div className="flex justify-between items-center pb-4 border-b mb-4">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-800">🎉 ¡Actualización Exitosa en Supabase!</h2>
+                  <h2 className="text-2xl font-bold text-slate-800">🎉 ¡Actualización Exitosa!</h2>
                   <p className="text-xs text-emerald-600 font-semibold mt-1">
                     Última sincronización: {new Date(datosGuardadosResumen.actualizado_at).toLocaleString()}
                   </p>

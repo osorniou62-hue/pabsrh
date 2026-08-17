@@ -9,7 +9,8 @@ const COLUMNAS_FIJAS = ["numero_empleado", "nombre_completo", "departamento", "p
 
 const COLUMNAS_MONEDA = [
   "sueldo", "salario", "bono", "apoyo", "gratificacion", "percepcion",
-  "deduccion", "importe", "monto", "pago", "comision", "neto", "total"
+  "deduccion", "importe", "monto", "pago", "comision", "neto", "total",
+  "descuento", "abono", "saldo", "prestamo", "adeudo"
 ];
 
 const ETIQUETAS_COLUMNAS = {
@@ -95,14 +96,15 @@ export default function Empleados() {
     }
   });
 
-  // 🔥 DIAGNÓSTICO: Procesar el mapeo y deduplicar por campo destino
+  // 🔥 NUEVO: Procesar mapeo SIN filtrar por tabla (incluye todos los módulos excepto ignoradas)
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion) return [];
     
     console.log("🔍 Total de entradas en la configuración de Supabase:", Object.keys(configuracionMapeo.asignacion).length);
 
+    // 🔥 FILTRO: Solo columnas que tengan tabla destino Y campo definido (no ignoradas)
     const mapeoProcesado = Object.entries(configuracionMapeo.asignacion)
-      .filter(([_, info]) => info.tablaDestino && (info.campoDestino || info.campoManual))
+      .filter(([_, info]) => info.tablaDestino && info.tablaDestino !== "" && (info.campoDestino || info.campoManual))
       .map(([colOriginal, info]) => ({
         original: colOriginal,
         tabla: info.tablaDestino,
@@ -110,7 +112,7 @@ export default function Empleados() {
         etiqueta: formatearNombreColumna(info.esManual ? info.campoManual : info.campoDestino)
       }));
 
-    // Deduplicar: Si dos columnas de Excel apuntan al mismo campo, solo mostramos una
+    // Deduplicar por campo
     const unicasMap = new Map();
     mapeoProcesado.forEach(item => {
       if (!unicasMap.has(item.campo)) {
@@ -119,12 +121,25 @@ export default function Empleados() {
     });
 
     const columnasUnicas = Array.from(unicasMap.values());
-    console.log("✅ Columnas únicas válidas para mostrar:", columnasUnicas.length, columnasUnicas.map(c => c.campo));
+    console.log("✅ Columnas válidas (todos los módulos):", columnasUnicas.length);
+    console.log("📊 Distribución por tabla:", columnasUnicas.reduce((acc, c) => {
+      acc[c.tabla] = (acc[c.tabla] || 0) + 1;
+      return acc;
+    }, {}));
     
     return columnasUnicas;
   }, [configuracionMapeo]);
 
-  // 🔥 ACTUALIZAR ESTADO cuando el mapeo cambia
+  // 🔥 NUEVO: Agrupar columnas por tabla para hacer consultas separadas
+  const columnasPorTabla = useMemo(() => {
+    const agrupado = {};
+    columnasDelMapeo.forEach(col => {
+      if (!agrupado[col.tabla]) agrupado[col.tabla] = [];
+      agrupado[col.tabla].push(col.campo);
+    });
+    return agrupado;
+  }, [columnasDelMapeo]);
+
   useEffect(() => {
     if (columnasDelMapeo.length > 0) {
       const nuevasColumnas = columnasDelMapeo.map(c => c.campo);
@@ -133,7 +148,6 @@ export default function Empleados() {
       setColumnasVisibles(prev => {
         const nuevoEstado = {};
         nuevasColumnas.forEach(col => {
-          // Respeta la preferencia guardada, o la activa por defecto si es nueva
           nuevoEstado[col] = prev[col] !== undefined ? prev[col] : true;
         });
         return nuevoEstado;
@@ -165,34 +179,90 @@ export default function Empleados() {
     }
   };
 
+  // 🔥 NUEVO: Consultar múltiples tablas y combinar datos
   const cargarEmpleados = async () => {
     setLoading(true);
     try {
+      // 1. Consultar tabla principal 'empleados'
+      const columnasEmpleados = columnasPorTabla.empleados || [];
       const columnasEsenciales = ["id", "numero_empleado", "nombre_completo", "departamento_id", "puesto_id", "supervisor_id", "activo", "created_at", "updated_at"];
-      const columnasDinamicas = columnasDelMapeo.map(c => c.campo);
-      const todasLasColumnas = [...new Set([...columnasEsenciales, ...columnasDinamicas])];
-      const selectString = todasLasColumnas.join(",");
+      const selectEmpleados = [...new Set([...columnasEsenciales, ...columnasEmpleados])].join(",");
+
+      console.log("📊 Consultando empleados con columnas:", selectEmpleados);
 
       const { data: empleadosData, error: empleadosError } = await supabase
         .from("empleados")
-        .select(selectString)
+        .select(selectEmpleados)
         .order("nombre_completo");
 
       if (empleadosError) throw empleadosError;
 
-      const empleadosMapeados = (empleadosData || []).map((empleado) => ({
-        ...empleado,
-        departamentos: departamentosLista.find(d => d.id === empleado.departamento_id) || null,
-        puestos: puestosLista.find(p => p.id === empleado.puesto_id) || null,
-      }));
+      // 2. Consultar tablas relacionadas (incidencias, vacaciones, prestamos, puestos)
+      const tablasRelacionadas = Object.keys(columnasPorTabla).filter(t => t !== 'empleados');
+      const datosRelacionados = {};
 
-      setEmpleados(empleadosMapeados);
+      if (tablasRelacionadas.length > 0) {
+        const consultas = tablasRelacionadas.map(async (tabla) => {
+          const columnasTabla = columnasPorTabla[tabla];
+          // Incluir empleado_id para hacer el JOIN en el frontend
+          const selectRelacion = [...new Set(["empleado_id", ...columnasTabla, "created_at"])].join(",");
+          
+          try {
+            const { data, error } = await supabase
+              .from(tabla)
+              .select(selectRelacion)
+              .order("created_at", { ascending: false });
+            
+            if (error) {
+              console.warn(`⚠️ No se pudo consultar la tabla '${tabla}':`, error.message);
+              return { tabla, data: [] };
+            }
+            
+            return { tabla, data: data || [] };
+          } catch (err) {
+            console.warn(`⚠️ Error consultando '${tabla}':`, err);
+            return { tabla, data: [] };
+          }
+        });
+
+        const resultados = await Promise.all(consultas);
+        resultados.forEach(({ tabla, data }) => {
+          datosRelacionados[tabla] = data;
+        });
+      }
+
+      // 3. Combinar todos los datos en el frontend
+      const empleadosCombinados = (empleadosData || []).map((empleado) => {
+        const empleadoCombinado = {
+          ...empleado,
+          departamentos: departamentosLista.find(d => d.id === empleado.departamento_id) || null,
+          puestos: puestosLista.find(p => p.id === empleado.puesto_id) || null,
+        };
+
+        // Agregar datos de cada tabla relacionada
+        tablasRelacionadas.forEach(tabla => {
+          const registros = datosRelacionados[tabla] || [];
+          // Tomar el registro más reciente para este empleado
+          const registroReciente = registros.find(r => r.empleado_id === empleado.id);
+          
+          if (registroReciente) {
+            // Agregar cada columna de la tabla relacionada al empleado
+            columnasPorTabla[tabla].forEach(campo => {
+              empleadoCombinado[campo] = registroReciente[campo];
+            });
+          }
+        });
+
+        return empleadoCombinado;
+      });
+
+      console.log(`✅ Se cargaron ${empleadosCombinados.length} empleados con datos de ${tablasRelacionadas.length + 1} tablas`);
+      setEmpleados(empleadosCombinados);
     } catch (error) {
       console.error("Error al cargar empleados:", error);
       
-      // 🔥 ALERTA INTELIGENTE: Si el error es por una columna que no existe
       if (error?.message?.includes("column") || error?.message?.includes("does not exist")) {
-        alert("⚠️ ERROR DE COLUMNA: Estás intentando mostrar un campo que NO existe físicamente en la tabla 'empleados' de Supabase.\n\nRevisa tu mapeo: si asignaste columnas a 'incidencias' o 'vacaciones', esas tablas deben unirse o las columnas deben existir en 'empleados'.");
+        alert("⚠️ ERROR: Una de las columnas mapeadas no existe en la tabla correspondiente. Revisa tu configuración.");
       }
       setEmpleados([]);
     } finally {
@@ -227,7 +297,6 @@ export default function Empleados() {
     setColumnasVisibles(prev => ({ ...prev, [columna]: !prev[columna] }));
   };
 
-  // 🔥 NUEVO: Función para limpiar caché corrupta
   const restablecerPreferenciasColumnas = () => {
     const nuevoEstado = {};
     columnasDelMapeo.forEach(col => { nuevoEstado[col.campo] = true; });
@@ -298,11 +367,10 @@ export default function Empleados() {
   return (
     <Layout>
       <div className="space-y-6">
-        {/* ... (Encabezado y KPIs se mantienen igual que tu versión anterior) ... */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
           <div>
             <h1 className="text-4xl font-bold text-gray-800">👥 Empleados</h1>
-            <p className="text-gray-500 mt-2">Gestión sincronizada con la configuración de importación</p>
+            <p className="text-gray-500 mt-2">Gestión sincronizada con todos los módulos (empleados, incidencias, vacaciones, préstamos)</p>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-4 md:mt-0">
             <button type="button" onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">
@@ -392,14 +460,13 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* 🔥 MODAL DE COLUMNAS MEJORADO */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start pb-3 border-b">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar columnas visibles</h3>
-                <p className="text-xs text-gray-500 mt-1">Selecciona las columnas derivadas de tu mapeo de Excel.</p>
+                <p className="text-xs text-gray-500 mt-1">Columnas de todos los módulos (excepto ignoradas)</p>
               </div>
               <button type="button" onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
@@ -416,22 +483,40 @@ export default function Empleados() {
             </div>
 
             {columnasDelMapeo.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1 text-xs">
-                {columnasDelMapeo.map((colInfo) => (
-                  <label key={colInfo.campo} className="flex items-start gap-2.5 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl cursor-pointer border border-slate-100 transition">
-                    <input
-                      type="checkbox"
-                      checked={columnasVisibles[colInfo.campo] || false}
-                      onChange={() => cambiarVisibilidadColumna(colInfo.campo)}
-                      className="w-4 h-4 mt-0.5 text-blue-600 rounded focus:ring-blue-500"
-                    />
-                    <div className="flex-1">
-                      <div className="font-semibold text-slate-700">{colInfo.etiqueta}</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">📄 Excel: <span className="font-mono text-slate-600">{colInfo.original}</span></div>
-                      <div className="text-[10px] text-blue-600 mt-0.5 capitalize">🗄️ Tabla: {colInfo.tabla}</div>
+              <div className="space-y-4">
+                {Object.keys(columnasPorTabla).map(tabla => {
+                  const columnasTabla = columnasDelMapeo.filter(c => c.tabla === tabla);
+                  if (columnasTabla.length === 0) return null;
+                  
+                  return (
+                    <div key={tabla} className="border border-slate-200 rounded-xl p-4">
+                      <h4 className="text-sm font-bold text-slate-700 mb-3 capitalize flex items-center gap-2">
+                        {tabla === 'empleados' && '👥'}
+                        {tabla === 'incidencias' && '⚡'}
+                        {tabla === 'vacaciones' && '🌴'}
+                        {tabla === 'prestamos' && '💳'}
+                        {tabla === 'puestos' && '💼'}
+                        {tabla} ({columnasTabla.length} columnas)
+                      </h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                        {columnasTabla.map((colInfo) => (
+                          <label key={colInfo.campo} className="flex items-start gap-2.5 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl cursor-pointer border border-slate-100 transition">
+                            <input
+                              type="checkbox"
+                              checked={columnasVisibles[colInfo.campo] || false}
+                              onChange={() => cambiarVisibilidadColumna(colInfo.campo)}
+                              className="w-4 h-4 mt-0.5 text-blue-600 rounded focus:ring-blue-500"
+                            />
+                            <div className="flex-1">
+                              <div className="font-semibold text-slate-700">{colInfo.etiqueta}</div>
+                              <div className="text-[10px] text-slate-500 mt-0.5">📄 Excel: <span className="font-mono text-slate-600">{colInfo.original}</span></div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </label>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="py-8 text-center text-sm text-gray-500 bg-slate-50 rounded-xl border border-dashed border-slate-300">
@@ -447,7 +532,6 @@ export default function Empleados() {
         </div>
       )}
 
-      {/* ... (El Modal de Relación y Edición Rápida se mantienen idénticos a tu versión anterior) ... */}
       {modalRelacion && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 border border-slate-100">

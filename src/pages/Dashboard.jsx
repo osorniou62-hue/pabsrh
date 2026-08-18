@@ -249,6 +249,14 @@ export default function Dashboard() {
           descripcion="Datos corporativos."
           ruta="/configuracion"
         />
+
+<Modulo
+  icono="👷"
+  titulo="Portal Supervisor"
+  descripcion="Captura de incidencias del equipo."
+  ruta="/incidencias/supervisor"
+/>
+        
       </div>
     </Layout>
   );

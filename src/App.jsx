@@ -23,6 +23,7 @@ import RecibosMasivos from "./pages/RecibosMasivos";
 import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
 import ImportarEmpleados from "./pages/ImportarEmpleados";
 import ConfiguracionTablas from "./pages/ConfiguracionTablas";
+import IncidenciasSupervisor from "./pages/IncidenciasSupervisor";
  
 
 
@@ -152,7 +153,8 @@ export default function App() {
 />
 
 <Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
-      
+
+<Route path="/incidencias/supervisor" element={<IncidenciasSupervisor />} />      
       </Routes>
 
     </BrowserRouter>

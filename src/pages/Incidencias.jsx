@@ -91,7 +91,7 @@ export default function Incidencias() {
 
   const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
 
-  // 🔥 CARGA EN PARALELO (mucho más rápido)
+  // 🔥 CARGA EN PARALELO
   useEffect(() => {
     const cargarTodo = async () => {
       setLoadingEmpleados(true);
@@ -229,7 +229,6 @@ export default function Incidencias() {
       }
       if (error) throw error;
       setModalCaptura({ abierto: false, empleado: null });
-      // Recargar solo incidencias, no empleados
       const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
       setIncidencias(data || []);
     } catch (err) { alert("Error: " + err.message); }
@@ -286,7 +285,6 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, estadoFiltro]);
 
-  // 🔥 PAGINACIÓN
   const totalPaginas = Math.ceil(registrosFiltrados.length / ITEMS_POR_PAGINA);
   const registrosPaginados = useMemo(() => {
     const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
@@ -332,7 +330,7 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* 🔥 SELECTOR DE PERÍODO MEJORADO */}
+        {/* 🔥 SELECTOR DE PERÍODO */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex flex-col md:flex-row items-center gap-4">
             <div className="flex items-center gap-3">
@@ -363,90 +361,43 @@ export default function Incidencias() {
           <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
         </div>
 
-        {/* 🔥 TABS MEJORADOS - CARDS GRANDES */}
-        <div className="grid md:grid-cols-2 gap-4">
+        {/* 🔥 TABS COMPACTOS */}
+        <div className="flex gap-2">
           <button
             onClick={() => setVistaActual("supervisor")}
-            className={`group relative overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 border-2 ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${
               vistaActual === "supervisor"
-                ? "bg-gradient-to-br from-blue-500 to-blue-700 text-white border-blue-500 shadow-lg shadow-blue-500/30 scale-[1.02]"
-                : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:shadow-md"
+                ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30"
+                : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"
             }`}
           >
-            <div className="flex items-start justify-between mb-4">
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition ${
-                vistaActual === "supervisor" ? "bg-white/20" : "bg-blue-100"
-              }`}>
-                👷
-              </div>
-              {vistaActual === "supervisor" && (
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold">
-                  ACTIVO
-                </div>
-              )}
-            </div>
-            <h3 className={`text-xl font-black mb-1 ${vistaActual === "supervisor" ? "text-white" : "text-slate-800"}`}>
-              Vista Supervisor
-            </h3>
-            <p className={`text-sm mb-3 ${vistaActual === "supervisor" ? "text-white/90" : "text-slate-500"}`}>
-              Captura rápida de incidencias diarias
-            </p>
-            <div className="flex items-center gap-2 text-xs">
-              <span className={`px-2 py-1 rounded-lg font-semibold ${
-                vistaActual === "supervisor" ? "bg-white/20 text-white" : "bg-blue-100 text-blue-700"
-              }`}>
-                📝 {kpis.sinCaptura} sin captura
+            <span className="text-base">👷</span>
+            <span>Supervisor</span>
+            {kpis.sinCaptura > 0 && vistaActual !== "supervisor" && (
+              <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {kpis.sinCaptura}
               </span>
-              <span className={`px-2 py-1 rounded-lg font-semibold ${
-                vistaActual === "supervisor" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
-              }`}>
-                ✏️ Solo campos permitidos
-              </span>
-            </div>
+            )}
           </button>
-
           <button
             onClick={() => setVistaActual("rrhh")}
-            className={`group relative overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 border-2 ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${
               vistaActual === "rrhh"
-                ? "bg-gradient-to-br from-purple-500 to-purple-700 text-white border-purple-500 shadow-lg shadow-purple-500/30 scale-[1.02]"
-                : "bg-white text-slate-700 border-slate-200 hover:border-purple-300 hover:shadow-md"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/30"
+                : "bg-white text-slate-600 border-slate-200 hover:border-purple-300 hover:text-purple-600"
             }`}
           >
-            <div className="flex items-start justify-between mb-4">
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition ${
-                vistaActual === "rrhh" ? "bg-white/20" : "bg-purple-100"
-              }`}>
-                🔍
-              </div>
-              {vistaActual === "rrhh" && (
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold">
-                  ACTIVO
-                </div>
-              )}
-            </div>
-            <h3 className={`text-xl font-black mb-1 ${vistaActual === "rrhh" ? "text-white" : "text-slate-800"}`}>
-              Vista Recursos Humanos
-            </h3>
-            <p className={`text-sm mb-3 ${vistaActual === "rrhh" ? "text-white/90" : "text-slate-500"}`}>
-              Validación, ajustes y aprobación final
-            </p>
-            <div className="flex items-center gap-2 text-xs">
-              <span className={`px-2 py-1 rounded-lg font-semibold ${
-                vistaActual === "rrhh" ? "bg-white/20 text-white" : "bg-amber-100 text-amber-700"
-              }`}>
-                ⏳ {kpis.pendientes} pendientes
+            <span className="text-base">🔍</span>
+            <span>Recursos Humanos</span>
+            {kpis.pendientes > 0 && vistaActual !== "rrhh" && (
+              <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {kpis.pendientes}
               </span>
-              <span className={`px-2 py-1 rounded-lg font-semibold ${
-                vistaActual === "rrhh" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
-              }`}>
-                🔒 Control total
-              </span>
-            </div>
+            )}
           </button>
         </div>
 
-        {/* 🔥 FILTROS MODERNOS */}
+        {/* 🔥 FILTROS */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="grid md:grid-cols-4 gap-3">
             <div className="relative">
@@ -505,7 +456,6 @@ export default function Incidencias() {
               </thead>
               <tbody>
                 {loadingEmpleados ? (
-                  // 🔥 SKELETON LOADERS
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-b border-slate-100">
                       {Array.from({ length: 6 }).map((_, j) => (
@@ -609,7 +559,7 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* MODALES (sin cambios en funcionalidad) */}
+      {/* 🔥 MODALES */}
       {modalCaptura.abierto && modalCaptura.empleado && (
         <ModalCaptura
           empleado={modalCaptura.empleado}
@@ -720,34 +670,29 @@ export default function Incidencias() {
 // 🔥 COMPONENTE KPI MODERNO
 function KpiModerno({ titulo, valor, icono, color }) {
   const colores = {
-    blue: "from-blue-500 to-blue-600 text-blue-600 bg-blue-50",
-    indigo: "from-indigo-500 to-indigo-600 text-indigo-600 bg-indigo-50",
-    gray: "from-slate-500 to-slate-600 text-slate-600 bg-slate-50",
-    amber: "from-amber-500 to-amber-600 text-amber-600 bg-amber-50",
-    emerald: "from-emerald-500 to-emerald-600 text-emerald-600 bg-emerald-50",
-    red: "from-red-500 to-red-600 text-red-600 bg-red-50",
+    blue: { bg: "bg-blue-50", text: "text-blue-600" },
+    indigo: { bg: "bg-indigo-50", text: "text-indigo-600" },
+    gray: { bg: "bg-slate-50", text: "text-slate-600" },
+    amber: { bg: "bg-amber-50", text: "text-amber-600" },
+    emerald: { bg: "bg-emerald-50", text: "text-emerald-600" },
+    red: { bg: "bg-red-50", text: "text-red-600" },
   };
-  const [gradiente, textColor, bgColor] = colores[color].split(" ").reduce((acc, c, i) => {
-    if (i === 0 || i === 1) acc[0] = (acc[0] || "") + " " + c;
-    else if (i === 2) acc[1] = c;
-    else acc[2] = c;
-    return acc;
-  }, []);
+  const { bg, text } = colores[color];
 
   return (
     <div className="bg-white rounded-2xl p-4 border border-slate-200 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-2">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${bgColor}`}>
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${bg}`}>
           {icono}
         </div>
       </div>
-      <div className={`text-2xl font-black ${textColor}`}>{valor}</div>
+      <div className={`text-2xl font-black ${text}`}>{valor}</div>
       <div className="text-xs text-slate-500 font-medium mt-1">{titulo}</div>
     </div>
   );
 }
 
-// MODAL CAPTURA SUPERVISOR
+// 🔥 MODAL CAPTURA SUPERVISOR
 function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
@@ -796,7 +741,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   );
 }
 
-// MODAL REVISIÓN RH
+// 🔥 MODAL REVISIÓN RH
 function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   const { empleado, incidencia } = registro;
   const [valores, setValores] = useState(() => {

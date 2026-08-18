@@ -408,8 +408,13 @@ export default function Empleados() {
             <button onClick={() => setModalEspeciales(true)} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">⚡ Especiales ({totalEspecialesActivas})</button>
             <button onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">⚙️ Columnas ({columnasActivas.length})</button>
             <button onClick={() => setModalRelacion(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">🔗 Relación</button>
-            <Link to="/empleados/importar" className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">📝 Editar</Link>
-            <Link to="/empleados/nuevo" className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm shadow-sm">+ Nuevo</Link>
+            <Link to="/empleados/importar" className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">📝 Importar</Link>
+            
+            {/* 🔥 BOTÓN ACTUALIZADO: Texto más claro y ruta correcta */}
+            <Link to="/empleados/nuevo" className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">
+              ➕ Nuevo Empleado
+            </Link>
+            
           </div>
         </div>
 

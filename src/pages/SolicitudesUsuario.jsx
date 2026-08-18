@@ -28,7 +28,7 @@ export default function SolicitudesUsuario() {
     setLoading(false);
   };
 
-  // Filtrar solicitudes según el estado seleccionado
+  // 🔥 Filtrar solicitudes según el estado seleccionado
   const solicitudesFiltradas = solicitudes.filter(s => {
     if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
     if (filtro === "APROBADAS") return s.estatus === "APROBADA";
@@ -44,19 +44,18 @@ export default function SolicitudesUsuario() {
     try {
       setLoading(true);
 
-      // 🔥 1. Búsqueda robusta del correo (por si la columna se llama 'email' o 'correo')
+      // 🔥 Búsqueda robusta del correo
       const correoRaw = solicitud.correo || solicitud.email || "";
       const passwordRaw = solicitud.password || "";
 
-      // Depuración: muestra en consola qué está llegando realmente
       console.log("🔍 Datos de la solicitud a aprobar:", solicitud);
 
       const correoLimpio = String(correoRaw).trim().toLowerCase();
       const passwordLimpio = String(passwordRaw).trim();
 
-      // 2. Validación básica con mensaje de error detallado
+      // Validación básica
       if (!correoLimpio || !correoLimpio.includes('@')) {
-        alert(`⚠️ El correo electrónico es inválido o está vacío.\n\nValor recibido en el sistema: "${correoRaw}"\n\nPor favor, rechaza esta solicitud y pide al usuario que se registre con un correo válido.`);
+        alert(`⚠️ El correo electrónico es inválido o está vacío.\n\nValor recibido: "${correoRaw}"\n\nPor favor, rechaza esta solicitud y pide al usuario que se registre con un correo válido.`);
         setLoading(false);
         return;
       }
@@ -67,7 +66,7 @@ export default function SolicitudesUsuario() {
         return;
       }
 
-      // 3. Crear el usuario en Supabase Authentication
+      // 1. Intentar crear el usuario en Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: correoLimpio,
         password: passwordLimpio,
@@ -76,12 +75,33 @@ export default function SolicitudesUsuario() {
         },
       });
 
-      if (authError) throw new Error(`Supabase rechazó el correo: ${authError.message}`);
+      // 2. 🔥 MANEJO ESPECIAL: Si el correo ya existe en Auth
+      if (authError) {
+        if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
+          
+          // Marcamos la solicitud como APROBADA para sacarla de pendientes
+          await supabase.from("solicitudes_usuario")
+            .update({ estatus: "APROBADA" })
+            .eq("id", solicitud.id);
+            
+          setSolicitudes(prev => prev.map(s => 
+            s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s
+          ));
+
+          alert(`⚠️ El correo "${correoLimpio}" ya tiene una cuenta registrada en el sistema.\n\nLa solicitud se marcará como APROBADA para retirarla de la lista.\n\n💡 El usuario ya puede iniciar sesión. Si olvidó su contraseña, puede usar la opción de recuperación en el Login, o puedes gestionar sus permisos en el módulo de Usuarios.`);
+          
+          setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
+          setLoading(false);
+          return;
+        }
+        
+        throw new Error(`Supabase rechazó la creación: ${authError.message}`);
+      }
 
       const nuevoUserId = authData.user?.id;
 
       if (nuevoUserId) {
-        // 4. Crear o actualizar el perfil
+        // 3. Crear o actualizar el perfil
         const { error: profileError } = await supabase.from("profiles").upsert(
           {
             id: nuevoUserId,
@@ -96,12 +116,11 @@ export default function SolicitudesUsuario() {
 
         if (profileError) throw profileError;
 
-        // 5. ACTUALIZACIÓN OPTIMISTA: Cambiar estado localmente al instante
+        // 4. Actualizar estado de la solicitud
         setSolicitudes(prev => prev.map(s => 
           s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s
         ));
 
-        // Refetch de respaldo en la BD
         const { error: updateError } = await supabase
           .from("solicitudes_usuario")
           .update({ estatus: "APROBADA" })
@@ -126,32 +145,41 @@ export default function SolicitudesUsuario() {
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
+      console.log("🔄 Intentando rechazar solicitud ID:", solicitud.id);
 
-      // ACTUALIZACIÓN OPTIMISTA
+      // 1. Actualizar en la base de datos PRIMERO
+      const { data, error } = await supabase
+        .from("solicitudes_usuario")
+        .update({ estatus: "RECHAZADA" })
+        .eq("id", solicitud.id)
+        .select();
+
+      console.log("📡 Respuesta de Supabase:", { data, error });
+
+      if (error) {
+        throw new Error(`Error de base de datos: ${error.message}`);
+      }
+
+      // 2. Si la base de datos respondió con éxito, actualizamos la pantalla
       setSolicitudes(prev => prev.map(s => 
         s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s
       ));
 
+      // 3. Cerrar el modal
       setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
+      
+      console.log("✅ Solicitud rechazada exitosamente");
 
-      const { error } = await supabase
-        .from("solicitudes_usuario")
-        .update({ estatus: "RECHAZADA" })
-        .eq("id", solicitud.id);
-
-      if (error) throw error;
-
-      await cargarSolicitudes();
     } catch (error) {
-      console.error("Error al rechazar:", error);
-      alert("Error al rechazar: " + error.message);
+      console.error("❌ FALLO AL RECHAZAR:", error);
+      alert(`No se pudo rechazar la solicitud.\n\nDetalle del error: ${error.message}\n\nRevisa la consola (F12) para más detalles.`);
       await cargarSolicitudes();
     } finally {
       setLoading(false);
     }
   };
 
-  // 🔥 NUEVO: Eliminar definitivamente de la base de datos
+  // 🔥 Eliminar definitivamente de la base de datos
   const eliminarDefinitivamente = async (id) => {
     if (!window.confirm("¿Estás seguro de eliminar esta solicitud permanentemente?")) return;
     try {
@@ -181,21 +209,49 @@ export default function SolicitudesUsuario() {
         </Link>
       </div>
 
-      {/* KPIs + FILTROS */}
+      {/* 🔥 KPIs + FILTROS COMBINADOS */}
       <div className="grid md:grid-cols-4 gap-3">
-        <button onClick={() => setFiltro("PENDIENTES")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "PENDIENTES" ? "bg-amber-50 border-amber-400 shadow-md" : "bg-white border-slate-200 hover:border-amber-200"}`}>
+        <button
+          onClick={() => setFiltro("PENDIENTES")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "PENDIENTES"
+              ? "bg-amber-50 border-amber-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-amber-200"
+          }`}
+        >
           <div className="text-xs text-slate-500 font-semibold uppercase">Pendientes</div>
           <div className="text-3xl font-black text-amber-600">{pendientes}</div>
         </button>
-        <button onClick={() => setFiltro("APROBADAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "APROBADAS" ? "bg-emerald-50 border-emerald-400 shadow-md" : "bg-white border-slate-200 hover:border-emerald-200"}`}>
+        <button
+          onClick={() => setFiltro("APROBADAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "APROBADAS"
+              ? "bg-emerald-50 border-emerald-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-emerald-200"
+          }`}
+        >
           <div className="text-xs text-slate-500 font-semibold uppercase">Aprobadas</div>
           <div className="text-3xl font-black text-emerald-600">{aprobadas}</div>
         </button>
-        <button onClick={() => setFiltro("RECHAZADAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "RECHAZADAS" ? "bg-red-50 border-red-400 shadow-md" : "bg-white border-slate-200 hover:border-red-200"}`}>
+        <button
+          onClick={() => setFiltro("RECHAZADAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "RECHAZADAS"
+              ? "bg-red-50 border-red-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-red-200"
+          }`}
+        >
           <div className="text-xs text-slate-500 font-semibold uppercase">Rechazadas</div>
           <div className="text-3xl font-black text-red-600">{rechazadas}</div>
         </button>
-        <button onClick={() => setFiltro("TODAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "TODAS" ? "bg-blue-50 border-blue-400 shadow-md" : "bg-white border-slate-200 hover:border-blue-200"}`}>
+        <button
+          onClick={() => setFiltro("TODAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "TODAS"
+              ? "bg-blue-50 border-blue-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-blue-200"
+          }`}
+        >
           <div className="text-xs text-slate-500 font-semibold uppercase">Todas</div>
           <div className="text-3xl font-black text-blue-600">{solicitudes.length}</div>
         </button>
@@ -217,6 +273,14 @@ export default function SolicitudesUsuario() {
               {filtro === "RECHAZADAS" && "No hay solicitudes rechazadas"}
               {filtro === "TODAS" && "No hay solicitudes registradas"}
             </p>
+            {filtro !== "TODAS" && (
+              <button
+                onClick={() => setFiltro("TODAS")}
+                className="mt-3 text-sm text-blue-600 hover:text-blue-800 font-semibold"
+              >
+                Ver todas las solicitudes →
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -244,11 +308,22 @@ export default function SolicitudesUsuario() {
                     <td className="p-4 text-center">
                       {solicitud.estatus === "PENDIENTE" ? (
                         <div className="flex gap-2 justify-center">
-                          <button onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "aprobar" })} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm">✅ Aprobar</button>
-                          <button onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "rechazar" })} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm">❌ Rechazar</button>
+                          <button 
+                            onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "aprobar" })} 
+                            disabled={loading} 
+                            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm"
+                          >
+                            ✅ Aprobar
+                          </button>
+                          <button 
+                            onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "rechazar" })} 
+                            disabled={loading} 
+                            className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm"
+                          >
+                            ❌ Rechazar
+                          </button>
                         </div>
                       ) : (
-                        // 🔥 Botón de eliminar para solicitudes ya procesadas
                         <button 
                           onClick={() => eliminarDefinitivamente(solicitud.id)}
                           className="text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1 mx-auto"
@@ -265,26 +340,50 @@ export default function SolicitudesUsuario() {
         )}
       </div>
 
-      {/* MODAL DE CONFIRMACIÓN */}
+      {/* 🔥 MODAL DE CONFIRMACIÓN */}
       {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <div className="text-center mb-4">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 ${modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100"}`}>
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 ${
+                modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100"
+              }`}>
                 {modalConfirmacion.accion === "aprobar" ? "✅" : "❌"}
               </div>
-              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.accion === "aprobar" ? "Aprobar Solicitud" : "Rechazar Solicitud"}</h3>
+              <h3 className="text-xl font-bold text-slate-800">
+                {modalConfirmacion.accion === "aprobar" ? "Aprobar Solicitud" : "Rechazar Solicitud"}
+              </h3>
+              <p className="text-sm text-slate-600 mt-2">
+                {modalConfirmacion.accion === "aprobar"
+                  ? `Se creará una cuenta de Supervisor para:`
+                  : `Se rechazará la solicitud de:`}
+              </p>
               <div className="bg-slate-50 rounded-lg p-3 mt-3 text-left">
                 <div className="font-bold text-slate-800">{modalConfirmacion.solicitud.nombre}</div>
                 <div className="text-xs text-slate-600 font-mono">{modalConfirmacion.solicitud.correo || modalConfirmacion.solicitud.email}</div>
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "" })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
               <button
-                onClick={() => modalConfirmacion.accion === "aprobar" ? ejecutarAprobacion(modalConfirmacion.solicitud) : ejecutarRechazo(modalConfirmacion.solicitud)}
+                onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "" })}
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (modalConfirmacion.accion === "aprobar") {
+                    ejecutarAprobacion(modalConfirmacion.solicitud);
+                  } else {
+                    ejecutarRechazo(modalConfirmacion.solicitud);
+                  }
+                }}
                 disabled={loading}
-                className={`flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 ${modalConfirmacion.accion === "aprobar" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}
+                className={`flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 ${
+                  modalConfirmacion.accion === "aprobar"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-red-600 hover:bg-red-700"
+                }`}
               >
                 {loading ? "Procesando..." : modalConfirmacion.accion === "aprobar" ? "✅ Confirmar" : "❌ Rechazar"}
               </button>
@@ -294,4 +393,4 @@ export default function SolicitudesUsuario() {
       )}
     </div>
   );
-}
+} 

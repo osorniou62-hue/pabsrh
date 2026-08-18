@@ -18,7 +18,7 @@ const normalizar = (texto) => {
     .replace(/[^a-z0-9]/g, "");
 };
 
-// 🔥 NUEVA FUNCIÓN: Calcular antigüedad en formato legible
+// 🔥 FUNCIÓN: Calcular antigüedad en formato legible
 const calcularAntiguedad = (fechaIngreso) => {
   if (!fechaIngreso) return { texto: "-", años: 0, meses: 0, dias: 0 };
   
@@ -113,7 +113,6 @@ export default function Empleados() {
     return Array.from(unicas.values());
   }, [configuracionMapeo]);
 
-  // 🔥 Columnas activas del mapeo (EXCLUYENDO sueldo_base para poder insertar salario_diario después)
   const columnasActivas = useMemo(() => {
     const visibles = columnasDelMapeo.filter(c => columnasVisibles[c.campo] !== false);
     const ordenadas = visibles.sort((a, b) => {
@@ -202,14 +201,47 @@ export default function Empleados() {
         setMapaColumnas(nuevoMapa);
       }
 
+      // 🔥 MEJORADO: Búsqueda más inteligente de departamento y puesto
       let empleadosProcesados = (emps || []).map(emp => {
         let deptoObj = null;
-        if (emp.departamento_id) deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
-        else if (emp.departamento) deptoObj = { nombre: emp.departamento };
+        
+        // 1. Primero intentar con departamento_id (relación)
+        if (emp.departamento_id) {
+          deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
+        }
+        
+        // 2. Si no, intentar con el campo de texto "departamento"
+        if (!deptoObj && emp.departamento) {
+          deptoObj = { nombre: emp.departamento };
+        }
+        
+        // 3. Si aún no, buscar en columnas dinámicas mapeadas
+        if (!deptoObj) {
+          const campoDeptoMapeado = mapaColumnas['departamento'] || 
+                                   Object.keys(mapaColumnas).find(k => k.includes('departamento'));
+          if (campoDeptoMapeado && emp[campoDeptoMapeado]) {
+            deptoObj = { nombre: emp[campoDeptoMapeado] };
+          }
+        }
 
+        // 🔥 MISMA LÓGICA PARA PUESTO
         let puestoObj = null;
-        if (emp.puesto_id) puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
-        else if (emp.puesto) puestoObj = { nombre: emp.puesto };
+        
+        if (emp.puesto_id) {
+          puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
+        }
+        
+        if (!puestoObj && emp.puesto) {
+          puestoObj = { nombre: emp.puesto };
+        }
+        
+        if (!puestoObj) {
+          const campoPuestoMapeado = mapaColumnas['puesto'] || 
+                                    Object.keys(mapaColumnas).find(k => k.includes('puesto'));
+          if (campoPuestoMapeado && emp[campoPuestoMapeado]) {
+            puestoObj = { nombre: emp[campoPuestoMapeado] };
+          }
+        }
 
         return { ...emp, departamentos: deptoObj, puestos: puestoObj };
       });
@@ -346,8 +378,6 @@ export default function Empleados() {
   const total = empleados.length;
   const activos = empleados.filter(e => e?.activo ?? true).length;
   const bajas = empleados.filter(e => !(e?.activo ?? true)).length;
-
-  // 🔥 Contar columnas especiales activas
   const totalEspecialesActivas = Object.values(configuracionEspeciales).filter(v => v).length;
 
   return (
@@ -359,7 +389,6 @@ export default function Empleados() {
             <p className="text-gray-500 mt-2">Gestión sincronizada con configuración dinámica</p>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-4 md:mt-0">
-            {/* 🔥 NUEVO BOTÓN: Columnas Especiales */}
             <button 
               onClick={() => setModalEspeciales(true)} 
               className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
@@ -400,18 +429,15 @@ export default function Empleados() {
                 <th className="p-3">Departamento</th>
                 <th className="p-3">Puesto</th>
                 
-                {/* 🔥 Renderizado inteligente: inserta columnas especiales en posiciones estratégicas */}
                 {columnasActivas.map(col => {
                   const elementos = [];
                   
-                  // Renderizar la columna del mapeo
                   elementos.push(
                     <th key={col.campo} className={`p-3 text-right ${col.campo.includes('sueldo') || col.campo.includes('bono') ? 'bg-emerald-50 text-emerald-900' : 'bg-gray-50'}`}>
                       {col.etiqueta}
                     </th>
                   );
                   
-                  // 🔥 Si es sueldo_base Y salario diario está activo, insertar salario diario justo después
                   if (col.campo === 'sueldo_base' && configuracionEspeciales.salarioDiario) {
                     elementos.push(
                       <th key="salario_diario_especial" className="p-3 text-right bg-indigo-50 text-indigo-900">
@@ -420,7 +446,6 @@ export default function Empleados() {
                     );
                   }
                   
-                  // 🔥 Si es fecha_ingreso Y antigüedad está activo, insertar antigüedad justo después
                   if (col.campo === 'fecha_ingreso' && configuracionEspeciales.antiguedad) {
                     elementos.push(
                       <th key="antiguedad_especial" className="p-3 text-right bg-amber-50 text-amber-900">
@@ -432,7 +457,6 @@ export default function Empleados() {
                   return elementos;
                 })}
                 
-                {/* 🔥 Si no hay sueldo_base en el mapeo pero salario diario está activo, mostrarlo al inicio */}
                 {!columnasActivas.some(c => c.campo === 'sueldo_base') && configuracionEspeciales.salarioDiario && (
                   <th className="p-3 text-right bg-indigo-50 text-indigo-900">💰 Salario Diario</th>
                 )}
@@ -472,7 +496,6 @@ export default function Empleados() {
                         </td>
                       );
                       
-                      // 🔥 Insertar salario diario después de sueldo_base
                       if (col.campo === 'sueldo_base' && configuracionEspeciales.salarioDiario) {
                         elementos.push(
                           <td key="salario_diario_especial" className="p-3 text-right bg-indigo-50/30 text-indigo-900 font-bold">
@@ -481,7 +504,6 @@ export default function Empleados() {
                         );
                       }
                       
-                      // 🔥 Insertar antigüedad después de fecha_ingreso
                       if (col.campo === 'fecha_ingreso' && configuracionEspeciales.antiguedad) {
                         elementos.push(
                           <td key="antiguedad_especial" className="p-3 text-right bg-amber-50/30 text-amber-900 font-semibold" title={`Ingreso: ${emp.fecha_ingreso || 'N/A'}`}>
@@ -493,7 +515,6 @@ export default function Empleados() {
                       return elementos;
                     })}
                     
-                    {/* 🔥 Fallback si no están en el mapeo */}
                     {!columnasActivas.some(c => c.campo === 'sueldo_base') && configuracionEspeciales.salarioDiario && (
                       <td className="p-3 text-right bg-indigo-50/30 text-indigo-900 font-bold">
                         {valores.salarioDiario > 0 ? `$${valores.salarioDiario.toFixed(2)}` : "$0.00"}
@@ -538,7 +559,6 @@ export default function Empleados() {
             </div>
 
             <div className="space-y-3">
-              {/* Salario Diario */}
               <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition ${configuracionEspeciales.salarioDiario ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 bg-slate-50'}`}>
                 <input 
                   type="checkbox" 
@@ -560,7 +580,6 @@ export default function Empleados() {
                 </div>
               </label>
 
-              {/* Antigüedad */}
               <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition ${configuracionEspeciales.antiguedad ? 'border-amber-500 bg-amber-50/50' : 'border-slate-200 bg-slate-50'}`}>
                 <input 
                   type="checkbox" 
@@ -595,7 +614,6 @@ export default function Empleados() {
         </div>
       )}
 
-      {/* Modal de Columnas del Mapeo (sin cambios) */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">

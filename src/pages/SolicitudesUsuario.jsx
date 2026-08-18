@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 export default function SolicitudesUsuario() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState("PENDIENTES"); // 🔥 NUEVO: Filtro por defecto
+  const [filtro, setFiltro] = useState("PENDIENTES");
   const [modalConfirmacion, setModalConfirmacion] = useState({ abierto: false, solicitud: null, accion: "" });
   const navigate = useNavigate();
 
@@ -28,12 +28,12 @@ export default function SolicitudesUsuario() {
     setLoading(false);
   };
 
-  // 🔥 NUEVO: Filtrar solicitudes según el estado seleccionado
+  // Filtrar solicitudes según el estado seleccionado
   const solicitudesFiltradas = solicitudes.filter(s => {
     if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
     if (filtro === "APROBADAS") return s.estatus === "APROBADA";
     if (filtro === "RECHAZADAS") return s.estatus === "RECHAZADA";
-    return true; // TODAS
+    return true;
   });
 
   const pendientes = solicitudes.filter(s => s.estatus === "PENDIENTE").length;
@@ -44,12 +44,13 @@ export default function SolicitudesUsuario() {
     try {
       setLoading(true);
 
+      // 1. Limpiar el correo y la contraseña (elimina espacios invisibles al inicio/final)
       const correoLimpio = solicitud.correo ? String(solicitud.correo).trim().toLowerCase() : "";
       const passwordLimpio = solicitud.password ? String(solicitud.password).trim() : "";
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(correoLimpio)) {
-        alert("⚠️ El formato del correo electrónico es inválido. Rechaza esta solicitud y pide al usuario que se registre correctamente.");
+      // 2. Validación básica (que no esté vacío y tenga un @)
+      if (!correoLimpio || !correoLimpio.includes('@')) {
+        alert("⚠️ El correo electrónico de esta solicitud parece estar incompleto o vacío.");
         setLoading(false);
         return;
       }
@@ -60,6 +61,8 @@ export default function SolicitudesUsuario() {
         return;
       }
 
+      // 3. Crear el usuario en Supabase Authentication 
+      // (Supabase se encarga de validar el formato real del correo)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: correoLimpio,
         password: passwordLimpio,
@@ -68,11 +71,15 @@ export default function SolicitudesUsuario() {
         },
       });
 
-      if (authError) throw authError;
+      // Si Supabase detecta un formato inválido, lo atrapamos aquí con su mensaje oficial
+      if (authError) {
+        throw new Error(`Supabase rechazó el correo: ${authError.message}`);
+      }
 
       const nuevoUserId = authData.user?.id;
 
       if (nuevoUserId) {
+        // 4. Crear o actualizar el perfil con el nuevo ID de Auth
         const { error: profileError } = await supabase.from("profiles").upsert(
           {
             id: nuevoUserId,
@@ -87,6 +94,12 @@ export default function SolicitudesUsuario() {
 
         if (profileError) throw profileError;
 
+        // 5. ACTUALIZACIÓN OPTIMISTA: Cambiar estado localmente al instante
+        setSolicitudes(prev => prev.map(s => 
+          s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s
+        ));
+
+        // Refetch de respaldo en la BD
         const { error: updateError } = await supabase
           .from("solicitudes_usuario")
           .update({ estatus: "APROBADA" })
@@ -101,6 +114,8 @@ export default function SolicitudesUsuario() {
     } catch (error) {
       console.error("Error al aprobar:", error);
       alert("Error al aprobar la solicitud: " + error.message);
+      // Si falla, recargar desde la BD para volver al estado real
+      await cargarSolicitudes();
     } finally {
       setLoading(false);
       setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
@@ -110,6 +125,16 @@ export default function SolicitudesUsuario() {
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
+
+      // ACTUALIZACIÓN OPTIMISTA: Quitar la solicitud del estado local al instante
+      setSolicitudes(prev => prev.map(s => 
+        s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s
+      ));
+
+      // Cerrar el modal inmediatamente
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
+
+      // Actualizar en la base de datos
       const { error } = await supabase
         .from("solicitudes_usuario")
         .update({ estatus: "RECHAZADA" })
@@ -117,12 +142,15 @@ export default function SolicitudesUsuario() {
 
       if (error) throw error;
 
+      // Refetch de respaldo
       await cargarSolicitudes();
+
     } catch (error) {
+      console.error("Error al rechazar:", error);
       alert("Error al rechazar: " + error.message);
+      await cargarSolicitudes();
     } finally {
       setLoading(false);
-      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
     }
   };
 
@@ -142,7 +170,7 @@ export default function SolicitudesUsuario() {
         </Link>
       </div>
 
-      {/* 🔥 KPIs + FILTROS COMBINADOS */}
+      {/* KPIs + FILTROS COMBINADOS */}
       <div className="grid md:grid-cols-4 gap-3">
         <button
           onClick={() => setFiltro("PENDIENTES")}
@@ -192,7 +220,7 @@ export default function SolicitudesUsuario() {
 
       {/* TABLA */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        {loading ? (
+        {loading && solicitudes.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <div className="animate-spin text-4xl mb-2">⏳</div>
             Cargando solicitudes...
@@ -276,7 +304,7 @@ export default function SolicitudesUsuario() {
         )}
       </div>
 
-      {/* 🔥 MODAL DE CONFIRMACIÓN ELEGANTE */}
+      {/* MODAL DE CONFIRMACIÓN */}
       {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">

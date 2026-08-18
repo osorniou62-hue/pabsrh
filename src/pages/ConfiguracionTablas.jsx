@@ -3,14 +3,16 @@ import * as XLSX from "xlsx";
 import Layout from "../components/Layout";
 import { supabase } from "../services/supabase";
 
-// 🔥 FUNCIÓN PARA NORMALIZAR NOMBRES A snake_case (ej: "Sueldo Neto" -> "sueldo_neto")
+// 🔥 FUNCIÓN ROBUSTA: Convierte cualquier texto a snake_case estricto
 const toSnakeCase = (str) => {
-  return str
+  return String(str || "")
     .trim()
-    .replace(/\s+/g, '_')
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase()
-    .replace(/^_/, '');
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quita acentos (ü -> u, ó -> o)
+    .replace(/\s+/g, '_')                             // Espacios a guiones bajos
+    .replace(/([A-Z])/g, '_$1')                       // Separa mayúsculas (Neto -> _neto)
+    .toLowerCase()                                    // Todo a minúsculas
+    .replace(/^_/, '')                                // Quita guión inicial
+    .replace(/[^a-z0-9_]/g, '');                      // Quita cualquier carácter raro
 };
 
 export default function ConfiguracionTablas() {
@@ -120,29 +122,34 @@ export default function ConfiguracionTablas() {
 
   const toggleModulo = (modulo) => setModulosActivos((prev) => ({ ...prev, [modulo]: !prev[modulo] }));
 
+  // 🔥 CORRECCIÓN CLAVE: Normalizar el payload ANTES de guardarlo
   const guardarYActualizarSupabase = async () => {
     try {
       setGuardando(true);
       const promesasCreacion = [];
       
+      // Creamos una copia normalizada de la asignación para guardar
+      const asignacionNormalizada = {};
+
       Object.entries(asignacionColumnas).forEach(([colOriginal, info]) => {
         if (info.tablaDestino && info.tablaDestino.trim() !== "") {
           const campoRaw = info.esManual ? info.campoManual : info.campoDestino;
+          
           if (campoRaw && campoRaw.trim() !== "") {
-            // 🔥 NORMALIZACIÓN: Convertir siempre a snake_case (minúsculas y guiones bajos)
+            // 1. Normalizar el nombre del campo
             const campoFinal = toSnakeCase(campoRaw);
             
-            // Actualizar el estado local con el nombre normalizado
-            if (campoFinal !== campoRaw) {
-              setAsignacionColumnas(prev => ({
-                ...prev,
-                [colOriginal]: { ...info, campoManual: info.esManual ? campoFinal : info.campoManual, campoDestino: !info.esManual ? campoFinal : info.campoDestino }
-              }));
-            }
+            // 2. Guardar la versión normalizada en nuestro objeto temporal
+            asignacionNormalizada[colOriginal] = {
+              ...info,
+              campoDestino: info.esManual ? info.campoDestino : campoFinal,
+              campoManual: info.esManual ? campoFinal : info.campoManual
+            };
 
+            // 3. Determinar tipo de dato
             let tipoDato = "TEXT";
             const nombre = campoFinal.toLowerCase();
-            if (nombre.includes("sueldo") || nombre.includes("bono") || nombre.includes("total") || nombre.includes("saldo") || nombre.includes("descuento") || nombre.includes("valor") || nombre.includes("porcentaje") || nombre.includes("dias") || nombre.includes("horas") || nombre.includes("monto") || nombre.includes("neto") || nombre.includes("prestamo") || nombre.includes("adeudo") || nombre.includes("abono") || nombre.includes("cantidad")) {
+            if (nombre.includes("sueldo") || nombre.includes("bono") || nombre.includes("total") || nombre.includes("saldo") || nombre.includes("descuento") || nombre.includes("valor") || nombre.includes("porcentaje") || nombre.includes("dias") || nombre.includes("horas") || nombre.includes("monto") || nombre.includes("neto") || nombre.includes("prestamo") || nombre.includes("adeudo") || nombre.includes("abono") || nombre.includes("cantidad") || nombre.includes("antiguedad")) {
               tipoDato = "NUMERIC";
             } else if (nombre.includes("fecha") || nombre.includes("alta") || nombre.includes("baja") || nombre.includes("ingreso")) {
               tipoDato = "DATE";
@@ -150,32 +157,54 @@ export default function ConfiguracionTablas() {
               tipoDato = "BOOLEAN";
             }
 
-            promesasCreacion.push(supabase.rpc("agregar_columna_dinamica", { p_tabla: info.tablaDestino, p_columna: campoFinal, p_tipo: tipoDato }));
+            // 4. Solicitar a Supabase que cree la columna si no existe
+            promesasCreacion.push(
+              supabase.rpc("agregar_columna_dinamica", {
+                p_tabla: info.tablaDestino,
+                p_columna: campoFinal,
+                p_tipo: tipoDato,
+              })
+            );
+          } else {
+            // Si no hay campo, se marca como ignorado
+            asignacionNormalizada[colOriginal] = { ...info, tablaDestino: "", campoDestino: "", campoManual: "" };
           }
+        } else {
+          asignacionNormalizada[colOriginal] = { ...info, tablaDestino: "", campoDestino: "", campoManual: "" };
         }
       });
 
+      // Esperar a que se creen las columnas
       if (promesasCreacion.length > 0) {
         console.log(`🔨 Creando/Verificando ${promesasCreacion.length} columnas...`);
         const resultados = await Promise.all(promesasCreacion);
         const errores = resultados.filter(r => r.error);
-        if (errores.length > 0) console.warn("⚠️ Errores al crear columnas:", errores);
+        if (errores.length > 0) {
+          console.warn("⚠️ Errores al crear columnas (¿Ejecutaste el script SQL?):", errores);
+        }
       }
 
-      // Usar el estado actualizado (ya normalizado) para guardar
+      // 5. Guardar la configuración YA NORMALIZADA en Supabase
       const payloadConfiguracion = {
-        asignacion: asignacionColumnas, // Ahora contiene los nombres en snake_case
+        asignacion: asignacionNormalizada, // <-- Aquí está la magia
         modulos: modulosActivos,
         columnas: columnasDetectadas,
         actualizado_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from("configuracion_tablas").upsert({ clave: "config_mapeo_columnas_dinamico", configuracion: payloadConfiguracion }, { onConflict: "clave" });
+      const { error } = await supabase
+        .from("configuracion_tablas")
+        .upsert({ clave: "config_mapeo_columnas_dinamico", configuracion: payloadConfiguracion }, { onConflict: "clave" });
+
       if (error) throw error;
 
+      // Actualizar estado local y localStorage con la versión normalizada
+      setAsignacionColumnas(asignacionNormalizada);
       localStorage.setItem("config_mapeo_columnas_dinamico", JSON.stringify(payloadConfiguracion));
+      
       setDatosGuardadosResumen(payloadConfiguracion);
       setMostrarModal(true);
+
     } catch (error) {
       console.error("Error al guardar:", error.message);
       alert("Error: " + error.message);
@@ -190,7 +219,7 @@ export default function ConfiguracionTablas() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800">⚙️ Administración y Asignación de Columnas</h1>
           <p className="text-gray-500 mt-1">Analiza las columnas de tu archivo, asígnalas a su tabla y elige un campo predefinido o escribe uno de forma manual.</p>
-          <p className="text-xs text-emerald-600 font-semibold mt-2">💡 Al guardar, el sistema normalizará los nombres a minúsculas (ej: "Sueldo Neto" → "sueldo_neto") y creará las columnas automáticamente.</p>
+          <p className="text-xs text-emerald-600 font-semibold mt-2">💡 Al guardar, el sistema convertirá automáticamente los nombres a formato base de datos (ej: "Sueldo Neto" → "sueldo_neto").</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-md p-6 mb-8 border border-slate-100">
@@ -228,7 +257,10 @@ export default function ConfiguracionTablas() {
                       <select value={tablaSeleccionada} onChange={(e) => handleCambioAsignacion(colOriginal, "tablaDestino", e.target.value)} className="border rounded-lg p-2 bg-white text-sm font-medium capitalize">
                         <option value="">-- Ignorar --</option>
                         {Object.keys(esquemaTablasSupabase).map((tablaKey) => (
-                          <option key={tablaKey} value={tablaKey}>{tablaKey === "empleados" && "👥 "}{tablaKey === "incidencias" && "⚡ "}{tablaKey === "vacaciones" && "🌴 "}{tablaKey === "prestamos" && "💳 "}{tablaKey === "puestos" && "💼 "}{tablaKey.charAt(0).toUpperCase() + tablaKey.slice(1)}</option>
+                          <option key={tablaKey} value={tablaKey}>
+                            {tablaKey === "empleados" && "👥 "}{tablaKey === "incidencias" && "⚡ "}{tablaKey === "vacaciones" && "🌴 "}{tablaKey === "prestamos" && "💳 "}{tablaKey === "puestos" && "💼 "}
+                            {tablaKey.charAt(0).toUpperCase() + tablaKey.slice(1)}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -253,7 +285,7 @@ export default function ConfiguracionTablas() {
             </div>
             <div className="mt-8 flex justify-end">
               <button onClick={guardarYActualizarSupabase} disabled={guardando} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium shadow-lg transition-all flex items-center gap-2">
-                {guardando ? "⏳ Procesando..." : "💾 Guardar y Crear Columnas"}
+                {guardando ? "⏳ Procesando..." : "💾 Guardar y Normalizar Columnas"}
               </button>
             </div>
           </div>
@@ -268,16 +300,26 @@ export default function ConfiguracionTablas() {
               </div>
               <div className="border rounded-xl overflow-hidden">
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-100 text-slate-700 uppercase font-semibold"><tr><th className="p-3 border-b">Excel</th><th className="p-3 border-b">Tabla</th><th className="p-3 border-b">Campo Final (snake_case)</th></tr></thead>
+                  <thead className="bg-slate-100 text-slate-700 uppercase font-semibold">
+                    <tr><th className="p-3 border-b">Excel</th><th className="p-3 border-b">Tabla</th><th className="p-3 border-b">Campo Final (snake_case)</th></tr>
+                  </thead>
                   <tbody className="divide-y divide-slate-100">
                     {Object.entries(datosGuardadosResumen.asignacion).map(([col, info], i) => {
                       const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
-                      return (<tr key={i} className="hover:bg-slate-50"><td className="p-3 font-medium">{col}</td><td className="p-3">{info.tablaDestino ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">{info.tablaDestino}</span> : "Ignorada"}</td><td className="p-3 font-mono text-slate-600">{campoFinal || "-"}</td></tr>);
+                      return (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="p-3 font-medium">{col}</td>
+                          <td className="p-3">{info.tablaDestino ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">{info.tablaDestino}</span> : "Ignorada"}</td>
+                          <td className="p-3 font-mono text-emerald-700 font-bold">{campoFinal || "-"}</td>
+                        </tr>
+                      );
                     })}
                   </tbody>
                 </table>
               </div>
-              <div className="mt-6 pt-4 border-t flex justify-end"><button onClick={() => setMostrarModal(false)} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-medium">Entendido</button></div>
+              <div className="mt-6 pt-4 border-t flex justify-end">
+                <button onClick={() => setMostrarModal(false)} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-medium">Entendido</button>
+              </div>
             </div>
           </div>
         )}

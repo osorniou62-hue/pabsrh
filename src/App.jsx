@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -25,144 +25,86 @@ import ImportarEmpleados from "./pages/ImportarEmpleados";
 import ConfiguracionTablas from "./pages/ConfiguracionTablas";
 import IncidenciasSupervisor from "./pages/IncidenciasSupervisor";
 import NuevoEmpleado from "./pages/NuevoEmpleado";
- 
-
 
 export default function App() {
-
   return (
-
     <BrowserRouter>
-
       <Routes>
+        {/* ======================== */}
+        {/* 🔐 AUTENTICACIÓN */}
+        {/* ======================== */}
+        <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} /> {/* 🔥 Agregada para redirecciones */}
 
-        <Route
-          path="/"
-          element={<Login />}
-        />
+        {/* ======================== */}
+        {/* 📊 DASHBOARDS */}
+        {/* ======================== */}
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard-ejecutivo" element={<DashboardEjecutivo />} />
 
-        <Route
-          path="/dashboard"
-          element={<Dashboard />}
-        />
+        {/* ======================== */}
+        {/* 👥 EMPLEADOS */}
+        {/* ======================== */}
+        <Route path="/empleados" element={<Empleados />} />
+        
+        {/* 🔥 CORREGIDO: Nueva empleado usa NuevoEmpleado */}
+        <Route path="/empleados/nuevo" element={<NuevoEmpleado />} />
+        
+        {/* Editar empleado existente usa EmpleadoForm */}
+        <Route path="/empleados/:id" element={<EmpleadoForm />} />
+        <Route path="/empleados/detalle/:id" element={<DetalleEmpleado />} />
+        <Route path="/importar-empleados" element={<ImportarEmpleados />} />
 
-        <Route
-          path="/departamentos"
-          element={<Departamentos />}
-        />
+        {/* ======================== */}
+        {/* 🏢 ORGANIZACIÓN */}
+        {/* ======================== */}
+        <Route path="/departamentos" element={<Departamentos />} />
+        <Route path="/puestos" element={<Puestos />} />
 
-        <Route
-          path="/puestos"
-          element={<Puestos />}
-        />
+        {/* ======================== */}
+        {/* 📅 PERIODOS Y NOMINA */}
+        {/* ======================== */}
+        <Route path="/periodos" element={<PeriodosNomina />} />
+        <Route path="/nomina" element={<Nomina />} />
+        <Route path="/nomina/recibo/:empleadoId/:periodoId" element={<ReciboNomina />} />
+        <Route path="/recibos-masivos" element={<RecibosMasivos />} />
 
-        <Route
-          path="/empleados"
-          element={<Empleados />}
-        />
+        {/* ======================== */}
+        {/* ⚡ INCIDENCIAS */}
+        {/* ======================== */}
+        <Route path="/incidencias" element={<Incidencias />} />
+        <Route path="/incidencias/supervisor" element={<IncidenciasSupervisor />} />
 
-        <Route
-          path="/empleados/nuevo"
-          element={<EmpleadoForm />}
-        />
+        {/* ======================== */}
+        {/* 🌴 BENEFICIOS */}
+        {/* ======================== */}
+        <Route path="/vacaciones" element={<Vacaciones />} />
+        <Route path="/prestamos" element={<Prestamos />} />
 
-        <Route
-          path="/empleados/:id"
-          element={<EmpleadoForm />}
-        />
+        {/* ======================== */}
+        {/* 👤 USUARIOS Y PERMISOS */}
+        {/* ======================== */}
+        <Route path="/usuarios" element={<Usuarios />} />
+        <Route path="/solicitudes" element={<SolicitudesUsuario />} />
 
-        <Route
-          path="/empleados/detalle/:id"
-          element={<DetalleEmpleado />}
-        />
+        {/* ======================== */}
+        {/* ⚙️ CONFIGURACIÓN */}
+        {/* ======================== */}
+        <Route path="/configuracion" element={<ConfiguracionEmpresa />} />
+        <Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
 
-        <Route
-          path="/periodos"
-          element={<PeriodosNomina />}
-        />
+        {/* ======================== */}
+        {/* 📈 REPORTES Y UTILIDADES */}
+        {/* ======================== */}
+        <Route path="/reportes" element={<Reportes />} />
+        <Route path="/auditoria" element={<Auditoria />} />
+        <Route path="/notificaciones" element={<Notificaciones />} />
 
-        <Route
-          path="/incidencias"
-          element={<Incidencias />}
-        />
-
-        <Route
-          path="/nomina"
-          element={<Nomina />}
-        />
-
-        <Route
-          path="/nomina/recibo/:empleadoId/:periodoId"
-          element={<ReciboNomina />}
-        />
-        <Route
-  path="/usuarios"
-  element={<Usuarios />}
-/>
-
-    <Route
-  path="/solicitudes"
-  element={<SolicitudesUsuario />}
-/>
-
-<Route
-  path="/vacaciones"
-  element={<Vacaciones />}
-/>
-<Route
-  path="/prestamos"
-  element={<Prestamos />}
-/>
-
-<Route
-  path="/reportes"
-  element={<Reportes />}
-/>
-
-<Route
-  path="/dashboard-ejecutivo"
-  element={
-    <DashboardEjecutivo />
-  }
-/>
-
-<Route
-  path="/notificaciones"
-  element={<Notificaciones />}
-/>
-
-<Route
-  path="/configuracion"
-  element={<ConfiguracionEmpresa />}
-/>
-
-<Route
-  path="/auditoria"
-  element={<Auditoria />}
-/>
-
-<Route
-  path="/recibos-masivos"
-  element={<RecibosMasivos />}
-/>
-
-<Route
-  path="/importar-empleados"
-  element={
-    <ImportarEmpleados />
-  }
-/>
-
-<Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
-
-<Route path="/incidencias/supervisor" element={<IncidenciasSupervisor />} />   
-
-<Route path="/empleados/nuevo" element={<NuevoEmpleado />} />
-
+        {/* ======================== */}
+        {/* 🔄 FALLBACK: Redirigir rutas no encontradas */}
+        {/* ======================== */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
-
     </BrowserRouter>
-
   );
-
 }

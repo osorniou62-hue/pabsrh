@@ -5,6 +5,8 @@ import { Link, useNavigate } from "react-router-dom";
 export default function SolicitudesUsuario() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filtro, setFiltro] = useState("PENDIENTES"); // 🔥 NUEVO: Filtro por defecto
+  const [modalConfirmacion, setModalConfirmacion] = useState({ abierto: false, solicitud: null, accion: "" });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,20 +28,28 @@ export default function SolicitudesUsuario() {
     setLoading(false);
   };
 
-  const aprobarSolicitud = async (solicitud) => {
-    if (!window.confirm(`¿Aprobar y crear cuenta de Supervisor para ${solicitud.nombre}?`)) return;
+  // 🔥 NUEVO: Filtrar solicitudes según el estado seleccionado
+  const solicitudesFiltradas = solicitudes.filter(s => {
+    if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
+    if (filtro === "APROBADAS") return s.estatus === "APROBADA";
+    if (filtro === "RECHAZADAS") return s.estatus === "RECHAZADA";
+    return true; // TODAS
+  });
 
+  const pendientes = solicitudes.filter(s => s.estatus === "PENDIENTE").length;
+  const aprobadas = solicitudes.filter(s => s.estatus === "APROBADA").length;
+  const rechazadas = solicitudes.filter(s => s.estatus === "RECHAZADA").length;
+
+  const ejecutarAprobacion = async (solicitud) => {
     try {
       setLoading(true);
 
-      // 🔥 1. LIMPIAR Y VALIDAR EL CORREO Y CONTRASEÑA
       const correoLimpio = solicitud.correo ? String(solicitud.correo).trim().toLowerCase() : "";
       const passwordLimpio = solicitud.password ? String(solicitud.password).trim() : "";
 
-      // Validación básica de formato de correo (debe tener algo@algo.algo)
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(correoLimpio)) {
-        alert("⚠️ El formato del correo electrónico es inválido o tiene espacios. Por favor, rechaza esta solicitud y pide al usuario que se registre correctamente.");
+        alert("⚠️ El formato del correo electrónico es inválido. Rechaza esta solicitud y pide al usuario que se registre correctamente.");
         setLoading(false);
         return;
       }
@@ -50,15 +60,11 @@ export default function SolicitudesUsuario() {
         return;
       }
 
-      // 2. Crear el usuario en Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: correoLimpio,
         password: passwordLimpio,
         options: {
-          data: {
-            nombre: solicitud.nombre,
-            rol: "SUPERVISOR",
-          },
+          data: { nombre: solicitud.nombre, rol: "SUPERVISOR" },
         },
       });
 
@@ -67,9 +73,6 @@ export default function SolicitudesUsuario() {
       const nuevoUserId = authData.user?.id;
 
       if (nuevoUserId) {
-        // 3. Crear o actualizar el perfil con el nuevo ID de Auth
-        // ⚠️ IMPORTANTE: Si tu tabla de perfiles se llama "empleados" en lugar de "profiles", 
-        // cambia "profiles" por "empleados" en la siguiente línea.
         const { error: profileError } = await supabase.from("profiles").upsert(
           {
             id: nuevoUserId,
@@ -84,7 +87,6 @@ export default function SolicitudesUsuario() {
 
         if (profileError) throw profileError;
 
-        // 4. Actualizar el estatus de la solicitud
         const { error: updateError } = await supabase
           .from("solicitudes_usuario")
           .update({ estatus: "APROBADA" })
@@ -92,11 +94,8 @@ export default function SolicitudesUsuario() {
 
         if (updateError) throw updateError;
 
-        alert("✅ Usuario creado y aprobado exitosamente como Supervisor.");
-
-        // 5. Cerrar sesión del usuario recién creado y redirigir al admin al login
         await supabase.auth.signOut();
-        alert("⚠️ Por seguridad, la sesión se ha cerrado. Por favor, inicia sesión nuevamente con tu cuenta de administrador.");
+        alert("✅ Usuario creado exitosamente. Por seguridad, inicia sesión nuevamente.");
         navigate("/login");
       }
     } catch (error) {
@@ -104,12 +103,11 @@ export default function SolicitudesUsuario() {
       alert("Error al aprobar la solicitud: " + error.message);
     } finally {
       setLoading(false);
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
     }
   };
 
-  const rechazarSolicitud = async (solicitud) => {
-    if (!window.confirm(`¿Rechazar la solicitud de ${solicitud.nombre}?`)) return;
-
+  const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
       const { error } = await supabase
@@ -119,17 +117,18 @@ export default function SolicitudesUsuario() {
 
       if (error) throw error;
 
-      alert("Solicitud rechazada.");
-      cargarSolicitudes();
+      await cargarSolicitudes();
     } catch (error) {
       alert("Error al rechazar: " + error.message);
     } finally {
       setLoading(false);
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">📨 Solicitudes de Usuario</h1>
@@ -143,16 +142,78 @@ export default function SolicitudesUsuario() {
         </Link>
       </div>
 
+      {/* 🔥 KPIs + FILTROS COMBINADOS */}
+      <div className="grid md:grid-cols-4 gap-3">
+        <button
+          onClick={() => setFiltro("PENDIENTES")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "PENDIENTES"
+              ? "bg-amber-50 border-amber-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-amber-200"
+          }`}
+        >
+          <div className="text-xs text-slate-500 font-semibold uppercase">Pendientes</div>
+          <div className="text-3xl font-black text-amber-600">{pendientes}</div>
+        </button>
+        <button
+          onClick={() => setFiltro("APROBADAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "APROBADAS"
+              ? "bg-emerald-50 border-emerald-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-emerald-200"
+          }`}
+        >
+          <div className="text-xs text-slate-500 font-semibold uppercase">Aprobadas</div>
+          <div className="text-3xl font-black text-emerald-600">{aprobadas}</div>
+        </button>
+        <button
+          onClick={() => setFiltro("RECHAZADAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "RECHAZADAS"
+              ? "bg-red-50 border-red-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-red-200"
+          }`}
+        >
+          <div className="text-xs text-slate-500 font-semibold uppercase">Rechazadas</div>
+          <div className="text-3xl font-black text-red-600">{rechazadas}</div>
+        </button>
+        <button
+          onClick={() => setFiltro("TODAS")}
+          className={`rounded-xl p-4 border-2 text-left transition ${
+            filtro === "TODAS"
+              ? "bg-blue-50 border-blue-400 shadow-md"
+              : "bg-white border-slate-200 hover:border-blue-200"
+          }`}
+        >
+          <div className="text-xs text-slate-500 font-semibold uppercase">Todas</div>
+          <div className="text-3xl font-black text-blue-600">{solicitudes.length}</div>
+        </button>
+      </div>
+
+      {/* TABLA */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {loading ? (
           <div className="p-12 text-center text-slate-500">
             <div className="animate-spin text-4xl mb-2">⏳</div>
             Cargando solicitudes...
           </div>
-        ) : solicitudes.length === 0 ? (
+        ) : solicitudesFiltradas.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <div className="text-6xl mb-3">📭</div>
-            <p className="font-semibold">No hay solicitudes pendientes</p>
+            <p className="font-semibold">
+              {filtro === "PENDIENTES" && "No hay solicitudes pendientes"}
+              {filtro === "APROBADAS" && "No hay solicitudes aprobadas"}
+              {filtro === "RECHAZADAS" && "No hay solicitudes rechazadas"}
+              {filtro === "TODAS" && "No hay solicitudes registradas"}
+            </p>
+            {filtro !== "TODAS" && (
+              <button
+                onClick={() => setFiltro("TODAS")}
+                className="mt-3 text-sm text-blue-600 hover:text-blue-800 font-semibold"
+              >
+                Ver todas las solicitudes →
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -167,7 +228,7 @@ export default function SolicitudesUsuario() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {solicitudes.map((solicitud) => (
+                {solicitudesFiltradas.map((solicitud) => (
                   <tr key={solicitud.id} className="hover:bg-slate-50 transition">
                     <td className="p-4 font-semibold text-slate-800">{solicitud.nombre}</td>
                     <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo}</td>
@@ -187,22 +248,24 @@ export default function SolicitudesUsuario() {
                       {solicitud.estatus === "PENDIENTE" ? (
                         <div className="flex gap-2 justify-center">
                           <button
-                            onClick={() => aprobarSolicitud(solicitud)}
+                            onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "aprobar" })}
                             disabled={loading}
                             className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm"
                           >
-                            Aprobar
+                            ✅ Aprobar
                           </button>
                           <button
-                            onClick={() => rechazarSolicitud(solicitud)}
+                            onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "rechazar" })}
                             disabled={loading}
                             className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm"
                           >
-                            Rechazar
+                            ❌ Rechazar
                           </button>
                         </div>
                       ) : (
-                        <span className="text-slate-400 text-xs">Sin acciones</span>
+                        <span className="text-slate-400 text-xs italic">
+                          {solicitud.estatus === "APROBADA" ? "Aprobada" : "Rechazada"}
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -212,6 +275,58 @@ export default function SolicitudesUsuario() {
           </div>
         )}
       </div>
+
+      {/* 🔥 MODAL DE CONFIRMACIÓN ELEGANTE */}
+      {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="text-center mb-4">
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 ${
+                modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100"
+              }`}>
+                {modalConfirmacion.accion === "aprobar" ? "✅" : "❌"}
+              </div>
+              <h3 className="text-xl font-bold text-slate-800">
+                {modalConfirmacion.accion === "aprobar" ? "Aprobar Solicitud" : "Rechazar Solicitud"}
+              </h3>
+              <p className="text-sm text-slate-600 mt-2">
+                {modalConfirmacion.accion === "aprobar"
+                  ? `Se creará una cuenta de Supervisor para:`
+                  : `Se rechazará la solicitud de:`}
+              </p>
+              <div className="bg-slate-50 rounded-lg p-3 mt-3 text-left">
+                <div className="font-bold text-slate-800">{modalConfirmacion.solicitud.nombre}</div>
+                <div className="text-xs text-slate-600 font-mono">{modalConfirmacion.solicitud.correo}</div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "" })}
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (modalConfirmacion.accion === "aprobar") {
+                    ejecutarAprobacion(modalConfirmacion.solicitud);
+                  } else {
+                    ejecutarRechazo(modalConfirmacion.solicitud);
+                  }
+                }}
+                disabled={loading}
+                className={`flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 ${
+                  modalConfirmacion.accion === "aprobar"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-red-600 hover:bg-red-700"
+                }`}
+              >
+                {loading ? "Procesando..." : modalConfirmacion.accion === "aprobar" ? "✅ Confirmar" : "❌ Rechazar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

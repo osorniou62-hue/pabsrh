@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
-
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
-
 import { supabase } from "../services/supabase";
+
+// 🔥 FUNCIÓN PARA NORMALIZAR NOMBRES A snake_case (debe coincidir con ConfiguracionTablas)
+const toSnakeCase = (str) => {
+  return str
+    .trim()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, '_')
+    .replace(/([A-Z])/g, '_$1')
+    .toLowerCase()
+    .replace(/^_/, '')
+    .replace(/[^a-z0-9_]/g, '');
+};
 
 export default function ImportarEmpleados() {
   const [archivo, setArchivo] = useState(null);
@@ -12,38 +22,49 @@ export default function ImportarEmpleados() {
   const [periodos, setPeriodos] = useState([]);
   const [periodoId, setPeriodoId] = useState("");
   const [loading, setLoading] = useState(false);
-  
   const [resumen, setResumen] = useState(null);
+  
+  // 🔥 NUEVO: Estado para la configuración de mapeo
+  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
 
   useEffect(() => {
     cargarPeriodos();
+    cargarConfiguracionMapeo();
   }, []);
 
   const cargarPeriodos = async () => {
-    const { data } = await supabase
-      .from("periodos_nomina")
-      .select("*")
-      .order("fecha_inicio", { ascending: false });
+    const { data } = await supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false });
     setPeriodos(data || []);
   };
 
-  const esLineaMolienda = (valor) => {
-    return ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"].includes(valor);
+  const cargarConfiguracionMapeo = async () => {
+    try {
+      const { data } = await supabase
+        .from("configuracion_tablas")
+        .select("configuracion")
+        .eq("clave", "config_mapeo_columnas_dinamico")
+        .maybeSingle();
+      
+      if (data?.configuracion) {
+        setConfiguracionMapeo(data.configuracion);
+      } else {
+        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+        if (local) setConfiguracionMapeo(JSON.parse(local));
+      }
+    } catch (err) {
+      console.error("Error cargando mapeo:", err);
+    }
   };
 
   const convertirFechaExcel = (valor) => {
     if (!valor) return null;
     if (typeof valor === "number") {
       const fecha = new Date((valor - 25569) * 86400 * 1000);
-      if (!isNaN(fecha.getTime())) {
-        return fecha.toISOString().split("T")[0];
-      }
+      if (!isNaN(fecha.getTime())) return fecha.toISOString().split("T")[0];
     }
     if (typeof valor === "string" && valor.includes("/")) {
       const partes = valor.split("/");
-      if (partes.length === 3) {
-        return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
-      }
+      if (partes.length === 3) return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
     }
     return null;
   };
@@ -58,103 +79,71 @@ export default function ImportarEmpleados() {
 
   const analizarNomina = (rows) => {
     if (!rows || rows.length < 2) return;
+    if (!configuracionMapeo?.asignacion) {
+      alert("⚠️ No hay configuración de mapeo cargada. Ve a 'Configuración de Tablas' primero.");
+      return;
+    }
 
-    // Fila 0 contiene los nombres de las columnas reales del CSV
-    const encabezadosRaw = rows[0].map((h) => String(h || "").trim().toUpperCase());
+    const encabezadosRaw = rows[0].map((h) => String(h || "").trim());
     
-    // Buscamos dinámicamente el índice de cada columna basándonos en su nombre exacto
-    const idxNumEmpleado = encabezadosRaw.findIndex((h) => h === "#" || h === "NUMERO" || h === "NO.");
-    const idxPuesto = encabezadosRaw.findIndex((h) => h === "PUESTO");
-    const idxNombre = encabezadosRaw.findIndex((h) => h === "COLABORADOR" || h === "NOMBRE");
-    const idxAlta = encabezadosRaw.findIndex((h) => h === "ALTA" || h === "FECHA ALTA");
-    const idxSueldoBase = encabezadosRaw.findIndex((h) => h === "SUELDO BASE");
-
-    // Bonos y conceptos
-    const idxBonoPuesto = encabezadosRaw.findIndex((h) => h === "BONO POR PUESTO");
+    // 1. Identificar la columna de número de empleado (clave para buscar si existe)
+    let idxNumEmpleado = -1;
+    const mapeoNumEmpleado = Object.entries(configuracionMapeo.asignacion).find(
+      ([, info]) => info.tablaDestino === 'empleados' && (info.campoDestino === 'numero_empleado' || info.campoManual === 'numero_empleado')
+    );
     
-    // Buscamos todas las ocurrencias de pago/bono puntualidad y asistencia
-    const indicesPuntualidad = encabezadosRaw.reduce((acc, h, i) => (h.includes("PUNTUALIDAD") ? [...acc, i] : acc), []);
-    const indicesAsistencia = encabezadosRaw.reduce((acc, h, i) => (h.includes("ASISTENCIA") ? [...acc, i] : acc), []);
-
-    const idxHorasExtra = encabezadosRaw.findIndex((h) => h.includes("HORAS EXTRAS"));
-    const idxBonoDesempeno = encabezadosRaw.findIndex((h) => h.includes("DESEMPEÑO"));
-    const idxApoyoMedico = encabezadosRaw.findIndex((h) => h.includes("APOYO MEDICO"));
-    const idxDiasVacaciones = encabezadosRaw.findIndex((h) => h.includes("DIAS DE VACACIONES"));
-    const idxBonoExtra = encabezadosRaw.findIndex((h) => h === "BONO EXTRA");
-    const idxGratificacion = encabezadosRaw.findIndex((h) => h.includes("GRATIFICACIÓN ESPECIAL") || h.includes("GRATIFICACION ESPECIAL"));
+    if (mapeoNumEmpleado) {
+      const colOriginal = mapeoNumEmpleado[0];
+      idxNumEmpleado = encabezadosRaw.findIndex(h => h.toUpperCase() === colOriginal.toUpperCase());
+    }
     
-    const idxPrestamo = encabezadosRaw.findIndex((h) => h === "PRESTAMO" || h.includes("PRESTAMOS"));
-    const idxAdeudos = encabezadosRaw.findIndex((h) => h === "ADEUDOS");
-    const idxSueldoTotal = encabezadosRaw.findIndex((h) => h.includes("SUELDO TOTAL") || h.includes("TOTAL"));
+    // Fallback por si no está en el mapeo pero existe en el Excel
+    if (idxNumEmpleado === -1) {
+      idxNumEmpleado = encabezadosRaw.findIndex(h => h === "#" || h === "NUMERO" || h === "NO." || h === "NUMERO EMPLEADO");
+    }
 
     const encontrados = [];
-    // Empezamos a leer desde la fila 2 en adelante (después de encabezados y fila numérica)
-    const dataRows = rows.slice(2);
+    const dataRows = rows.slice(1); // Asumimos fila 0 como encabezados
 
     dataRows.forEach((fila) => {
-      const numeroEmpleado = idxNumEmpleado !== -1 ? fila[idxNumEmpleado] : fila[2];
-      const puesto = idxPuesto !== -1 ? fila[idxPuesto] : fila[1];
-      const nombre = idxNombre !== -1 ? fila[idxNombre] : fila[3];
-      const fechaIngreso = convertirFechaExcel(idxAlta !== -1 ? fila[idxAlta] : fila[4]);
-      
-      const sueldoBase = limpiarMonto(idxSueldoBase !== -1 ? fila[idxSueldoBase] : fila[6]);
-      const bonoPuesto = limpiarMonto(idxBonoPuesto !== -1 ? fila[idxBonoPuesto] : fila[13]);
-      
-      // Función auxiliar para buscar el primer índice que contenga un valor numérico real mayor a 0
-      const obtenerValorDeIndices = (indices) => {
-        for (const idx of indices) {
-          const val = limpiarMonto(fila[idx]);
-          if (val > 0) return val;
-        }
-        // Si ninguno es mayor a 0, retornamos el valor del primer índice encontrado o 0
-        return indices.length > 0 ? limpiarMonto(fila[indices[0]]) : 0;
-      };
+      const numeroEmpleadoRaw = fila[idxNumEmpleado];
+      if (!numeroEmpleadoRaw || String(numeroEmpleadoRaw).trim() === "") return;
 
-      const bonoPuntualidad = obtenerValorDeIndices(indicesPuntualidad);
-      const bonoAsistencia = obtenerValorDeIndices(indicesAsistencia);
+      const numeroEmpleado = String(numeroEmpleadoRaw).trim();
+      const nuevoEmpleado = { numero_empleado: numeroEmpleado };
 
-      const bonoDesempeno = limpiarMonto(idxBonoDesempeno !== -1 ? fila[idxBonoDesempeno] : 0);
-      const apoyoMedico = limpiarMonto(idxApoyoMedico !== -1 ? fila[idxApoyoMedico] : 0);
-      const bonoExtra = limpiarMonto(idxBonoExtra !== -1 ? fila[idxBonoExtra] : 0);
-      const gratificacionEspecial = limpiarMonto(idxGratificacion !== -1 ? fila[idxGratificacion] : 0);
+      // 🔥 2. Recorrer la configuración de mapeo para extraer los datos DINÁMICAMENTE
+      Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
+        if (info.tablaDestino === 'empleados') {
+          const campoDestino = info.esManual ? info.campoManual : info.campoDestino;
+          if (!campoDestino) return;
 
-      const diasVacaciones = limpiarMonto(idxDiasVacaciones !== -1 ? fila[idxDiasVacaciones] : 0);
-      const horasExtra = limpiarMonto(idxHorasExtra !== -1 ? fila[idxHorasExtra] : 0);
-      const descuentoVarios = limpiarMonto(idxPrestamo !== -1 ? fila[idxPrestamo] : 0);
-      const saldoPrestamo = limpiarMonto(idxAdeudos !== -1 ? fila[idxAdeudos] : 0);
-      const montoFinalSemanal = limpiarMonto(idxSueldoTotal !== -1 ? fila[idxSueldoTotal] : 0);
-
-      const empleadoValido =
-        (typeof numeroEmpleado === "number" || typeof numeroEmpleado === "string") &&
-        String(numeroEmpleado).trim() !== "" &&
-        typeof nombre === "string" &&
-        nombre.trim() !== "";
-
-      if (empleadoValido) {
-        encontrados.push({
-          numero_empleado: String(numeroEmpleado).trim(),
-          nombre_completo: nombre.trim(),
-          puesto: typeof puesto === "string" ? puesto.trim() : "",
-          departamento: typeof puesto === "string" ? puesto.trim() : "GENERAL",
-          fecha_ingreso: fechaIngreso,
-          sueldo_base: sueldoBase,
+          const campoNormalizado = toSnakeCase(campoDestino);
+          const idx = encabezadosRaw.findIndex(h => h.trim().toUpperCase() === colOriginal.trim().toUpperCase());
           
-          bono_puesto: bonoPuesto,
-          bono_puntualidad: bonoPuntualidad,
-          bono_asistencia: bonoAsistencia,
-          bono_multiplicador: 0,
-          bono_desempeno: bonoDesempeno,
-          bono_extra: bonoExtra,
-          apoyo_medico: apoyoMedico,
-          gratificacion_especial: gratificacionEspecial,
+          if (idx !== -1) {
+            let valor = fila[idx];
+            
+            // Limpieza inteligente según el tipo de dato
+            if (campoNormalizado.includes('sueldo') || campoNormalizado.includes('bono') || campoNormalizado.includes('total') || campoNormalizado.includes('descuento') || campoNormalizado.includes('saldo') || campoNormalizado.includes('monto') || campoNormalizado.includes('neto')) {
+              valor = limpiarMonto(valor);
+            } else if (campoNormalizado.includes('fecha') || campoNormalizado.includes('alta') || campoNormalizado.includes('baja')) {
+              valor = convertirFechaExcel(valor);
+            } else {
+              valor = typeof valor === 'string' ? valor.trim() : valor;
+            }
 
-          dias_vacaciones: diasVacaciones,
-          horas_extra: horasExtra,
-          descuento_varios: descuentoVarios,
-          saldo_prestamo: saldoPrestamo,
-          monto_final_semanal: montoFinalSemanal
-        });
-      }
+            nuevoEmpleado[campoNormalizado] = valor;
+          }
+        }
+      });
+
+      // Asegurar campos mínimos para la lógica interna de departamentos/puestos
+      if (!nuevoEmpleado.nombre_completo) nuevoEmpleado.nombre_completo = "SIN NOMBRE";
+      if (!nuevoEmpleado.puesto) nuevoEmpleado.puesto = "SIN PUESTO";
+      if (!nuevoEmpleado.departamento) nuevoEmpleado.departamento = "GENERAL";
+
+      encontrados.push(nuevoEmpleado);
     });
 
     setResumen(null); 
@@ -164,10 +153,8 @@ export default function ImportarEmpleados() {
   const leerArchivo = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     setArchivo(file);
     const reader = new FileReader();
-
     reader.onload = (e) => {
       try {
         const workbook = XLSX.read(e.target.result, { type: "binary" });
@@ -179,24 +166,7 @@ export default function ImportarEmpleados() {
         alert("Error leyendo el archivo CSV/Excel");
       }
     };
-
     reader.readAsBinaryString(file);
-  };
-
-  const actualizarIncidencias = async (empleadoId, empleado, pId) => {
-    if (!pId) return;
-
-    const payload = {
-      empleado_id: empleadoId,
-      periodo_id: Number(pId),
-      horas_extra: Number(empleado.horas_extra || 0),
-      dias_vacaciones: Number(empleado.dias_vacaciones || 0),
-      monto_final_semanal: Number(empleado.monto_final_semanal || 0)
-    };
-
-    await supabase.from("incidencias").upsert([payload], {
-      onConflict: "empleado_id, periodo_id",
-    });
   };
 
   const importarEmpleados = async () => {
@@ -204,7 +174,6 @@ export default function ImportarEmpleados() {
       alert("No hay empleados para importar");
       return;
     }
-
     if (!periodoId) {
       alert("⚠️ Por favor selecciona un Período antes de importar");
       return;
@@ -212,7 +181,6 @@ export default function ImportarEmpleados() {
 
     try {
       setLoading(true);
-
       const { data: departamentos } = await supabase.from("departamentos").select("*");
       const { data: puestos } = await supabase.from("puestos").select("*");
       const { data: lineas } = await supabase.from("lineas").select("*");
@@ -221,86 +189,63 @@ export default function ImportarEmpleados() {
       let actualizados = 0;
       const errores = [];
 
-      for (const empleado of empleados) {
-        let nombreDepartamento = empleado.departamento?.trim()?.toUpperCase();
+      for (const empleadoData of empleados) {
+        const { numero_empleado, departamento: deptoRaw, puesto: puestoRaw, ...camposDinamicos } = empleadoData;
 
-        const equivalencias = {
-          "MTTO NAVE 3": "MTTO",
-          "AYU CHOFER": "LOGISTICA INTERNA",
-          CHOFER: "LOGISTICA INTERNA",
-          "LAVADO": "LOGISTICA INTERNA"
-        };
+        // Lógica de normalización de departamentos y puestos (se mantiene)
+        const nombreDepartamento = (deptoRaw || "GENERAL").trim().toUpperCase();
+        const nombrePuesto = (puestoRaw || "SIN PUESTO").trim().toUpperCase();
 
-        if (equivalencias[nombreDepartamento]) {
-          nombreDepartamento = equivalencias[nombreDepartamento];
-        }
-
+        const equivalencias = { "MTTO NAVE 3": "MTTO", "AYU CHOFER": "LOGISTICA INTERNA", CHOFER: "LOGISTICA INTERNA", "LAVADO": "LOGISTICA INTERNA" };
+        const deptoFinal = equivalencias[nombreDepartamento] || nombreDepartamento;
+        
         let lineaId = null;
-
-        if (esLineaMolienda(nombreDepartamento)) {
-          const linea = lineas.find((l) => l.nombre === nombreDepartamento);
+        let deptoNombreFinal = deptoFinal;
+        if (["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"].includes(deptoFinal)) {
+          const linea = lineas.find((l) => l.nombre === deptoFinal);
           if (linea) lineaId = linea.id;
-          nombreDepartamento = "MOLIENDA";
+          deptoNombreFinal = "MOLIENDA";
         }
 
-        let departamento = departamentos.find(
-          (d) => d.nombre?.trim()?.toUpperCase() === nombreDepartamento
-        );
+        let departamento = departamentos.find((d) => d.nombre?.trim()?.toUpperCase() === deptoNombreFinal);
+        if (!departamento && departamentos.length > 0) departamento = departamentos[0];
 
-        if (!departamento && departamentos.length > 0) {
-          departamento = departamentos[0]; 
-        }
-
-        let puesto = puestos.find(
-          (p) =>
-            p.nombre?.trim()?.toUpperCase() === empleado.puesto?.trim()?.toUpperCase() &&
-            p.departamento_id === departamento?.id
-        );
-
+        let puesto = puestos.find((p) => p.nombre?.trim()?.toUpperCase() === nombrePuesto && p.departamento_id === departamento?.id);
         if (!puesto && departamento) {
           const { data: nuevoPuesto, error: puestoError } = await supabase
             .from("puestos")
-            .insert([
-              {
-                nombre: empleado.puesto || "SIN PUESTO",
-                departamento_id: departamento.id,
-                activo: true,
-              },
-            ])
+            .insert([{ nombre: nombrePuesto, departamento_id: departamento.id, activo: true }])
             .select()
             .single();
-
           if (!puestoError && nuevoPuesto) {
             puesto = nuevoPuesto;
             puestos.push(nuevoPuesto);
           }
         }
 
-        const { data: existente } = await supabase
-          .from("empleados")
-          .select("id")
-          .eq("numero_empleado", empleado.numero_empleado)
-          .maybeSingle();
-
-        let empId = null;
-
+        // 🔥 3. Construir payload dinámico: incluye TODOS los campos mapeados (sueldo_neto, antiguedad, etc.)
         const datosEmpleadoPayload = {
-          nombre_completo: empleado.nombre_completo,
-          fecha_ingreso: empleado.fecha_ingreso,
-          sueldo_base: empleado.sueldo_base,
-          bono_puesto: empleado.bono_puesto,
-          bono_puntualidad: empleado.bono_puntualidad,
-          bono_asistencia: empleado.bono_asistencia,
-          bono_multiplicador: empleado.bono_multiplicador,
-          bono_desempeno: empleado.bono_desempeno,
-          bono_extra: empleado.bono_extra,
-          apoyo_medico: empleado.apoyo_medico,
-          gratificacion_especial: empleado.gratificacion_especial,
+          ...camposDinamicos, // ← Aquí van mágicamente todos los campos nuevos
           departamento_id: departamento ? departamento.id : null,
           puesto_id: puesto ? puesto.id : null,
           linea_id: lineaId,
           activo: true,
         };
+
+        // Limpiar campos nulos o indefinidos antes de enviar a Supabase
+        Object.keys(datosEmpleadoPayload).forEach(key => {
+          if (datosEmpleadoPayload[key] === undefined || datosEmpleadoPayload[key] === null) {
+            delete datosEmpleadoPayload[key];
+          }
+        });
+
+        const { data: existente } = await supabase
+          .from("empleados")
+          .select("id")
+          .eq("numero_empleado", numero_empleado)
+          .maybeSingle();
+
+        let empId = null;
 
         if (existente) {
           empId = existente.id;
@@ -308,38 +253,25 @@ export default function ImportarEmpleados() {
             .from("empleados")
             .update(datosEmpleadoPayload)
             .eq("id", empId);
-
           if (updateError) {
-            errores.push({ numero: empleado.numero_empleado, nombre: empleado.nombre_completo, motivo: updateError.message });
+            errores.push({ numero: numero_empleado, motivo: updateError.message });
             continue;
           }
-
           actualizados++;
         } else {
           const { data: empleadoGuardado, error: insertError } = await supabase
             .from("empleados")
-            .insert([
-              {
-                numero_empleado: empleado.numero_empleado,
-                ...datosEmpleadoPayload,
-              },
-            ])
+            .insert([{ numero_empleado, ...datosEmpleadoPayload }])
             .select()
             .single();
-
           if (insertError) {
-            errores.push({ numero: empleado.numero_empleado, nombre: empleado.nombre_completo, motivo: insertError.message });
+            errores.push({ numero: numero_empleado, motivo: insertError.message });
             continue;
           }
-
           if (empleadoGuardado) {
             empId = empleadoGuardado.id;
             insertados++;
           }
-        }
-
-        if (empId) {
-          await actualizarIncidencias(empId, empleado, periodoId);
         }
       }
 
@@ -353,10 +285,10 @@ export default function ImportarEmpleados() {
 
     } catch (error) {
       console.error(error);
-      alert("Error durante la importación");
+      alert("Error durante la importación: " + error.message);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
@@ -366,7 +298,7 @@ export default function ImportarEmpleados() {
           <div>
             <h1 className="text-4xl font-bold">📥 Importar Empleados</h1>
             <p className="text-gray-500 mt-2">
-              Lectura dinámica basada en los nombres exactos de los encabezados del archivo
+              Lectura dinámica basada en la <strong>Configuración de Tablas</strong>
             </p>
           </div>
         </div>
@@ -395,7 +327,7 @@ export default function ImportarEmpleados() {
               <div className="mt-4 bg-red-50 border border-red-200 p-3 rounded-lg max-h-40 overflow-y-auto text-xs text-red-700">
                 <p className="font-bold mb-1">Detalle de errores:</p>
                 {resumen.detallesErrores.map((err, i) => (
-                  <div key={i}>• Empleado #{err.numero} ({err.nombre}): {err.motivo}</div>
+                  <div key={i}>• Empleado #{err.numero}: {err.motivo}</div>
                 ))}
               </div>
             )}
@@ -413,8 +345,12 @@ export default function ImportarEmpleados() {
             <label className="font-semibold text-gray-700 mt-2">2. Carga el archivo CSV / Excel:</label>
             <input type="file" accept=".csv,.xlsx,.xls" onChange={leerArchivo} className="border rounded-xl p-3 w-full" />
 
-            <button onClick={importarEmpleados} disabled={loading || empleados.length === 0} className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium">
-              {loading ? "Importando..." : "🚀 Importar Empleados por Nombre de Columna"}
+            <button 
+              onClick={importarEmpleados} 
+              disabled={loading || empleados.length === 0} 
+              className="mt-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-medium transition-all"
+            >
+              {loading ? "⏳ Importando..." : "🚀 Importar Empleados (Usando Mapeo Configurado)"}
             </button>
           </div>
         </div>
@@ -426,29 +362,27 @@ export default function ImportarEmpleados() {
                 <th className="p-3">#</th>
                 <th className="p-3">Nombre</th>
                 <th className="p-3">Puesto</th>
-                <th className="p-3 text-right">Sueldo Base</th>
-                <th className="p-3 text-right">Bono Puesto</th>
-                <th className="p-3 text-right">Bono Puntualidad</th>
-                <th className="p-3 text-right">Bono Asistencia</th>
-                <th className="p-3 text-right">Total Bonos</th>
+                <th className="p-3">Departamento</th>
+                {/* Mostrar dinámicamente algunas columnas clave si existen */}
+                {empleados.length > 0 && Object.keys(empleados[0]).filter(k => k.includes('sueldo') || k.includes('bono') || k.includes('neto')).slice(0, 4).map(k => (
+                  <th key={k} className="p-3 text-right capitalize">{k.replace(/_/g, ' ')}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {empleados.map((empleado, index) => {
-                const sumaBonos = empleado.bono_puesto + empleado.bono_puntualidad + empleado.bono_asistencia + empleado.bono_multiplicador + empleado.bono_desempeno + empleado.bono_extra + empleado.apoyo_medico + empleado.gratificacion_especial;
-                return (
-                  <tr key={index} className="border-t hover:bg-slate-50">
-                    <td className="p-3">{empleado.numero_empleado}</td>
-                    <td className="p-3 font-medium">{empleado.nombre_completo}</td>
-                    <td className="p-3 font-semibold text-blue-600">{empleado.puesto}</td>
-                    <td className="p-3 text-right font-bold text-slate-700">${empleado.sueldo_base.toFixed(2)}</td>
-                    <td className="p-3 text-right">${empleado.bono_puesto.toFixed(2)}</td>
-                    <td className="p-3 text-right text-emerald-600 font-bold">${empleado.bono_puntualidad.toFixed(2)}</td>
-                    <td className="p-3 text-right">${empleado.bono_asistencia.toFixed(2)}</td>
-                    <td className="p-3 text-right font-bold text-emerald-700">${sumaBonos.toFixed(2)}</td>
-                  </tr>
-                );
-              })}
+              {empleados.map((empleado, index) => (
+                <tr key={index} className="border-t hover:bg-slate-50">
+                  <td className="p-3">{empleado.numero_empleado}</td>
+                  <td className="p-3 font-medium">{empleado.nombre_completo}</td>
+                  <td className="p-3 font-semibold text-blue-600">{empleado.puesto}</td>
+                  <td className="p-3">{empleado.departamento}</td>
+                  {empleados.length > 0 && Object.keys(empleados[0]).filter(k => k.includes('sueldo') || k.includes('bono') || k.includes('neto')).slice(0, 4).map(k => (
+                    <td key={k} className="p-3 text-right font-bold text-slate-700">
+                      {empleado[k] ? `$${Number(empleado[k]).toFixed(2)}` : "-"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

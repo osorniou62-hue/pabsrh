@@ -1,7 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
-import KpiCard from "../components/KpiCard";
 
 const formatearNombreColumna = (texto) =>
   String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
@@ -17,41 +16,33 @@ const esCampoMonetario = (campo) => {
     'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
 };
 
-// 🔥 Función helper para limpiar payload antes de enviar a Supabase
 const limpiarPayload = (payload) => {
   const limpio = { ...payload };
-  // Eliminar campos que no deben enviarse
-  delete limpio.id;
-  delete limpio.created_at;
-  delete limpio.updated_at;
-  delete limpio.deleted_at;
-  
-  // Eliminar valores vacíos
+  ['id', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete limpio[k]);
   Object.keys(limpio).forEach(k => {
-    if (limpio[k] === "" || limpio[k] === null || limpio[k] === undefined) {
-      delete limpio[k];
-    }
+    if (limpio[k] === "" || limpio[k] === null || limpio[k] === undefined) delete limpio[k];
   });
   return limpio;
 };
 
+const ITEMS_POR_PAGINA = 50;
+
 export default function Incidencias() {
-  // Estados principales
   const [empleados, setEmpleados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
   const [periodos, setPeriodos] = useState([]);
   const [puestosLista, setPuestosLista] = useState([]);
   const [departamentosLista, setDepartamentosLista] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingEmpleados, setLoadingEmpleados] = useState(true);
+  const [loadingIncidencias, setLoadingIncidencias] = useState(false);
 
-  // Filtros y vista
   const [vistaActual, setVistaActual] = useState("supervisor");
   const [periodoId, setPeriodoId] = useState("");
   const [departamentoFiltro, setDepartamentoFiltro] = useState("TODOS");
   const [estadoFiltro, setEstadoFiltro] = useState("TODOS");
   const [busqueda, setBusqueda] = useState("");
+  const [paginaActual, setPaginaActual] = useState(1);
 
-  // Modales
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
   const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
   const [modalPermisos, setModalPermisos] = useState(false);
@@ -60,7 +51,6 @@ export default function Incidencias() {
   const [guardandoPermisos, setGuardandoPermisos] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
-  // Configuración
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [ordenColumnas, setOrdenColumnas] = useState(() => {
     try { return JSON.parse(localStorage.getItem("incidencias_orden_columnas")) || []; } catch { return []; }
@@ -69,7 +59,6 @@ export default function Incidencias() {
     try { return JSON.parse(localStorage.getItem("incidencias_columnas_visibles")) || {}; } catch { return {}; }
   });
 
-  // 🔥 Columnas del mapeo con permisos
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion) return [];
     const validas = [];
@@ -102,17 +91,83 @@ export default function Incidencias() {
 
   const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
 
-  // 🔥 Carga inicial robusta
+  // 🔥 CARGA EN PARALELO (mucho más rápido)
   useEffect(() => {
-    cargarPeriodos();
-    cargarCatalogos();
-    cargarEmpleados();
-    cargarConfiguracion();
-    cargarPermisos();
+    const cargarTodo = async () => {
+      setLoadingEmpleados(true);
+      try {
+        const [resPeriodos, resPuestos, resDepts, resEmpleados, resConfig, resPermisos] = await Promise.all([
+          supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false }),
+          supabase.from("puestos").select("*").order("nombre"),
+          supabase.from("departamentos").select("*").order("nombre"),
+          supabase.from("empleados").select("*").order("nombre_completo"),
+          supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle(),
+          supabase.from("configuracion_tablas").select("configuracion").eq("clave", "permisos_incidencias").maybeSingle(),
+        ]);
+
+        setPeriodos(resPeriodos.data || []);
+        if (resPeriodos.data?.length > 0) setPeriodoId(resPeriodos.data[0].id);
+
+        const puestosUnicos = new Map();
+        (resPuestos.data || []).forEach(p => {
+          const nombre = String(p.nombre || "").trim();
+          if (nombre && !puestosUnicos.has(nombre.toLowerCase())) {
+            puestosUnicos.set(nombre.toLowerCase(), { ...p, nombre });
+          }
+        });
+        setPuestosLista(Array.from(puestosUnicos.values()));
+        setDepartamentosLista(resDepts.data || []);
+
+        const empleadosProcesados = (resEmpleados.data || []).map(emp => {
+          let deptoObj = null;
+          if (emp.departamento_id) deptoObj = (resDepts.data || []).find(d => d.id === emp.departamento_id);
+          if (!deptoObj && emp.departamento) deptoObj = { nombre: emp.departamento };
+
+          let puestoObj = null;
+          if (emp.puesto_id) puestoObj = Array.from(puestosUnicos.values()).find(p => p.id === emp.puesto_id);
+          if (!puestoObj && emp.puesto) puestoObj = { nombre: emp.puesto };
+
+          return { ...emp, departamentos: deptoObj, puestos: puestoObj };
+        });
+        setEmpleados(empleadosProcesados);
+
+        if (resConfig.data?.configuracion) setConfiguracionMapeo(resConfig.data.configuracion);
+        else {
+          const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+          if (local) setConfiguracionMapeo(JSON.parse(local));
+        }
+
+        if (resPermisos.data?.configuracion) setPermisosSupervisor(resPermisos.data.configuracion);
+        else {
+          const local = localStorage.getItem("permisos_incidencias");
+          if (local) setPermisosSupervisor(JSON.parse(local));
+        }
+      } catch (err) {
+        console.error("❌ Error cargando datos:", err);
+      } finally {
+        setLoadingEmpleados(false);
+      }
+    };
+    cargarTodo();
   }, []);
 
+  // 🔥 Carga de incidencias solo cuando cambia el período
   useEffect(() => {
-    if (periodoId && empleados.length > 0) cargarIncidencias();
+    if (!periodoId) return;
+    const cargarIncidencias = async () => {
+      setLoadingIncidencias(true);
+      try {
+        const { data, error } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+        if (error) throw error;
+        setIncidencias(data || []);
+      } catch (err) {
+        console.error("Error:", err);
+        setIncidencias([]);
+      } finally {
+        setLoadingIncidencias(false);
+      }
+    };
+    cargarIncidencias();
   }, [periodoId]);
 
   useEffect(() => {
@@ -132,90 +187,7 @@ export default function Incidencias() {
 
   useEffect(() => { localStorage.setItem("incidencias_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
   useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
-
-  const cargarPeriodos = async () => {
-    const { data } = await supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false });
-    setPeriodos(data || []);
-    if (data?.length > 0) setPeriodoId(data[0].id);
-  };
-
-  const cargarCatalogos = async () => {
-    try {
-      const [resPuestos, resDepts] = await Promise.all([
-        supabase.from("puestos").select("*").order("nombre"),
-        supabase.from("departamentos").select("*").order("nombre"),
-      ]);
-      const puestosUnicos = new Map();
-      (resPuestos.data || []).forEach(p => {
-        const nombre = String(p.nombre || "").trim();
-        if (nombre && !puestosUnicos.has(nombre.toLowerCase())) {
-          puestosUnicos.set(nombre.toLowerCase(), { ...p, nombre });
-        }
-      });
-      setPuestosLista(Array.from(puestosUnicos.values()));
-      setDepartamentosLista(resDepts.data || []);
-    } catch (e) { console.error("Error cargando catálogos:", e); }
-  };
-
-  // 🔥 CARGA ROBUSTA DE EMPLEADOS
-  const cargarEmpleados = async () => {
-    try {
-      const { data: emps, error } = await supabase.from("empleados").select("*").order("nombre_completo");
-      if (error) throw error;
-
-      const empleadosProcesados = (emps || []).map(emp => {
-        let deptoObj = null;
-        if (emp.departamento_id) deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
-        if (!deptoObj && emp.departamento) deptoObj = { nombre: emp.departamento };
-
-        let puestoObj = null;
-        if (emp.puesto_id) puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
-        if (!puestoObj && emp.puesto) puestoObj = { nombre: emp.puesto };
-
-        return { ...emp, departamentos: deptoObj, puestos: puestoObj };
-      });
-
-      setEmpleados(empleadosProcesados);
-    } catch (err) {
-      console.error("❌ Error cargando empleados:", err);
-      setEmpleados([]);
-    }
-  };
-
-  const cargarIncidencias = async () => {
-    if (!periodoId) return;
-    setLoading(true);
-    try {
-      const { data, error } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
-      if (error) throw error;
-      setIncidencias(data || []);
-    } catch (err) {
-      console.error("Error cargando incidencias:", err);
-      setIncidencias([]);
-    } finally { setLoading(false); }
-  };
-
-  const cargarConfiguracion = async () => {
-    try {
-      const { data } = await supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle();
-      if (data?.configuracion) setConfiguracionMapeo(data.configuracion);
-      else {
-        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
-        if (local) setConfiguracionMapeo(JSON.parse(local));
-      }
-    } catch (err) { console.error("Error:", err); }
-  };
-
-  const cargarPermisos = async () => {
-    try {
-      const { data } = await supabase.from("configuracion_tablas").select("configuracion").eq("clave", "permisos_incidencias").maybeSingle();
-      if (data?.configuracion) setPermisosSupervisor(data.configuracion);
-      else {
-        const local = localStorage.getItem("permisos_incidencias");
-        if (local) setPermisosSupervisor(JSON.parse(local));
-      }
-    } catch (err) { console.error("Error:", err); }
-  };
+  useEffect(() => { setPaginaActual(1); }, [busqueda, departamentoFiltro, estadoFiltro, periodoId]);
 
   const guardarPermisos = async () => {
     setGuardandoPermisos(true);
@@ -225,17 +197,14 @@ export default function Incidencias() {
         configuracion: permisosSupervisor,
       }, { onConflict: "clave" });
       localStorage.setItem("permisos_incidencias", JSON.stringify(permisosSupervisor));
-      alert("✅ Permisos guardados");
       setModalPermisos(false);
     } catch (err) { alert("Error: " + err.message); }
     finally { setGuardandoPermisos(false); }
   };
 
-  // 🔥 GUARDAR CAPTURA RÁPIDA (CORREGIDO)
   const guardarCapturaRapida = async (empleadoId, valores) => {
     setGuardando(true);
     try {
-      // 🔥 Construir payload SIN incluir 'id' ni campos del sistema
       const payload = limpiarPayload({
         empleado_id: empleadoId,
         periodo_id: Number(periodoId),
@@ -243,85 +212,48 @@ export default function Incidencias() {
         ...valores
       });
 
-      // 🔥 Verificar si ya existe un registro para este empleado/período
-      const { data: existente, error: errorBusqueda } = await supabase
+      const { data: existente } = await supabase
         .from("incidencias")
         .select("id")
         .eq("empleado_id", empleadoId)
         .eq("periodo_id", periodoId)
         .maybeSingle();
 
-      if (errorBusqueda) throw errorBusqueda;
-
       let error;
       if (existente) {
-        // Si existe, hacer UPDATE
-        const resultado = await supabase
-          .from("incidencias")
-          .update(payload)
-          .eq("id", existente.id);
-        error = resultado.error;
+        const { error: e } = await supabase.from("incidencias").update(payload).eq("id", existente.id);
+        error = e;
       } else {
-        // Si no existe, hacer INSERT
-        const resultado = await supabase
-          .from("incidencias")
-          .insert([payload]);
-        error = resultado.error;
+        const { error: e } = await supabase.from("incidencias").insert([payload]);
+        error = e;
       }
-
       if (error) throw error;
-      
       setModalCaptura({ abierto: false, empleado: null });
-      await cargarIncidencias();
-    } catch (err) {
-      alert("Error al guardar: " + err.message);
-    } finally {
-      setGuardando(false);
-    }
+      // Recargar solo incidencias, no empleados
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+      setIncidencias(data || []);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardando(false); }
   };
 
-  // 🔥 GUARDAR REVISIÓN RH (CORREGIDO)
   const guardarRevision = async (incidenciaId, valores, estado, comentario) => {
     setGuardando(true);
     try {
-      // 🔥 Construir payload SIN incluir 'id' ni campos del sistema
       const payload = limpiarPayload({
         ...valores,
         estado,
         comentarios_rrhh: comentario || null,
         fecha_revision: new Date().toISOString()
       });
-
-      // 🔥 Usar UPDATE directo con el ID existente
-      const { error } = await supabase
-        .from("incidencias")
-        .update(payload)
-        .eq("id", incidenciaId);
-
+      const { error } = await supabase.from("incidencias").update(payload).eq("id", incidenciaId);
       if (error) throw error;
-      
       setModalRevision({ abierto: false, registro: null });
-      await cargarIncidencias();
-    } catch (err) {
-      alert("Error al guardar: " + err.message);
-    } finally {
-      setGuardando(false);
-    }
-  };
-
-  // 🔥 Edición inline desde la tabla
-  const actualizarCampoInline = async (incidenciaId, campo, valor) => {
-    try {
-      const { error } = await supabase
-        .from("incidencias")
-        .update({ [campo]: valor })
-        .eq("id", incidenciaId);
-      if (error) throw error;
-      await cargarIncidencias();
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+      setIncidencias(data || []);
     } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardando(false); }
   };
 
-  // Helpers
   const cambiarVisibilidadColumna = (campo) => setColumnasVisibles(prev => ({ ...prev, [campo]: !prev[campo] }));
   const moverColumna = (campo, direccion) => {
     setOrdenColumnas(prev => {
@@ -334,12 +266,11 @@ export default function Incidencias() {
     });
   };
 
-  // 🔥 Combinar empleados con incidencias
   const registros = useMemo(() => {
-    return empleados.map(emp => {
-      const inc = incidencias.find(i => i.empleado_id === emp.id);
-      return { empleado: emp, incidencia: inc || null };
-    });
+    return empleados.map(emp => ({
+      empleado: emp,
+      incidencia: incidencias.find(i => i.empleado_id === emp.id) || null
+    }));
   }, [empleados, incidencias]);
 
   const registrosFiltrados = useMemo(() => {
@@ -354,6 +285,13 @@ export default function Incidencias() {
       return coincide && coincideDepto && coincideEstado;
     });
   }, [registros, busqueda, departamentoFiltro, estadoFiltro]);
+
+  // 🔥 PAGINACIÓN
+  const totalPaginas = Math.ceil(registrosFiltrados.length / ITEMS_POR_PAGINA);
+  const registrosPaginados = useMemo(() => {
+    const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
+    return registrosFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
+  }, [registrosFiltrados, paginaActual]);
 
   const kpis = useMemo(() => {
     const total = empleados.length;
@@ -370,148 +308,308 @@ export default function Incidencias() {
   return (
     <Layout>
       <div className="space-y-6">
-        {/* HEADER */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-800">⚡ Incidencias</h1>
-            <p className="text-gray-500 mt-2">
-              {vistaActual === "supervisor" ? "👷 Captura rápida por Supervisor" : "🔍 Validación y análisis por RH"}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 mt-4 md:mt-0">
-            <button onClick={() => setModalPermisos(true)} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-3 rounded-xl font-semibold text-sm">🔒 Permisos</button>
-            <button onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl font-semibold text-sm">⚙️ Columnas</button>
+        {/* 🔥 HEADER CON GRADIENTE */}
+        <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMtOS45NDEgMC0xOCA4LjA1OS0xOCAxOHM4LjA1OSAxOCAxOCAxOCAxOC04LjA1OSAxOC0xOC04LjA1OS0xOC0xOC0xOHptMCAzMmMtNy43MzIgMC0xNC02LjI2OC0xNC0xNHM2LjI2OC0xNCAxNC0xNCAxNCA2LjI2OCAxNCAxNC02LjI2OCAxNC0xNCAxNHoiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjIiLz48L2c+PC9zdmc+')] opacity-20"></div>
+          <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-3xl">⚡</div>
+                <div>
+                  <h1 className="text-3xl md:text-4xl font-black tracking-tight">Incidencias</h1>
+                  <p className="text-white/80 text-sm mt-1">Gestión de nómina con validación en dos niveles</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                🔒 <span className="hidden sm:inline">Permisos</span>
+              </button>
+              <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                ⚙️ <span className="hidden sm:inline">Columnas</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* SELECTOR DE PERÍODO */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-200">
+        {/* 🔥 SELECTOR DE PERÍODO MEJORADO */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex flex-col md:flex-row items-center gap-4">
-            <label className="font-bold text-slate-800">📅 Período:</label>
-            <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-blue-300 rounded-xl p-3 bg-white font-semibold focus:ring-2 focus:ring-blue-500 outline-none">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-xl">📅</div>
+              <div>
+                <div className="text-xs text-slate-500 font-semibold uppercase">Período de Nómina</div>
+                <div className="text-sm font-bold text-slate-800">Selecciona el período activo</div>
+              </div>
+            </div>
+            <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-slate-200 rounded-xl p-3 bg-slate-50 font-semibold focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition">
               {periodos.map(p => <option key={p.id} value={p.id}>{p.descripcion}</option>)}
             </select>
-            {periodoActual && <div className="text-xs text-slate-600">📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}</div>}
+            {periodoActual && (
+              <div className="text-xs bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-medium">
+                📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <KpiCard titulo="Empleados" valor={kpis.total} icono="👥" color="text-blue-600" />
-          <KpiCard titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="text-indigo-600" />
-          <KpiCard titulo="Sin Captura" valor={kpis.sinCaptura} icono="⚠️" color="text-gray-600" />
-          <KpiCard titulo="Pendientes" valor={kpis.pendientes} icono="⏳" color="text-amber-600" />
-          <KpiCard titulo="Aprobados" valor={kpis.aprobados} icono="✅" color="text-emerald-600" />
-          <KpiCard titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="text-red-600" />
+        {/* 🔥 KPIs MODERNOS */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <KpiModerno titulo="Empleados" valor={kpis.total} icono="👥" color="blue" />
+          <KpiModerno titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="indigo" />
+          <KpiModerno titulo="Sin Captura" valor={kpis.sinCaptura} icono="⚠️" color="gray" />
+          <KpiModerno titulo="Pendientes" valor={kpis.pendientes} icono="⏳" color="amber" />
+          <KpiModerno titulo="Aprobados" valor={kpis.aprobados} icono="✅" color="emerald" />
+          <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
         </div>
 
-        {/* TABS */}
-        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl">
-          <button onClick={() => setVistaActual("supervisor")} className={`flex-1 py-3 px-4 rounded-lg font-semibold text-sm transition ${vistaActual === "supervisor" ? "bg-white text-blue-700 shadow-md" : "text-slate-600"}`}>
-            👷 Supervisor
+        {/* 🔥 TABS MEJORADOS - CARDS GRANDES */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <button
+            onClick={() => setVistaActual("supervisor")}
+            className={`group relative overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 border-2 ${
+              vistaActual === "supervisor"
+                ? "bg-gradient-to-br from-blue-500 to-blue-700 text-white border-blue-500 shadow-lg shadow-blue-500/30 scale-[1.02]"
+                : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:shadow-md"
+            }`}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition ${
+                vistaActual === "supervisor" ? "bg-white/20" : "bg-blue-100"
+              }`}>
+                👷
+              </div>
+              {vistaActual === "supervisor" && (
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold">
+                  ACTIVO
+                </div>
+              )}
+            </div>
+            <h3 className={`text-xl font-black mb-1 ${vistaActual === "supervisor" ? "text-white" : "text-slate-800"}`}>
+              Vista Supervisor
+            </h3>
+            <p className={`text-sm mb-3 ${vistaActual === "supervisor" ? "text-white/90" : "text-slate-500"}`}>
+              Captura rápida de incidencias diarias
+            </p>
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`px-2 py-1 rounded-lg font-semibold ${
+                vistaActual === "supervisor" ? "bg-white/20 text-white" : "bg-blue-100 text-blue-700"
+              }`}>
+                📝 {kpis.sinCaptura} sin captura
+              </span>
+              <span className={`px-2 py-1 rounded-lg font-semibold ${
+                vistaActual === "supervisor" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+              }`}>
+                ✏️ Solo campos permitidos
+              </span>
+            </div>
           </button>
-          <button onClick={() => setVistaActual("rrhh")} className={`flex-1 py-3 px-4 rounded-lg font-semibold text-sm transition ${vistaActual === "rrhh" ? "bg-white text-purple-700 shadow-md" : "text-slate-600"}`}>
-            🔍 RH
+
+          <button
+            onClick={() => setVistaActual("rrhh")}
+            className={`group relative overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 border-2 ${
+              vistaActual === "rrhh"
+                ? "bg-gradient-to-br from-purple-500 to-purple-700 text-white border-purple-500 shadow-lg shadow-purple-500/30 scale-[1.02]"
+                : "bg-white text-slate-700 border-slate-200 hover:border-purple-300 hover:shadow-md"
+            }`}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl transition ${
+                vistaActual === "rrhh" ? "bg-white/20" : "bg-purple-100"
+              }`}>
+                🔍
+              </div>
+              {vistaActual === "rrhh" && (
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold">
+                  ACTIVO
+                </div>
+              )}
+            </div>
+            <h3 className={`text-xl font-black mb-1 ${vistaActual === "rrhh" ? "text-white" : "text-slate-800"}`}>
+              Vista Recursos Humanos
+            </h3>
+            <p className={`text-sm mb-3 ${vistaActual === "rrhh" ? "text-white/90" : "text-slate-500"}`}>
+              Validación, ajustes y aprobación final
+            </p>
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`px-2 py-1 rounded-lg font-semibold ${
+                vistaActual === "rrhh" ? "bg-white/20 text-white" : "bg-amber-100 text-amber-700"
+              }`}>
+                ⏳ {kpis.pendientes} pendientes
+              </span>
+              <span className={`px-2 py-1 rounded-lg font-semibold ${
+                vistaActual === "rrhh" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+              }`}>
+                🔒 Control total
+              </span>
+            </div>
           </button>
         </div>
 
-        {/* FILTROS */}
-        <div className="bg-white rounded-2xl shadow-lg p-5">
+        {/* 🔥 FILTROS MODERNOS */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="grid md:grid-cols-4 gap-3">
-            <input type="text" placeholder="🔍 Buscar por nombre, número..." value={busqueda} onChange={e => setBusqueda(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none" />
-            <select value={departamentoFiltro} onChange={e => setDepartamentoFiltro(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
-              {departamentos.map(d => <option key={d} value={d}>{d}</option>)}
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar empleado..."
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+              />
+            </div>
+            <select value={departamentoFiltro} onChange={e => setDepartamentoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
+              {departamentos.map(d => <option key={d} value={d}>{d === "TODOS" ? "🏢 Todos los departamentos" : d}</option>)}
             </select>
-            <select value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
-              <option value="TODOS">Todos los estados</option>
+            <select value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
+              <option value="TODOS">📊 Todos los estados</option>
               <option value="sin_captura">⚠️ Sin captura</option>
               <option value="pendiente">⏳ Pendiente</option>
               <option value="aprobado">✅ Aprobado</option>
               <option value="rechazado">❌ Rechazado</option>
             </select>
-            <div className="flex items-center justify-end text-sm text-slate-600">
-              Mostrando <strong className="mx-1">{registrosFiltrados.length}</strong> de <strong>{empleados.length}</strong>
+            <div className="flex items-center justify-end bg-slate-50 rounded-xl px-4 py-2.5">
+              <span className="text-sm text-slate-600">
+                <strong className="text-slate-900">{registrosFiltrados.length}</strong> de <strong className="text-slate-900">{empleados.length}</strong>
+              </span>
             </div>
           </div>
         </div>
 
-        {/* TABLA PRINCIPAL */}
-        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
-          <table className="w-full text-left text-xs whitespace-nowrap">
-            <thead className="bg-slate-100 text-gray-700 font-bold border-b sticky top-0">
-              <tr>
-                <th className="p-3">No.</th>
-                <th className="p-3">Colaborador</th>
-                <th className="p-3">Departamento</th>
-                <th className="p-3">Puesto</th>
-                <th className="p-3">Estado</th>
-                {columnasActivas.map(col => (
-                  <th key={col.campo} className={`p-3 text-right ${esCampoMonetario(col.campo) ? 'bg-emerald-50 text-emerald-900' : col.permite_supervisor ? 'bg-blue-50 text-blue-900' : 'bg-gray-50'}`}>
-                    {col.etiqueta}
-                    {col.permite_supervisor && <span className="ml-1 text-[9px] bg-blue-200 text-blue-800 px-1 rounded">👷</span>}
-                  </th>
-                ))}
-                {vistaActual === "rrhh" && <th className="p-3">💬</th>}
-                <th className="p-3 text-center">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={20} className="p-6 text-center text-gray-500">Cargando...</td></tr>}
-              {!loading && registrosFiltrados.map(({ empleado, incidencia }) => {
-                const estado = incidencia?.estado || "sin_captura";
-                const estadoColor = { sin_captura: "bg-gray-100 text-gray-600", pendiente: "bg-amber-100 text-amber-800", aprobado: "bg-emerald-100 text-emerald-800", rechazado: "bg-red-100 text-red-800" }[estado];
-                const estadoIcono = { sin_captura: "⚠️", pendiente: "⏳", aprobado: "✅", rechazado: "❌" }[estado];
-                const estadoLabel = { sin_captura: "Sin captura", pendiente: "Pendiente", aprobado: "Aprobado", rechazado: "Rechazado" }[estado];
-
-                return (
-                  <tr key={empleado.id} className={`border-t hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
-                    <td className="p-3 font-mono">{empleado.numero_empleado || "S/N"}</td>
-                    <td className="p-3 font-semibold text-gray-800">{empleado.nombre_completo || "Sin nombre"}</td>
-                    <td className="p-3">{empleado.departamentos?.nombre || "N/A"}</td>
-                    <td className="p-3">{empleado.puestos?.nombre || "Sin asignar"}</td>
-                    <td className="p-3">
-                      <span className={`${estadoColor} px-2 py-0.5 rounded-full text-[10px] font-bold`}>
-                        {estadoIcono} {estadoLabel}
-                      </span>
-                    </td>
-                    {columnasActivas.map(col => {
-                      const val = incidencia?.[col.campo];
-                      const esMonet = esCampoMonetario(col.campo);
-                      const displayVal = val !== null && val !== undefined && val !== ""
-                        ? (esMonet ? `$${Number(val).toFixed(2)}` : val)
-                        : <span className="text-slate-300">-</span>;
-                      return (
-                        <td key={col.campo} className={`p-3 text-right ${esMonet ? 'text-emerald-700 font-semibold' : ''}`}>
-                          {displayVal}
-                        </td>
-                      );
-                    })}
-                    {vistaActual === "rrhh" && (
-                      <td className="p-3 max-w-[120px] truncate text-[10px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
-                        {incidencia?.comentarios_rrhh || <span className="text-slate-300">-</span>}
-                      </td>
-                    )}
-                    <td className="p-3">
-                      {vistaActual === "supervisor" ? (
-                        <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs">
-                          {incidencia ? "✏️ Editar" : "📝 Capturar"}
-                        </button>
-                      ) : (
-                        <button onClick={() => setModalRevision({ abierto: true, registro: { empleado, incidencia } })} className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs">
-                          🔍 Validar
-                        </button>
-                      )}
+        {/* 🔥 TABLA PRINCIPAL */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="p-4 font-bold text-slate-700 sticky left-0 bg-slate-50 z-10">No.</th>
+                  <th className="p-4 font-bold text-slate-700">Colaborador</th>
+                  <th className="p-4 font-bold text-slate-700">Departamento</th>
+                  <th className="p-4 font-bold text-slate-700">Puesto</th>
+                  <th className="p-4 font-bold text-slate-700">Estado</th>
+                  {columnasActivas.map(col => (
+                    <th key={col.campo} className={`p-4 text-right font-bold ${
+                      esCampoMonetario(col.campo) ? 'bg-emerald-50 text-emerald-900' :
+                      col.permite_supervisor ? 'bg-blue-50 text-blue-900' : 'bg-slate-50 text-slate-700'
+                    }`}>
+                      <div className="flex items-center justify-end gap-1">
+                        {col.etiqueta}
+                        {col.permite_supervisor && <span className="text-[9px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded-full">👷</span>}
+                      </div>
+                    </th>
+                  ))}
+                  {vistaActual === "rrhh" && <th className="p-4 font-bold text-slate-700">💬 Obs.</th>}
+                  <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-10">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingEmpleados ? (
+                  // 🔥 SKELETON LOADERS
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="border-b border-slate-100">
+                      {Array.from({ length: 6 }).map((_, j) => (
+                        <td key={j} className="p-4"><div className="h-4 bg-slate-200 rounded animate-pulse"></div></td>
+                      ))}
+                    </tr>
+                  ))
+                ) : registrosPaginados.length === 0 ? (
+                  <tr>
+                    <td colSpan={20} className="p-12 text-center">
+                      <div className="text-6xl mb-3">📭</div>
+                      <div className="text-slate-500 font-semibold">No hay resultados</div>
+                      <div className="text-xs text-slate-400 mt-1">Intenta ajustar los filtros</div>
                     </td>
                   </tr>
-                );
-              })}
-              {!loading && registrosFiltrados.length === 0 && <tr><td colSpan={20} className="p-6 text-center text-gray-500">No hay resultados</td></tr>}
-            </tbody>
-          </table>
+                ) : (
+                  registrosPaginados.map(({ empleado, incidencia }) => {
+                    const estado = incidencia?.estado || "sin_captura";
+                    const estadoConfig = {
+                      sin_captura: { color: "bg-slate-100 text-slate-600", icono: "⚠️", label: "Sin captura" },
+                      pendiente: { color: "bg-amber-100 text-amber-800", icono: "⏳", label: "Pendiente" },
+                      aprobado: { color: "bg-emerald-100 text-emerald-800", icono: "✅", label: "Aprobado" },
+                      rechazado: { color: "bg-red-100 text-red-800", icono: "❌", label: "Rechazado" },
+                    }[estado];
+
+                    return (
+                      <tr key={empleado.id} className={`border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
+                        <td className="p-4 font-mono text-slate-600 sticky left-0 bg-inherit">{empleado.numero_empleado || "S/N"}</td>
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-800">{empleado.nombre_completo || "Sin nombre"}</div>
+                        </td>
+                        <td className="p-4 text-slate-600">{empleado.departamentos?.nombre || "N/A"}</td>
+                        <td className="p-4 text-slate-600">{empleado.puestos?.nombre || "Sin asignar"}</td>
+                        <td className="p-4">
+                          <span className={`${estadoConfig.color} px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1`}>
+                            {estadoConfig.icono} {estadoConfig.label}
+                          </span>
+                        </td>
+                        {columnasActivas.map(col => {
+                          const val = incidencia?.[col.campo];
+                          const esMonet = esCampoMonetario(col.campo);
+                          const displayVal = val !== null && val !== undefined && val !== ""
+                            ? (esMonet ? `$${Number(val).toFixed(2)}` : val)
+                            : <span className="text-slate-300">—</span>;
+                          return (
+                            <td key={col.campo} className={`p-4 text-right ${esMonet ? 'text-emerald-700 font-semibold' : 'text-slate-700'}`}>
+                              {displayVal}
+                            </td>
+                          );
+                        })}
+                        {vistaActual === "rrhh" && (
+                          <td className="p-4 max-w-[150px]">
+                            <div className="truncate text-[11px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
+                              {incidencia?.comentarios_rrhh || <span className="text-slate-300">—</span>}
+                            </div>
+                          </td>
+                        )}
+                        <td className="p-4 sticky right-0 bg-inherit">
+                          {vistaActual === "supervisor" ? (
+                            <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                              {incidencia ? "✏️ Editar" : "📝 Capturar"}
+                            </button>
+                          ) : (
+                            <button onClick={() => setModalRevision({ abierto: true, registro: { empleado, incidencia } })} className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                              🔍 Validar
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 🔥 PAGINACIÓN */}
+          {totalPaginas > 1 && (
+            <div className="border-t border-slate-200 px-5 py-3 flex items-center justify-between bg-slate-50">
+              <div className="text-xs text-slate-600">
+                Página <strong>{paginaActual}</strong> de <strong>{totalPaginas}</strong>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setPaginaActual(p => Math.max(1, p - 1))}
+                  disabled={paginaActual === 1}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  ← Anterior
+                </button>
+                <button
+                  onClick={() => setPaginaActual(p => Math.min(totalPaginas, p + 1))}
+                  disabled={paginaActual === totalPaginas}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* MODAL CAPTURA SUPERVISOR */}
+      {/* MODALES (sin cambios en funcionalidad) */}
       {modalCaptura.abierto && modalCaptura.empleado && (
         <ModalCaptura
           empleado={modalCaptura.empleado}
@@ -522,7 +620,6 @@ export default function Incidencias() {
         />
       )}
 
-      {/* MODAL REVISIÓN RH */}
       {modalRevision.abierto && modalRevision.registro && (
         <ModalRevision
           registro={modalRevision.registro}
@@ -533,14 +630,13 @@ export default function Incidencias() {
         />
       )}
 
-      {/* MODAL PERMISOS */}
       {modalPermisos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center pb-3 border-b">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">🔒 Permisos de Captura</h3>
-                <p className="text-xs text-gray-500">Marca qué campos puede llenar el supervisor. Los demás son exclusivos de RH.</p>
+                <p className="text-xs text-gray-500">Marca qué campos puede llenar el supervisor</p>
               </div>
               <button onClick={() => setModalPermisos(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
@@ -571,7 +667,6 @@ export default function Incidencias() {
         </div>
       )}
 
-      {/* MODAL CONFIG COLUMNAS */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
@@ -622,9 +717,37 @@ export default function Incidencias() {
   );
 }
 
-// ================================
-// MODAL CAPTURA SUPERVISOR (SIMPLIFICADO)
-// ================================
+// 🔥 COMPONENTE KPI MODERNO
+function KpiModerno({ titulo, valor, icono, color }) {
+  const colores = {
+    blue: "from-blue-500 to-blue-600 text-blue-600 bg-blue-50",
+    indigo: "from-indigo-500 to-indigo-600 text-indigo-600 bg-indigo-50",
+    gray: "from-slate-500 to-slate-600 text-slate-600 bg-slate-50",
+    amber: "from-amber-500 to-amber-600 text-amber-600 bg-amber-50",
+    emerald: "from-emerald-500 to-emerald-600 text-emerald-600 bg-emerald-50",
+    red: "from-red-500 to-red-600 text-red-600 bg-red-50",
+  };
+  const [gradiente, textColor, bgColor] = colores[color].split(" ").reduce((acc, c, i) => {
+    if (i === 0 || i === 1) acc[0] = (acc[0] || "") + " " + c;
+    else if (i === 2) acc[1] = c;
+    else acc[2] = c;
+    return acc;
+  }, []);
+
+  return (
+    <div className="bg-white rounded-2xl p-4 border border-slate-200 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-2">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${bgColor}`}>
+          {icono}
+        </div>
+      </div>
+      <div className={`text-2xl font-black ${textColor}`}>{valor}</div>
+      <div className="text-xs text-slate-500 font-medium mt-1">{titulo}</div>
+    </div>
+  );
+}
+
+// MODAL CAPTURA SUPERVISOR
 function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
@@ -635,14 +758,16 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
       <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="border-b pb-3 px-6 pt-5 flex justify-between items-center">
-          <div>
-            <h3 className="text-lg font-bold text-blue-800">📝 Captura de Incidencias</h3>
-            <p className="text-xs text-gray-500">
-              <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
-            </p>
+        <div className="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-6 py-4 rounded-t-2xl">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold">📝 Captura de Incidencias</h3>
+              <p className="text-xs text-white/90 mt-0.5">
+                <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
+              </p>
+            </div>
+            <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
           </div>
-          <button type="button" onClick={onCerrar} className="text-gray-400 font-bold text-2xl">✕</button>
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           {columnas.length > 0 ? (
@@ -660,7 +785,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
             </div>
           )}
         </div>
-        <div className="border-t px-6 py-4 flex justify-end gap-2">
+        <div className="border-t px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
           <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
           <button type="submit" disabled={guardando || columnas.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300">
             {guardando ? "Guardando..." : "📝 Enviar a RH"}
@@ -671,9 +796,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   );
 }
 
-// ================================
-// MODAL REVISIÓN RH (COMPLETO)
-// ================================
+// MODAL REVISIÓN RH
 function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   const { empleado, incidencia } = registro;
   const [valores, setValores] = useState(() => {
@@ -687,7 +810,6 @@ function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   const columnasSup = columnas.filter(c => c.permite_supervisor);
   const columnasRHOnly = columnas.filter(c => !c.permite_supervisor);
 
-  // Cálculo de totales
   const totalSumas = columnas.filter(c => esCampoMonetario(c.campo) && !normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/))
     .reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
   const totalRestas = columnas.filter(c => esCampoMonetario(c.campo) && normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/))
@@ -697,26 +819,26 @@ function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
       <form onSubmit={(e) => { e.preventDefault(); onGuardar(incidencia?.id, valores, estadoFinal, comentario); }} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col">
-        <div className="border-b pb-3 px-6 pt-5 flex justify-between items-center">
-          <div>
-            <h3 className="text-lg font-bold text-purple-800">🔍 Validación de RH</h3>
-            <p className="text-xs text-gray-500">
-              <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
-            </p>
+        <div className="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-4 rounded-t-2xl">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold">🔍 Validación de RH</h3>
+              <p className="text-xs text-white/90 mt-0.5">
+                <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
+              </p>
+            </div>
+            <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
           </div>
-          <button type="button" onClick={onCerrar} className="text-gray-400 font-bold text-2xl">✕</button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {/* Selector de estado */}
           <div className="grid grid-cols-3 gap-2">
             {["pendiente", "aprobado", "rechazado"].map(est => (
-              <button key={est} type="button" onClick={() => setEstadoFinal(est)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${estadoFinal === est ? (est === "aprobado" ? "bg-emerald-100 border-emerald-500 text-emerald-800" : est === "rechazado" ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-800") : "bg-white border-slate-200 text-slate-500"}`}>
+              <button key={est} type="button" onClick={() => setEstadoFinal(est)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${estadoFinal === est ? (est === "aprobado" ? "bg-emerald-100 border-emerald-500 text-emerald-800" : est === "rechazado" ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-800") : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}>
                 {est === "pendiente" ? "⏳ Pendiente" : est === "aprobado" ? "✅ Aprobar" : "❌ Rechazar"}
               </button>
             ))}
           </div>
 
-          {/* Datos del supervisor */}
           {columnasSup.length > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
               <h4 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
@@ -734,7 +856,6 @@ function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
             </div>
           )}
 
-          {/* Campos exclusivos RH */}
           {columnasRHOnly.length > 0 && (
             <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
               <h4 className="font-bold text-purple-900 mb-3">🔒 Exclusivos de RH ({columnasRHOnly.length})</h4>
@@ -749,19 +870,26 @@ function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
             </div>
           )}
 
-          {/* Comentario */}
           <div>
             <label className="block text-sm font-bold text-slate-800 mb-1">💬 Observaciones de RH</label>
             <textarea rows="3" value={comentario} onChange={e => setComentario(e.target.value)} placeholder="Ej: Ajustado según reloj checador..." className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
           </div>
         </div>
 
-        {/* Footer con totales */}
-        <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4">
+        <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4 rounded-b-2xl">
           <div className="grid md:grid-cols-3 gap-4 mb-4">
-            <div className="text-center"><div className="text-xs text-slate-500 uppercase font-semibold">Percepciones</div><div className="text-xl font-bold text-emerald-600">+ ${totalSumas.toFixed(2)}</div></div>
-            <div className="text-center border-x border-slate-300 px-4"><div className="text-xs text-slate-500 uppercase font-semibold">Deducciones</div><div className="text-xl font-bold text-red-600">- ${totalRestas.toFixed(2)}</div></div>
-            <div className="text-center bg-white rounded-xl p-3 shadow-md border-2 border-purple-500"><div className="text-xs text-purple-600 uppercase font-bold">Neto</div><div className="text-2xl font-black text-purple-900">${neto.toFixed(2)}</div></div>
+            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
+              <div className="text-xs text-slate-500 uppercase font-semibold">Percepciones</div>
+              <div className="text-xl font-bold text-emerald-600">+ ${totalSumas.toFixed(2)}</div>
+            </div>
+            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
+              <div className="text-xs text-slate-500 uppercase font-semibold">Deducciones</div>
+              <div className="text-xl font-bold text-red-600">- ${totalRestas.toFixed(2)}</div>
+            </div>
+            <div className="text-center bg-white rounded-xl p-3 shadow-md border-2 border-purple-500">
+              <div className="text-xs text-purple-600 uppercase font-bold">Neto</div>
+              <div className="text-2xl font-black text-purple-900">${neto.toFixed(2)}</div>
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>

@@ -32,14 +32,32 @@ export default function SolicitudesUsuario() {
     try {
       setLoading(true);
 
-      // 1. Crear el usuario en Supabase Authentication
+      // 🔥 1. LIMPIAR Y VALIDAR EL CORREO Y CONTRASEÑA
+      const correoLimpio = solicitud.correo ? String(solicitud.correo).trim().toLowerCase() : "";
+      const passwordLimpio = solicitud.password ? String(solicitud.password).trim() : "";
+
+      // Validación básica de formato de correo (debe tener algo@algo.algo)
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(correoLimpio)) {
+        alert("⚠️ El formato del correo electrónico es inválido o tiene espacios. Por favor, rechaza esta solicitud y pide al usuario que se registre correctamente.");
+        setLoading(false);
+        return;
+      }
+
+      if (passwordLimpio.length < 6) {
+        alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Crear el usuario en Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: solicitud.correo,
-        password: solicitud.password,
+        email: correoLimpio,
+        password: passwordLimpio,
         options: {
           data: {
             nombre: solicitud.nombre,
-            rol: "SUPERVISOR", // 🔥 Asignamos el rol para que el Login lo detecte
+            rol: "SUPERVISOR",
           },
         },
       });
@@ -49,16 +67,16 @@ export default function SolicitudesUsuario() {
       const nuevoUserId = authData.user?.id;
 
       if (nuevoUserId) {
-        // 2. Crear o actualizar el perfil con el nuevo ID de Auth
-        // ⚠️ IMPORTANTE: Si tu tabla principal es "empleados" en lugar de "profiles", 
+        // 3. Crear o actualizar el perfil con el nuevo ID de Auth
+        // ⚠️ IMPORTANTE: Si tu tabla de perfiles se llama "empleados" en lugar de "profiles", 
         // cambia "profiles" por "empleados" en la siguiente línea.
         const { error: profileError } = await supabase.from("profiles").upsert(
           {
             id: nuevoUserId,
             nombre: solicitud.nombre,
-            correo: solicitud.correo,
+            correo: correoLimpio,
             telefono: solicitud.telefono,
-            rol: "supervisor",
+            rol: "SUPERVISOR",
             activo: true,
           },
           { onConflict: "id" }
@@ -66,7 +84,7 @@ export default function SolicitudesUsuario() {
 
         if (profileError) throw profileError;
 
-        // 3. Actualizar el estatus de la solicitud
+        // 4. Actualizar el estatus de la solicitud
         const { error: updateError } = await supabase
           .from("solicitudes_usuario")
           .update({ estatus: "APROBADA" })
@@ -76,8 +94,7 @@ export default function SolicitudesUsuario() {
 
         alert("✅ Usuario creado y aprobado exitosamente como Supervisor.");
 
-        // 4. Cerrar sesión del usuario recién creado y redirigir al admin al login
-        // Esto es necesario porque signUp cambia la sesión activa al nuevo usuario.
+        // 5. Cerrar sesión del usuario recién creado y redirigir al admin al login
         await supabase.auth.signOut();
         alert("⚠️ Por seguridad, la sesión se ha cerrado. Por favor, inicia sesión nuevamente con tu cuenta de administrador.");
         navigate("/login");
@@ -153,7 +170,7 @@ export default function SolicitudesUsuario() {
                 {solicitudes.map((solicitud) => (
                   <tr key={solicitud.id} className="hover:bg-slate-50 transition">
                     <td className="p-4 font-semibold text-slate-800">{solicitud.nombre}</td>
-                    <td className="p-4 text-slate-600">{solicitud.correo}</td>
+                    <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo}</td>
                     <td className="p-4 text-slate-600">{solicitud.telefono || "-"}</td>
                     <td className="p-4 text-center">
                       {solicitud.estatus === "PENDIENTE" && (
@@ -167,7 +184,7 @@ export default function SolicitudesUsuario() {
                       )}
                     </td>
                     <td className="p-4 text-center">
-                      {solicitud.estatus === "PENDIENTE" && (
+                      {solicitud.estatus === "PENDIENTE" ? (
                         <div className="flex gap-2 justify-center">
                           <button
                             onClick={() => aprobarSolicitud(solicitud)}
@@ -184,8 +201,7 @@ export default function SolicitudesUsuario() {
                             Rechazar
                           </button>
                         </div>
-                      )}
-                      {solicitud.estatus !== "PENDIENTE" && (
+                      ) : (
                         <span className="text-slate-400 text-xs">Sin acciones</span>
                       )}
                     </td>

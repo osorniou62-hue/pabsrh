@@ -15,6 +15,11 @@ const toSnakeCase = (str) => {
     .replace(/[^a-z0-9_]/g, '');
 };
 
+// 🔥 Función para validar si un string es un UUID válido
+const esUUID = (str) => {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(str));
+};
+
 export default function ImportarEmpleados() {
   const [archivo, setArchivo] = useState(null);
   const [empleados, setEmpleados] = useState([]);
@@ -101,7 +106,7 @@ export default function ImportarEmpleados() {
 
     asegurarEsencial('numero_empleado', ['#', 'NUMERO', 'NO.', 'NUM EMPLEADO']);
     asegurarEsencial('nombre_completo', ['NOMBRE', 'COLABORADOR']);
-    asegurarEsencial('puesto', ['PUESTO']);
+    asegurarEsencial('puesto', ['PUESTO', 'CARGO']);
     asegurarEsencial('departamento', ['DEPARTAMENTO', 'LINEA', 'AREA']);
     asegurarEsencial('fecha_ingreso', ['ALTA', 'FECHA INGRESO', 'INGRESO']);
     asegurarEsencial('sueldo_base', ['SUELDO BASE', 'SALARIO BASE']);
@@ -127,19 +132,16 @@ export default function ImportarEmpleados() {
           } else if (dbCol.includes('fecha') || dbCol.includes('alta') || dbCol.includes('ingreso')) {
             val = convertirFechaExcel(val);
           } else {
-            // 🔥 CORRECCIÓN: Convertir a string ANTES de hacer trim
             val = val !== null && val !== undefined ? String(val).trim() : "";
           }
           nuevoEmpleado[dbCol] = val;
         }
       });
 
-      // 🔥 CORRECCIÓN: Convertir a string ANTES de asignar valores por defecto
       if (!nuevoEmpleado.nombre_completo) nuevoEmpleado.nombre_completo = "SIN NOMBRE";
       if (!nuevoEmpleado.puesto) nuevoEmpleado.puesto = "SIN PUESTO";
       if (!nuevoEmpleado.departamento) nuevoEmpleado.departamento = "GENERAL";
       
-      // Asegurar que sean strings
       nuevoEmpleado.nombre_completo = String(nuevoEmpleado.nombre_completo);
       nuevoEmpleado.puesto = String(nuevoEmpleado.puesto);
       nuevoEmpleado.departamento = String(nuevoEmpleado.departamento);
@@ -191,11 +193,16 @@ export default function ImportarEmpleados() {
       const errores = [];
 
       for (const empleadoData of empleados) {
-        const { numero_empleado, nombre_completo, puesto: puestoRaw, departamento: deptoRaw, ...camposDinamicos } = empleadoData;
+        // 🔥 EXTRACCIÓN ROBUSTA: Buscar en varios posibles nombres de campo
+        let deptoRaw = empleadoData.departamento || empleadoData.area || empleadoData.linea || "GENERAL";
+        let puestoRaw = empleadoData.puesto || empleadoData.cargo || "SIN PUESTO";
 
-        // 🔥 CORRECCIÓN CLAVE: Envolver en String() para evitar el error "trim is not a function"
-        const nombreDepartamento = String(deptoRaw || "GENERAL").trim().toUpperCase();
-        const nombrePuesto = String(puestoRaw || "SIN PUESTO").trim().toUpperCase();
+        // Si por error el mapeo dinámico puso un UUID o texto largo en departamento, lo reseteamos
+        if (typeof deptoRaw === 'string' && deptoRaw.length > 30) deptoRaw = "GENERAL";
+        if (typeof puestoRaw === 'string' && puestoRaw.length > 50) puestoRaw = "SIN PUESTO";
+
+        const nombreDepartamento = String(deptoRaw).trim().toUpperCase();
+        const nombrePuesto = String(puestoRaw).trim().toUpperCase();
 
         const equivalencias = { "MTTO NAVE 3": "MTTO", "AYU CHOFER": "LOGISTICA INTERNA", CHOFER: "LOGISTICA INTERNA", "LAVADO": "LOGISTICA INTERNA" };
         const deptoFinal = equivalencias[nombreDepartamento] || nombreDepartamento;
@@ -212,6 +219,12 @@ export default function ImportarEmpleados() {
         if (!departamento && departamentos.length > 0) departamento = departamentos[0];
 
         let puesto = puestos.find((p) => String(p.nombre || "").trim().toUpperCase() === nombrePuesto && p.departamento_id === departamento?.id);
+        
+        // Si no encuentra el puesto exacto, busca solo por nombre
+        if (!puesto) {
+          puesto = puestos.find((p) => String(p.nombre || "").trim().toUpperCase() === nombrePuesto);
+        }
+
         if (!puesto && departamento) {
           const { data: nuevoPuesto, error: puestoError } = await supabase
             .from("puestos")
@@ -224,6 +237,9 @@ export default function ImportarEmpleados() {
           }
         }
 
+        // Separar campos dinámicos del empleado
+        const { numero_empleado, nombre_completo, ...camposDinamicos } = empleadoData;
+
         const datosEmpleadoPayload = {
           nombre_completo,
           ...camposDinamicos, 
@@ -233,8 +249,13 @@ export default function ImportarEmpleados() {
           activo: true,
         };
 
+        // 🔥 LIMPIEZA CRÍTICA: Eliminar valores de texto que hayan llegado a columnas de ID
         Object.keys(datosEmpleadoPayload).forEach(key => {
-          if (datosEmpleadoPayload[key] === undefined || datosEmpleadoPayload[key] === null || datosEmpleadoPayload[key] === "") {
+          const val = datosEmpleadoPayload[key];
+          if (val === undefined || val === null || val === "") {
+            delete datosEmpleadoPayload[key];
+          } else if ((key === 'departamento_id' || key === 'puesto_id' || key === 'linea_id' || key === 'supervisor_id') && typeof val === 'string' && !esUUID(val)) {
+            // Si es una columna de ID pero contiene texto (ej: "MOLIENDA"), la eliminamos para que prevalezca el ID correcto calculado arriba
             delete datosEmpleadoPayload[key];
           }
         });

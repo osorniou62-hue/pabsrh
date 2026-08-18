@@ -63,7 +63,7 @@ export default function Empleados() {
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
-  // 🔥 NUEVO: Modal y configuración de columnas especiales
+  // 🔥 Modal y configuración de columnas especiales
   const [modalEspeciales, setModalEspeciales] = useState(false);
   const [configuracionEspeciales, setConfiguracionEspeciales] = useState(() => {
     try {
@@ -87,7 +87,6 @@ export default function Empleados() {
 
   const [mapaColumnas, setMapaColumnas] = useState({});
 
-  // 🔥 Guardar configuración especial
   useEffect(() => {
     localStorage.setItem("empleados_columnas_especiales", JSON.stringify(configuracionEspeciales));
   }, [configuracionEspeciales]);
@@ -201,21 +200,18 @@ export default function Empleados() {
         setMapaColumnas(nuevoMapa);
       }
 
-      // 🔥 MEJORADO: Búsqueda más inteligente de departamento y puesto
+      // 🔥 Búsqueda inteligente de departamento y puesto
       let empleadosProcesados = (emps || []).map(emp => {
         let deptoObj = null;
         
-        // 1. Primero intentar con departamento_id (relación)
         if (emp.departamento_id) {
           deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
         }
         
-        // 2. Si no, intentar con el campo de texto "departamento"
         if (!deptoObj && emp.departamento) {
           deptoObj = { nombre: emp.departamento };
         }
         
-        // 3. Si aún no, buscar en columnas dinámicas mapeadas
         if (!deptoObj) {
           const campoDeptoMapeado = mapaColumnas['departamento'] || 
                                    Object.keys(mapaColumnas).find(k => k.includes('departamento'));
@@ -224,7 +220,6 @@ export default function Empleados() {
           }
         }
 
-        // 🔥 MISMA LÓGICA PARA PUESTO
         let puestoObj = null;
         
         if (emp.puesto_id) {
@@ -308,6 +303,7 @@ export default function Empleados() {
   };
 
   const cambiarVisibilidadColumna = (campo) => setColumnasVisibles(prev => ({ ...prev, [campo]: !prev[campo] }));
+  
   const moverColumna = (campo, direccion) => {
     setOrdenColumnas(prev => {
       const idx = prev.indexOf(campo);
@@ -318,9 +314,9 @@ export default function Empleados() {
       return nuevo;
     });
   };
+
   const restablecerOrden = () => setOrdenColumnas(columnasDelMapeo.map(c => c.campo));
 
-  // 🔥 NUEVO: Toggle columnas especiales
   const toggleColumnaEspecial = (campo) => {
     setConfiguracionEspeciales(prev => ({ ...prev, [campo]: !prev[campo] }));
   };
@@ -542,7 +538,7 @@ export default function Empleados() {
         </div>
       </div>
 
-      {/* 🔥 NUEVO MODAL: Configuración de Columnas Especiales */}
+      {/* 🔥 MODAL: Configuración de Columnas Especiales */}
       {modalEspeciales && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5">
@@ -614,39 +610,182 @@ export default function Empleados() {
         </div>
       )}
 
+      {/* 🔥 MODAL MEJORADO CON DRAG & DROP */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center pb-3 border-b">
-              <div><h3 className="text-lg font-bold text-slate-800">⚙️ Configurar y Reordenar Columnas</h3><p className="text-xs text-gray-500">Activa/desactiva y usa las flechas para ordenar.</p></div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">⚙️ Configurar y Reordenar Columnas</h3>
+                <p className="text-xs text-gray-500">
+                  <span className="font-semibold text-purple-600">🖱️ Arrastra</span> las columnas para reordenarlas, o usa los botones ↑↓
+                </p>
+              </div>
               <button onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
-            <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
-              <span className="text-xs text-slate-600 font-medium">Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDelMapeo.length}</strong></span>
-              <button onClick={restablecerOrden} className="bg-purple-100 hover:bg-purple-200 text-purple-800 px-3 py-2 rounded-lg text-xs font-semibold">🔄 Orden original</button>
+
+            <div className="flex flex-wrap justify-between items-center gap-3 bg-slate-50 p-3 rounded-xl">
+              <span className="text-xs text-slate-600 font-medium">
+                Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDelMapeo.length}</strong>
+              </span>
+              <div className="flex gap-2">
+                <button 
+                  onClick={restablecerOrden} 
+                  className="bg-purple-100 hover:bg-purple-200 text-purple-800 px-3 py-2 rounded-lg text-xs font-semibold"
+                >
+                  🔄 Orden original
+                </button>
+              </div>
             </div>
-            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-              {columnasDelMapeo.map(col => {
+
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-3 rounded-xl text-xs">
+              💡 <strong>Cómo reordenar:</strong> Haz clic en el ícono <span className="font-mono bg-white px-1.5 py-0.5 rounded">⋮⋮</span> y arrastra la columna a la posición deseada. También puedes escribir el número de posición.
+            </div>
+
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {columnasDelMapeo.map((col) => {
                 const idx = ordenColumnas.indexOf(col.campo);
                 const nombreReal = mapaColumnas[col.campo];
                 const encontrada = nombreReal && nombreReal !== col.campo;
+                const posicionActual = idx + 1;
+                
                 return (
-                  <div key={col.campo} className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition">
-                    <input type="checkbox" checked={columnasVisibles[col.campo] !== false} onChange={() => cambiarVisibilidadColumna(col.campo)} className="w-4 h-4 text-blue-600 rounded" />
-                    <div className="flex-1">
-                      <div className="font-semibold text-slate-700 text-sm">{col.etiqueta}</div>
-                      <div className="text-[10px] text-slate-500">📄 Excel: <span className="font-mono">{col.original}</span> | 🗄️ {col.tabla}</div>
-                      {encontrada && <div className="text-[10px] text-emerald-600 mt-0.5">✅ Encontrada en BD como: <span className="font-mono font-bold">{nombreReal}</span></div>}
+                  <div 
+                    key={col.campo}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', col.campo);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.currentTarget.classList.add('opacity-40', 'scale-95');
+                    }}
+                    onDragEnd={(e) => {
+                      e.currentTarget.classList.remove('opacity-40', 'scale-95');
+                      e.currentTarget.classList.remove('ring-2', 'ring-blue-400', 'bg-blue-50');
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      e.currentTarget.classList.add('ring-2', 'ring-blue-400', 'bg-blue-50');
+                    }}
+                    onDragLeave={(e) => {
+                      e.currentTarget.classList.remove('ring-2', 'ring-blue-400', 'bg-blue-50');
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('ring-2', 'ring-blue-400', 'bg-blue-50');
+                      const campoArrastrado = e.dataTransfer.getData('text/plain');
+                      if (campoArrastrado !== col.campo) {
+                        setOrdenColumnas(prev => {
+                          const nuevo = prev.filter(c => c !== campoArrastrado);
+                          const indiceDestino = nuevo.indexOf(col.campo);
+                          nuevo.splice(indiceDestino, 0, campoArrastrado);
+                          return nuevo;
+                        });
+                      }
+                    }}
+                    className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition cursor-move group"
+                  >
+                    {/* ÍCONO DE ARRASTRE */}
+                    <div 
+                      className="text-slate-400 group-hover:text-slate-600 cursor-grab active:cursor-grabbing select-none flex-shrink-0"
+                      title="Arrastra para reordenar"
+                    >
+                      <span className="text-lg leading-none">⋮⋮</span>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => moverColumna(col.campo, 'arriba')} disabled={idx === 0} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↑</button>
-                      <button onClick={() => moverColumna(col.campo, 'abajo')} disabled={idx === ordenColumnas.length - 1} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↓</button>
+
+                    {/* NÚMERO DE POSICIÓN */}
+                    <div className="bg-slate-200 text-slate-700 text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center flex-shrink-0">
+                      {posicionActual}
+                    </div>
+
+                    {/* CHECKBOX */}
+                    <input 
+                      type="checkbox" 
+                      checked={columnasVisibles[col.campo] !== false} 
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        cambiarVisibilidadColumna(col.campo);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 text-blue-600 rounded flex-shrink-0" 
+                    />
+
+                    {/* INFORMACIÓN DE LA COLUMNA */}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-700 text-sm truncate">{col.etiqueta}</div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        📄 <span className="font-mono">{col.original}</span> | 🗄️ {col.tabla}
+                      </div>
+                      {encontrada && (
+                        <div className="text-[10px] text-emerald-600 mt-0.5 truncate">
+                          ✅ BD: <span className="font-mono font-bold">{nombreReal}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* INPUT PARA MOVER A POSICIÓN ESPECÍFICA */}
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <label className="text-[10px] text-slate-500 hidden sm:inline">Ir a:</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={columnasDelMapeo.length}
+                        defaultValue={posicionActual}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-14 border border-slate-300 rounded px-1.5 py-1 text-xs text-center focus:ring-2 focus:ring-blue-500 outline-none"
+                        onBlur={(e) => {
+                          const nuevaPos = parseInt(e.target.value);
+                          if (!isNaN(nuevaPos) && nuevaPos >= 1 && nuevaPos <= columnasDelMapeo.length && nuevaPos !== posicionActual) {
+                            setOrdenColumnas(prev => {
+                              const nuevo = [...prev];
+                              const indiceActual = nuevo.indexOf(col.campo);
+                              nuevo.splice(indiceActual, 1);
+                              nuevo.splice(nuevaPos - 1, 0, col.campo);
+                              return nuevo;
+                            });
+                          }
+                          e.target.value = posicionActual;
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.target.blur();
+                        }}
+                        title={`Escribe una posición (1-${columnasDelMapeo.length}) y presiona Enter`}
+                      />
+                    </div>
+
+                    {/* BOTONES DE FLECHAS */}
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); moverColumna(col.campo, 'arriba'); }} 
+                        disabled={idx === 0} 
+                        className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold"
+                        title="Mover arriba"
+                      >
+                        ↑
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); moverColumna(col.campo, 'abajo'); }} 
+                        disabled={idx === ordenColumnas.length - 1} 
+                        className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold"
+                        title="Mover abajo"
+                      >
+                        ↓
+                      </button>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="pt-3 border-t flex justify-end"><button onClick={() => setModalConfigColumnas(false)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition">Aplicar Cambios</button></div>
+
+            <div className="pt-3 border-t flex justify-end">
+              <button 
+                onClick={() => setModalConfigColumnas(false)} 
+                className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition"
+              >
+                Aplicar Cambios
+              </button>
+            </div>
           </div>
         </div>
       )}

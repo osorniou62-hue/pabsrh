@@ -4,9 +4,8 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 import { supabase } from "../services/supabase";
 
-// 🔥 Normaliza a snake_case (debe coincidir con Configuración de Tablas)
 const toSnakeCase = (str) => {
-  return str
+  return String(str || "")
     .trim()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, '_')
@@ -81,7 +80,6 @@ export default function ImportarEmpleados() {
     const encabezadosRaw = rows[0].map((h) => String(h || "").trim());
     const encabezadosUpper = encabezadosRaw.map(h => h.toUpperCase());
 
-    // 1. Construir mapa: Nombre en Excel -> Nombre en BD (snake_case)
     const mapaExcelADb = {};
     if (configuracionMapeo?.asignacion) {
       Object.entries(configuracionMapeo.asignacion).forEach(([excelCol, info]) => {
@@ -92,7 +90,6 @@ export default function ImportarEmpleados() {
       });
     }
 
-    // 2. 🔥 RESPALDO INTELIGENTE: Si no hay mapeo explícito, buscar por palabras clave (como tu código original)
     const asegurarEsencial = (dbKey, posiblesNombresExcel) => {
       if (!Object.values(mapaExcelADb).includes(dbKey)) {
         const idx = encabezadosUpper.findIndex(h => posiblesNombresExcel.some(p => h.includes(p)));
@@ -112,7 +109,6 @@ export default function ImportarEmpleados() {
     const encontrados = [];
     const dataRows = rows.slice(1);
 
-    // Encontrar el índice del número de empleado (clave para no descartar filas)
     const numEmpKey = Object.keys(mapaExcelADb).find(k => mapaExcelADb[k] === 'numero_empleado');
     const idxNum = numEmpKey ? encabezadosRaw.findIndex(h => h.toUpperCase() === numEmpKey) : -1;
 
@@ -121,28 +117,32 @@ export default function ImportarEmpleados() {
 
       const nuevoEmpleado = {};
 
-      // 3. Extraer datos DINÁMICAMENTE según el mapa
       Object.entries(mapaExcelADb).forEach(([excelCol, dbCol]) => {
         const idx = encabezadosRaw.findIndex(h => h.toUpperCase() === excelCol);
         if (idx !== -1) {
           let val = fila[idx];
           
-          // Limpieza inteligente según el tipo de columna
           if (dbCol.includes('sueldo') || dbCol.includes('bono') || dbCol.includes('total') || dbCol.includes('descuento') || dbCol.includes('saldo') || dbCol.includes('monto') || dbCol.includes('neto') || dbCol.includes('dias') || dbCol.includes('horas')) {
             val = limpiarMonto(val);
           } else if (dbCol.includes('fecha') || dbCol.includes('alta') || dbCol.includes('ingreso')) {
             val = convertirFechaExcel(val);
           } else {
-            val = typeof val === 'string' ? val.trim() : val;
+            // 🔥 CORRECCIÓN: Convertir a string ANTES de hacer trim
+            val = val !== null && val !== undefined ? String(val).trim() : "";
           }
           nuevoEmpleado[dbCol] = val;
         }
       });
 
-      // 4. Valores por defecto para que la lógica de Depto/Puesto no falle
+      // 🔥 CORRECCIÓN: Convertir a string ANTES de asignar valores por defecto
       if (!nuevoEmpleado.nombre_completo) nuevoEmpleado.nombre_completo = "SIN NOMBRE";
       if (!nuevoEmpleado.puesto) nuevoEmpleado.puesto = "SIN PUESTO";
       if (!nuevoEmpleado.departamento) nuevoEmpleado.departamento = "GENERAL";
+      
+      // Asegurar que sean strings
+      nuevoEmpleado.nombre_completo = String(nuevoEmpleado.nombre_completo);
+      nuevoEmpleado.puesto = String(nuevoEmpleado.puesto);
+      nuevoEmpleado.departamento = String(nuevoEmpleado.departamento);
 
       encontrados.push(nuevoEmpleado);
     });
@@ -191,11 +191,11 @@ export default function ImportarEmpleados() {
       const errores = [];
 
       for (const empleadoData of empleados) {
-        // Separar campos esenciales para la lógica de relación, del resto dinámico
         const { numero_empleado, nombre_completo, puesto: puestoRaw, departamento: deptoRaw, ...camposDinamicos } = empleadoData;
 
-        const nombreDepartamento = (deptoRaw || "GENERAL").trim().toUpperCase();
-        const nombrePuesto = (puestoRaw || "SIN PUESTO").trim().toUpperCase();
+        // 🔥 CORRECCIÓN CLAVE: Envolver en String() para evitar el error "trim is not a function"
+        const nombreDepartamento = String(deptoRaw || "GENERAL").trim().toUpperCase();
+        const nombrePuesto = String(puestoRaw || "SIN PUESTO").trim().toUpperCase();
 
         const equivalencias = { "MTTO NAVE 3": "MTTO", "AYU CHOFER": "LOGISTICA INTERNA", CHOFER: "LOGISTICA INTERNA", "LAVADO": "LOGISTICA INTERNA" };
         const deptoFinal = equivalencias[nombreDepartamento] || nombreDepartamento;
@@ -208,10 +208,10 @@ export default function ImportarEmpleados() {
           deptoNombreFinal = "MOLIENDA";
         }
 
-        let departamento = departamentos.find((d) => d.nombre?.trim()?.toUpperCase() === deptoNombreFinal);
+        let departamento = departamentos.find((d) => String(d.nombre || "").trim().toUpperCase() === deptoNombreFinal);
         if (!departamento && departamentos.length > 0) departamento = departamentos[0];
 
-        let puesto = puestos.find((p) => p.nombre?.trim()?.toUpperCase() === nombrePuesto && p.departamento_id === departamento?.id);
+        let puesto = puestos.find((p) => String(p.nombre || "").trim().toUpperCase() === nombrePuesto && p.departamento_id === departamento?.id);
         if (!puesto && departamento) {
           const { data: nuevoPuesto, error: puestoError } = await supabase
             .from("puestos")
@@ -224,7 +224,6 @@ export default function ImportarEmpleados() {
           }
         }
 
-        // 🔥 Payload dinámico: incluye TODOS los campos mapeados (sueldo_neto, antiguedad, etc.)
         const datosEmpleadoPayload = {
           nombre_completo,
           ...camposDinamicos, 
@@ -234,10 +233,8 @@ export default function ImportarEmpleados() {
           activo: true,
         };
 
-        // Limpiar campos nulos o indefinidos antes de enviar a Supabase
         Object.keys(datosEmpleadoPayload).forEach(key => {
           if (datosEmpleadoPayload[key] === undefined || datosEmpleadoPayload[key] === null || datosEmpleadoPayload[key] === "") {
-            // No eliminamos 'numero_empleado' si estuviera aquí, pero como está fuera, está seguro
             delete datosEmpleadoPayload[key];
           }
         });
@@ -245,7 +242,7 @@ export default function ImportarEmpleados() {
         const { data: existente } = await supabase
           .from("empleados")
           .select("id")
-          .eq("numero_empleado", numero_empleado)
+          .eq("numero_empleado", String(numero_empleado))
           .maybeSingle();
 
         let empId = null;
@@ -264,7 +261,7 @@ export default function ImportarEmpleados() {
         } else {
           const { data: empleadoGuardado, error: insertError } = await supabase
             .from("empleados")
-            .insert([{ numero_empleado, ...datosEmpleadoPayload }])
+            .insert([{ numero_empleado: String(numero_empleado), ...datosEmpleadoPayload }])
             .select()
             .single();
           if (insertError) {
@@ -277,7 +274,6 @@ export default function ImportarEmpleados() {
           }
         }
 
-        // 🔥 Actualizar incidencias de forma dinámica si existen esos campos
         if (empId) {
           const payloadIncidencia = { empleado_id: empId, periodo_id: Number(periodoId) };
           let tieneIncidencia = false;
@@ -384,7 +380,6 @@ export default function ImportarEmpleados() {
                 <th className="p-3">Nombre</th>
                 <th className="p-3">Puesto</th>
                 <th className="p-3">Departamento</th>
-                {/* Mostrar dinámicamente columnas monetarias/clave si existen en los datos detectados */}
                 {empleados.length > 0 && Object.keys(empleados[0])
                   .filter(k => ['sueldo', 'bono', 'neto', 'antiguedad', 'total', 'complemento'].some(word => k.includes(word)))
                   .slice(0, 5).map(k => (
@@ -404,7 +399,7 @@ export default function ImportarEmpleados() {
                     .filter(k => ['sueldo', 'bono', 'neto', 'antiguedad', 'total', 'complemento'].some(word => k.includes(word)))
                     .slice(0, 5).map(k => (
                       <td key={k} className="p-3 text-right font-bold text-slate-700">
-                        {empleado[k] !== null && empleado[k] !== undefined && empleado[k] !== "" ? (typeof empleado[k] === 'number' ? `$${empleado[k].toFixed(2)}` : empleado[k]) : "-"}
+                        {empleado[k] !== null && empleado[k] !== undefined && empleado[k] !== "" ? (typeof empleado[k] === 'number' ? `$${empleado[k].toFixed(2)}` : String(empleado[k])) : "-"}
                       </td>
                     ))
                   }

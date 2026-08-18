@@ -5,7 +5,22 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 const formatearNombreColumna = (texto) => {
-  return String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+  return String(texto || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+};
+
+// 🔥 FUNCIÓN CLAVE: Normaliza cualquier nombre para poder comparar
+// "Sueldo Neto" → "sueldoneto"
+// "sueldo_neto" → "sueldoneto"
+// "AntigüEdad" → "antiguedad"
+// "Sueldo Complemento" → "sueldocomplemento"
+const normalizar = (texto) => {
+  return String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Quita acentos
+    .replace(/[^a-z0-9]/g, "");       // Quita TODO excepto letras y números
 };
 
 export default function Empleados() {
@@ -31,13 +46,23 @@ export default function Empleados() {
     try { const g = localStorage.getItem("empleados_columnas_visibles"); return g ? JSON.parse(g) : {}; } catch { return {}; }
   });
 
+  // 🔥 MAPA DE TRADUCCIÓN: Relaciona el nombre del mapeo con el nombre REAL en la BD
+  const [mapaColumnas, setMapaColumnas] = useState({});
+
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion) return [];
     const validas = [];
     Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
       if (info.tablaDestino && info.tablaDestino.trim() !== "") {
         const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
-        if (campoFinal) validas.push({ original: colOriginal, tabla: info.tablaDestino, campo: campoFinal, etiqueta: formatearNombreColumna(campoFinal) });
+        if (campoFinal) {
+          validas.push({
+            original: colOriginal,
+            tabla: info.tablaDestino,
+            campo: campoFinal,
+            etiqueta: formatearNombreColumna(campoFinal)
+          });
+        }
       }
     });
     const unicas = new Map();
@@ -97,29 +122,77 @@ export default function Empleados() {
   const cargarEmpleados = async () => {
     setLoading(true);
     try {
-      const { data: emps, error: errorEmps } = await supabase.from("empleados").select("*").order("nombre_completo");
+      const { data: emps, error: errorEmps } = await supabase
+        .from("empleados")
+        .select("*")
+        .order("nombre_completo");
+
       if (errorEmps) throw errorEmps;
 
+      // 🔥 PASO CLAVE: Construir el mapa de traducción de columnas
+      // Compara lo que dice el mapeo con lo que REALMENTE existe en la BD
+      if (emps && emps.length > 0 && columnasDelMapeo.length > 0) {
+        const columnasReales = Object.keys(emps[0]);
+        const nuevoMapa = {};
+
+        columnasDelMapeo.forEach(colMapeo => {
+          const nombreBuscado = colMapeo.campo;
+          const nombreNormalizado = normalizar(nombreBuscado);
+
+          // 1. Primero buscar coincidencia EXACTA
+          if (columnasReales.includes(nombreBuscado)) {
+            nuevoMapa[nombreBuscado] = nombreBuscado;
+            return;
+          }
+
+          // 2. Si no hay exacta, buscar por nombre normalizado
+          const coincidencia = columnasReales.find(colReal => {
+            return normalizar(colReal) === nombreNormalizado;
+          });
+
+          if (coincidencia) {
+            nuevoMapa[nombreBuscado] = coincidencia;
+            console.log(`🔄 Columna mapeada: "${nombreBuscado}" → encontrada en BD como: "${coincidencia}"`);
+          } else {
+            // 3. Si tampoco hay normalizada, buscar coincidencia parcial
+            const parcial = columnasReales.find(colReal => {
+              const colNorm = normalizar(colReal);
+              return colNorm.includes(nombreNormalizado) || nombreNormalizado.includes(colNorm);
+            });
+
+            if (parcial) {
+              nuevoMapa[nombreBuscado] = parcial;
+              console.log(`🔄 Columna mapeada (parcial): "${nombreBuscado}" → encontrada en BD como: "${parcial}"`);
+            } else {
+              nuevoMapa[nombreBuscado] = nombreBuscado;
+              console.log(`⚠️ Columna "${nombreBuscado}" no encontrada en la BD`);
+            }
+          }
+        });
+
+        setMapaColumnas(nuevoMapa);
+        console.log("📋 Mapa de columnas completo:", nuevoMapa);
+      }
+
       let empleadosProcesados = (emps || []).map(emp => {
-        // 🔥 BÚSQUEDA FLEXIBLE DE DEPARTAMENTO
         let deptoObj = null;
         if (emp.departamento_id) {
           deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
         } else if (emp.departamento) {
-          deptoObj = { nombre: emp.departamento }; // Si es texto directo
+          deptoObj = { nombre: emp.departamento };
         }
 
-        // 🔥 BÚSQUEDA FLEXIBLE DE PUESTO
         let puestoObj = null;
         if (emp.puesto_id) {
           puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
         } else if (emp.puesto) {
-          puestoObj = { nombre: emp.puesto }; // Si es texto directo
+          puestoObj = { nombre: emp.puesto };
         }
 
         return { ...emp, departamentos: deptoObj, puestos: puestoObj };
       });
 
+      // Enriquecer con tablas relacionadas
       const tablasRelacionadas = new Set();
       Object.values(configuracionMapeo?.asignacion || {}).forEach(info => {
         if (info.tablaDestino && !['empleados', 'puestos', 'departamentos'].includes(info.tablaDestino)) {
@@ -135,7 +208,7 @@ export default function Empleados() {
           } catch (e) { return { tabla, data: [] }; }
         });
         const resultados = await Promise.all(promesas);
-        
+
         empleadosProcesados = empleadosProcesados.map(emp => {
           const empEnriquecido = { ...emp };
           resultados.forEach(({ tabla, data }) => {
@@ -152,6 +225,7 @@ export default function Empleados() {
           return empEnriquecido;
         });
       }
+
       setEmpleados(empleadosProcesados);
     } catch (err) {
       console.error("❌ Error al cargar empleados:", err?.message || err);
@@ -168,6 +242,25 @@ export default function Empleados() {
         if (local) setConfiguracionMapeo(JSON.parse(local));
       }
     } catch (err) { console.error("Error cargando configuración:", err); }
+  };
+
+  // 🔥 FUNCIÓN CLAVE: Obtener el valor de una columna usando el mapa de traducción
+  const obtenerValorColumna = (empleado, campoMapeo) => {
+    // Primero intentar con el nombre del mapeo
+    if (empleado[campoMapeo] !== undefined && empleado[campoMapeo] !== null) {
+      return empleado[campoMapeo];
+    }
+    // Si no, usar el mapa de traducción para encontrar el nombre real
+    const nombreReal = mapaColumnas[campoMapeo];
+    if (nombreReal && empleado[nombreReal] !== undefined) {
+      return empleado[nombreReal];
+    }
+    // Si tampoco, buscar en todas las propiedades del empleado
+    const normalizado = normalizar(campoMapeo);
+    const claveReal = Object.keys(empleado).find(k => normalizar(k) === normalizado);
+    if (claveReal) return empleado[claveReal];
+    
+    return null;
   };
 
   const cambiarVisibilidadColumna = (campo) => setColumnasVisibles(prev => ({ ...prev, [campo]: !prev[campo] }));
@@ -292,9 +385,12 @@ export default function Empleados() {
                     <td className="p-3">{emp.departamentos?.nombre || "N/A"}</td>
                     <td className="p-3">{emp.puestos?.nombre || "Sin Asignar"}</td>
                     {columnasActivas.map(col => {
-                      const val = emp[col.campo];
-                      const esMoneda = col.campo.includes('sueldo') || col.campo.includes('bono') || col.campo.includes('total') || col.campo.includes('apoyo') || col.campo.includes('gratificacion') || col.campo.includes('neto');
-                      const displayVal = esMoneda ? (val !== null && val !== undefined && val !== "" ? `$${Number(val).toFixed(2)}` : "$0.00") : (val !== null && val !== undefined && val !== "" ? val : "-");
+                      // 🔥 USAR LA FUNCIÓN INTELIGENTE para obtener el valor
+                      const val = obtenerValorColumna(emp, col.campo);
+                      const esMoneda = col.campo.includes('sueldo') || col.campo.includes('bono') || col.campo.includes('total') || col.campo.includes('apoyo') || col.campo.includes('gratificacion') || col.campo.includes('neto') || col.campo.includes('complemento');
+                      const displayVal = esMoneda 
+                        ? (val !== null && val !== undefined && val !== "" ? `$${Number(val).toFixed(2)}` : "$0.00") 
+                        : (val !== null && val !== undefined && val !== "" ? String(val) : "-");
                       return (<td key={col.campo} className={`p-3 text-right ${esMoneda ? 'bg-emerald-50/20 text-gray-700' : ''}`}>{displayVal}</td>);
                     })}
                     <td className="p-3 text-center">{estaActivo ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span> : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>}</td>
@@ -327,12 +423,15 @@ export default function Empleados() {
             <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
               {columnasDelMapeo.map(col => {
                 const idx = ordenColumnas.indexOf(col.campo);
+                const nombreReal = mapaColumnas[col.campo];
+                const encontrada = nombreReal && nombreReal !== col.campo;
                 return (
                   <div key={col.campo} className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition">
                     <input type="checkbox" checked={columnasVisibles[col.campo] !== false} onChange={() => cambiarVisibilidadColumna(col.campo)} className="w-4 h-4 text-blue-600 rounded" />
                     <div className="flex-1">
                       <div className="font-semibold text-slate-700 text-sm">{col.etiqueta}</div>
                       <div className="text-[10px] text-slate-500">📄 Excel: <span className="font-mono">{col.original}</span> | 🗄️ {col.tabla}</div>
+                      {encontrada && <div className="text-[10px] text-emerald-600 mt-0.5">✅ Encontrada en BD como: <span className="font-mono font-bold">{nombreReal}</span></div>}
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => moverColumna(col.campo, 'arriba')} disabled={idx === 0} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↑</button>
@@ -351,7 +450,7 @@ export default function Empleados() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6 border border-slate-100">
             <div className="flex justify-between items-center pb-4 border-b mb-4">
-              <div><h2 className="text-xl font-bold text-slate-800">🔗 Relación Completa</h2><p className="text-xs text-gray-500 mt-0.5">Configurado desde Administración.</p></div>
+              <div><h2 className="text-xl font-bold text-slate-800">🔗 Relación Completa</h2></div>
               <button onClick={() => setModalRelacion(false)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-sm">✕ Cerrar</button>
             </div>
             {configuracionMapeo?.asignacion ? (
@@ -363,7 +462,7 @@ export default function Empleados() {
                     <tbody className="divide-y divide-slate-100">
                       {Object.entries(configuracionMapeo.asignacion).map(([colOrig, info], idx) => {
                         const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
-                        return (<tr key={idx} className="hover:bg-slate-50"><td className="p-3 font-semibold text-slate-800">{colOrig}</td><td className="p-3">{info.tablaDestino ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">{info.tablaDestino}</span> : "Omitida"}</td><td className="p-3 font-mono text-slate-600">{info.esManual ? <span className="text-blue-700 font-bold">✏️ {info.campoManual}</span> : (campoFinal || "Sin definir")}</td></tr>);
+                        return (<tr key={idx} className="hover:bg-slate-50"><td className="p-3 font-semibold text-slate-800">{colOrig}</td><td className="p-3">{info.tablaDestino ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold capitalize">{info.tablaDestino}</span> : "Omitida"}</td><td className="p-3 font-mono text-slate-600">{campoFinal || "Sin definir"}</td></tr>);
                       })}
                     </tbody>
                   </table>
@@ -385,7 +484,7 @@ export default function Empleados() {
               <div><label className="block font-semibold text-gray-700 mb-1">Puesto</label><select value={modalEdicionRapida.datos?.puesto_id || ""} onChange={e => setModalEdicionRapida(prev => ({ ...prev, datos: { ...prev.datos, puesto_id: e.target.value } }))} className="w-full border p-2.5 rounded-lg outline-none bg-white"><option value="">-- Seleccionar --</option>{puestosLista.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
               {esPuestoSupervisor(modalEdicionRapida.datos?.puesto_id) && (<div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100"><label className="block font-bold text-blue-900 mb-1">👥 Supervisor</label><select value={modalEdicionRapida.datos?.supervisor_id || ""} onChange={e => setModalEdicionRapida(prev => ({ ...prev, datos: { ...prev.datos, supervisor_id: e.target.value } }))} className="w-full border p-2 rounded-lg bg-white text-xs"><option value="">-- Sin supervisor --</option>{empleados.filter(emp => emp.id !== modalEdicionRapida.datos?.id).map(emp => <option key={emp.id} value={emp.id}>{emp.nombre_completo} ({emp.puestos?.nombre || "Sin puesto"})</option>)}</select></div>)}
               <div><label className="block font-semibold text-gray-700 mb-1">Estatus</label><select value={modalEdicionRapida.datos?.activo ? "ACTIVO" : "INACTIVO"} onChange={e => setModalEdicionRapida(prev => ({ ...prev, datos: { ...prev.datos, activo: e.target.value === "ACTIVO" } }))} className="w-full border p-2.5 rounded-lg outline-none bg-white"><option value="ACTIVO">Activo</option><option value="INACTIVO">Baja / Inactivo</option></select></div>
-              <div><label className="block font-semibold text-gray-700 mb-1">Sueldo Base Semanal ($)</label><input type="number" step="0.01" min="0" value={modalEdicionRapida.datos?.sueldo_base ?? 0} onChange={e => setModalEdicionRapida(prev => ({ ...prev, datos: { ...prev.datos, sueldo_base: e.target.value } }))} className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none" /></div>
+              <div><label className="block font-semibold text-gray-700 mb-1">Sueldo Base ($)</label><input type="number" step="0.01" min="0" value={modalEdicionRapida.datos?.sueldo_base ?? 0} onChange={e => setModalEdicionRapida(prev => ({ ...prev, datos: { ...prev.datos, sueldo_base: e.target.value } }))} className="w-full border p-2.5 rounded-lg font-bold text-green-700 outline-none" /></div>
             </div>
             <div className="flex justify-end gap-3 pt-3 border-t"><button type="button" onClick={() => setModalEdicionRapida({ abierto: false, datos: null })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold">Cancelar</button><button type="submit" disabled={guardando} className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300">{guardando ? "Guardando..." : "Guardar Cambios"}</button></div>
           </form>

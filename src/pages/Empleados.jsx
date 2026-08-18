@@ -10,17 +10,42 @@ const formatearNombreColumna = (texto) => {
     .replace(/\b\w/g, (l) => l.toUpperCase());
 };
 
-// 🔥 FUNCIÓN CLAVE: Normaliza cualquier nombre para poder comparar
-// "Sueldo Neto" → "sueldoneto"
-// "sueldo_neto" → "sueldoneto"
-// "AntigüEdad" → "antiguedad"
-// "Sueldo Complemento" → "sueldocomplemento"
 const normalizar = (texto) => {
   return String(texto || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Quita acentos
-    .replace(/[^a-z0-9]/g, "");       // Quita TODO excepto letras y números
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+};
+
+// 🔥 NUEVA FUNCIÓN: Calcular antigüedad en formato legible
+const calcularAntiguedad = (fechaIngreso) => {
+  if (!fechaIngreso) return { texto: "-", años: 0, meses: 0, dias: 0 };
+  
+  const fecha = new Date(fechaIngreso);
+  if (isNaN(fecha.getTime())) return { texto: "-", años: 0, meses: 0, dias: 0 };
+  
+  const hoy = new Date();
+  let años = hoy.getFullYear() - fecha.getFullYear();
+  let meses = hoy.getMonth() - fecha.getMonth();
+  let dias = hoy.getDate() - fecha.getDate();
+
+  if (dias < 0) {
+    meses--;
+    const mesAnterior = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+    dias += mesAnterior.getDate();
+  }
+  if (meses < 0) {
+    años--;
+    meses += 12;
+  }
+
+  let texto = "";
+  if (años > 0) texto += `${años} año${años > 1 ? 's' : ''}`;
+  if (meses > 0) texto += `${texto ? ', ' : ''}${meses} mes${meses > 1 ? 'es' : ''}`;
+  if (años === 0 && meses === 0) texto = `${dias} día${dias !== 1 ? 's' : ''}`;
+  
+  return { texto, años, meses, dias };
 };
 
 export default function Empleados() {
@@ -38,6 +63,20 @@ export default function Empleados() {
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
+  // 🔥 NUEVO: Modal y configuración de columnas especiales
+  const [modalEspeciales, setModalEspeciales] = useState(false);
+  const [configuracionEspeciales, setConfiguracionEspeciales] = useState(() => {
+    try {
+      const guardado = localStorage.getItem("empleados_columnas_especiales");
+      return guardado ? JSON.parse(guardado) : {
+        salarioDiario: true,
+        antiguedad: true,
+      };
+    } catch {
+      return { salarioDiario: true, antiguedad: true };
+    }
+  });
+
   const [ordenColumnas, setOrdenColumnas] = useState(() => {
     try { const g = localStorage.getItem("empleados_orden_columnas"); return g ? JSON.parse(g) : []; } catch { return []; }
   });
@@ -46,8 +85,12 @@ export default function Empleados() {
     try { const g = localStorage.getItem("empleados_columnas_visibles"); return g ? JSON.parse(g) : {}; } catch { return {}; }
   });
 
-  // 🔥 MAPA DE TRADUCCIÓN: Relaciona el nombre del mapeo con el nombre REAL en la BD
   const [mapaColumnas, setMapaColumnas] = useState({});
+
+  // 🔥 Guardar configuración especial
+  useEffect(() => {
+    localStorage.setItem("empleados_columnas_especiales", JSON.stringify(configuracionEspeciales));
+  }, [configuracionEspeciales]);
 
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion) return [];
@@ -70,13 +113,15 @@ export default function Empleados() {
     return Array.from(unicas.values());
   }, [configuracionMapeo]);
 
+  // 🔥 Columnas activas del mapeo (EXCLUYENDO sueldo_base para poder insertar salario_diario después)
   const columnasActivas = useMemo(() => {
     const visibles = columnasDelMapeo.filter(c => columnasVisibles[c.campo] !== false);
-    return visibles.sort((a, b) => {
+    const ordenadas = visibles.sort((a, b) => {
       const idxA = ordenColumnas.indexOf(a.campo);
       const idxB = ordenColumnas.indexOf(b.campo);
       return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
     });
+    return ordenadas;
   }, [columnasDelMapeo, columnasVisibles, ordenColumnas]);
 
   useEffect(() => { localStorage.setItem("empleados_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
@@ -129,8 +174,6 @@ export default function Empleados() {
 
       if (errorEmps) throw errorEmps;
 
-      // 🔥 PASO CLAVE: Construir el mapa de traducción de columnas
-      // Compara lo que dice el mapeo con lo que REALMENTE existe en la BD
       if (emps && emps.length > 0 && columnasDelMapeo.length > 0) {
         const columnasReales = Object.keys(emps[0]);
         const nuevoMapa = {};
@@ -139,60 +182,38 @@ export default function Empleados() {
           const nombreBuscado = colMapeo.campo;
           const nombreNormalizado = normalizar(nombreBuscado);
 
-          // 1. Primero buscar coincidencia EXACTA
           if (columnasReales.includes(nombreBuscado)) {
             nuevoMapa[nombreBuscado] = nombreBuscado;
             return;
           }
 
-          // 2. Si no hay exacta, buscar por nombre normalizado
-          const coincidencia = columnasReales.find(colReal => {
-            return normalizar(colReal) === nombreNormalizado;
-          });
-
+          const coincidencia = columnasReales.find(colReal => normalizar(colReal) === nombreNormalizado);
           if (coincidencia) {
             nuevoMapa[nombreBuscado] = coincidencia;
-            console.log(`🔄 Columna mapeada: "${nombreBuscado}" → encontrada en BD como: "${coincidencia}"`);
           } else {
-            // 3. Si tampoco hay normalizada, buscar coincidencia parcial
             const parcial = columnasReales.find(colReal => {
               const colNorm = normalizar(colReal);
               return colNorm.includes(nombreNormalizado) || nombreNormalizado.includes(colNorm);
             });
-
-            if (parcial) {
-              nuevoMapa[nombreBuscado] = parcial;
-              console.log(`🔄 Columna mapeada (parcial): "${nombreBuscado}" → encontrada en BD como: "${parcial}"`);
-            } else {
-              nuevoMapa[nombreBuscado] = nombreBuscado;
-              console.log(`⚠️ Columna "${nombreBuscado}" no encontrada en la BD`);
-            }
+            nuevoMapa[nombreBuscado] = parcial || nombreBuscado;
           }
         });
 
         setMapaColumnas(nuevoMapa);
-        console.log("📋 Mapa de columnas completo:", nuevoMapa);
       }
 
       let empleadosProcesados = (emps || []).map(emp => {
         let deptoObj = null;
-        if (emp.departamento_id) {
-          deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
-        } else if (emp.departamento) {
-          deptoObj = { nombre: emp.departamento };
-        }
+        if (emp.departamento_id) deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
+        else if (emp.departamento) deptoObj = { nombre: emp.departamento };
 
         let puestoObj = null;
-        if (emp.puesto_id) {
-          puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
-        } else if (emp.puesto) {
-          puestoObj = { nombre: emp.puesto };
-        }
+        if (emp.puesto_id) puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
+        else if (emp.puesto) puestoObj = { nombre: emp.puesto };
 
         return { ...emp, departamentos: deptoObj, puestos: puestoObj };
       });
 
-      // Enriquecer con tablas relacionadas
       const tablasRelacionadas = new Set();
       Object.values(configuracionMapeo?.asignacion || {}).forEach(info => {
         if (info.tablaDestino && !['empleados', 'puestos', 'departamentos'].includes(info.tablaDestino)) {
@@ -244,22 +265,13 @@ export default function Empleados() {
     } catch (err) { console.error("Error cargando configuración:", err); }
   };
 
-  // 🔥 FUNCIÓN CLAVE: Obtener el valor de una columna usando el mapa de traducción
   const obtenerValorColumna = (empleado, campoMapeo) => {
-    // Primero intentar con el nombre del mapeo
-    if (empleado[campoMapeo] !== undefined && empleado[campoMapeo] !== null) {
-      return empleado[campoMapeo];
-    }
-    // Si no, usar el mapa de traducción para encontrar el nombre real
+    if (empleado[campoMapeo] !== undefined && empleado[campoMapeo] !== null) return empleado[campoMapeo];
     const nombreReal = mapaColumnas[campoMapeo];
-    if (nombreReal && empleado[nombreReal] !== undefined) {
-      return empleado[nombreReal];
-    }
-    // Si tampoco, buscar en todas las propiedades del empleado
+    if (nombreReal && empleado[nombreReal] !== undefined) return empleado[nombreReal];
     const normalizado = normalizar(campoMapeo);
     const claveReal = Object.keys(empleado).find(k => normalizar(k) === normalizado);
     if (claveReal) return empleado[claveReal];
-    
     return null;
   };
 
@@ -275,6 +287,11 @@ export default function Empleados() {
     });
   };
   const restablecerOrden = () => setOrdenColumnas(columnasDelMapeo.map(c => c.campo));
+
+  // 🔥 NUEVO: Toggle columnas especiales
+  const toggleColumnaEspecial = (campo) => {
+    setConfiguracionEspeciales(prev => ({ ...prev, [campo]: !prev[campo] }));
+  };
 
   const obtenerValoresEmpleado = (emp) => {
     if (!emp) return { salarioBaseSemanal: 0, salarioDiario: 0, totalBonos: 0 };
@@ -330,6 +347,9 @@ export default function Empleados() {
   const activos = empleados.filter(e => e?.activo ?? true).length;
   const bajas = empleados.filter(e => !(e?.activo ?? true)).length;
 
+  // 🔥 Contar columnas especiales activas
+  const totalEspecialesActivas = Object.values(configuracionEspeciales).filter(v => v).length;
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -339,6 +359,13 @@ export default function Empleados() {
             <p className="text-gray-500 mt-2">Gestión sincronizada con configuración dinámica</p>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-4 md:mt-0">
+            {/* 🔥 NUEVO BOTÓN: Columnas Especiales */}
+            <button 
+              onClick={() => setModalEspeciales(true)} 
+              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm"
+            >
+              ⚡ Especiales ({totalEspecialesActivas})
+            </button>
             <button onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">⚙️ Columnas ({columnasActivas.length})</button>
             <button onClick={() => setModalRelacion(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">🔗 Relación</button>
             <Link to="/empleados/importar" className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl transition font-semibold text-sm flex items-center gap-2 shadow-sm">📝 Editar</Link>
@@ -368,9 +395,53 @@ export default function Empleados() {
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="bg-slate-100 text-gray-700 font-bold border-b">
               <tr>
-                <th className="p-3">No.</th><th className="p-3">Colaborador</th><th className="p-3">Departamento</th><th className="p-3">Puesto</th>
-                {columnasActivas.map(col => (<th key={col.campo} className={`p-3 text-right ${col.campo.includes('sueldo') || col.campo.includes('bono') ? 'bg-emerald-50 text-emerald-900' : 'bg-gray-50'}`}>{col.etiqueta}</th>))}
-                <th className="p-3 text-center">Estatus</th><th className="p-3 text-center">Acciones</th>
+                <th className="p-3">No.</th>
+                <th className="p-3">Colaborador</th>
+                <th className="p-3">Departamento</th>
+                <th className="p-3">Puesto</th>
+                
+                {/* 🔥 Renderizado inteligente: inserta columnas especiales en posiciones estratégicas */}
+                {columnasActivas.map(col => {
+                  const elementos = [];
+                  
+                  // Renderizar la columna del mapeo
+                  elementos.push(
+                    <th key={col.campo} className={`p-3 text-right ${col.campo.includes('sueldo') || col.campo.includes('bono') ? 'bg-emerald-50 text-emerald-900' : 'bg-gray-50'}`}>
+                      {col.etiqueta}
+                    </th>
+                  );
+                  
+                  // 🔥 Si es sueldo_base Y salario diario está activo, insertar salario diario justo después
+                  if (col.campo === 'sueldo_base' && configuracionEspeciales.salarioDiario) {
+                    elementos.push(
+                      <th key="salario_diario_especial" className="p-3 text-right bg-indigo-50 text-indigo-900">
+                        💰 Salario Diario
+                      </th>
+                    );
+                  }
+                  
+                  // 🔥 Si es fecha_ingreso Y antigüedad está activo, insertar antigüedad justo después
+                  if (col.campo === 'fecha_ingreso' && configuracionEspeciales.antiguedad) {
+                    elementos.push(
+                      <th key="antiguedad_especial" className="p-3 text-right bg-amber-50 text-amber-900">
+                        📅 Antigüedad
+                      </th>
+                    );
+                  }
+                  
+                  return elementos;
+                })}
+                
+                {/* 🔥 Si no hay sueldo_base en el mapeo pero salario diario está activo, mostrarlo al inicio */}
+                {!columnasActivas.some(c => c.campo === 'sueldo_base') && configuracionEspeciales.salarioDiario && (
+                  <th className="p-3 text-right bg-indigo-50 text-indigo-900">💰 Salario Diario</th>
+                )}
+                {!columnasActivas.some(c => c.campo === 'fecha_ingreso') && configuracionEspeciales.antiguedad && (
+                  <th className="p-3 text-right bg-amber-50 text-amber-900">📅 Antigüedad</th>
+                )}
+                
+                <th className="p-3 text-center">Estatus</th>
+                <th className="p-3 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -378,21 +449,62 @@ export default function Empleados() {
               {!loading && empleadosFiltrados.map(emp => {
                 const valores = obtenerValoresEmpleado(emp);
                 const estaActivo = emp.activo ?? true;
+                const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
+                
                 return (
                   <tr key={emp.id} className="border-t hover:bg-slate-50 transition">
                     <td className="p-3 font-mono">{emp.numero_empleado || "S/N"}</td>
                     <td className="p-3 font-semibold text-gray-800">{emp.nombre_completo || "Sin nombre"}</td>
                     <td className="p-3">{emp.departamentos?.nombre || "N/A"}</td>
                     <td className="p-3">{emp.puestos?.nombre || "Sin Asignar"}</td>
+                    
                     {columnasActivas.map(col => {
-                      // 🔥 USAR LA FUNCIÓN INTELIGENTE para obtener el valor
+                      const elementos = [];
                       const val = obtenerValorColumna(emp, col.campo);
                       const esMoneda = col.campo.includes('sueldo') || col.campo.includes('bono') || col.campo.includes('total') || col.campo.includes('apoyo') || col.campo.includes('gratificacion') || col.campo.includes('neto') || col.campo.includes('complemento');
                       const displayVal = esMoneda 
                         ? (val !== null && val !== undefined && val !== "" ? `$${Number(val).toFixed(2)}` : "$0.00") 
                         : (val !== null && val !== undefined && val !== "" ? String(val) : "-");
-                      return (<td key={col.campo} className={`p-3 text-right ${esMoneda ? 'bg-emerald-50/20 text-gray-700' : ''}`}>{displayVal}</td>);
+                      
+                      elementos.push(
+                        <td key={col.campo} className={`p-3 text-right ${esMoneda ? 'bg-emerald-50/20 text-gray-700' : ''}`}>
+                          {displayVal}
+                        </td>
+                      );
+                      
+                      // 🔥 Insertar salario diario después de sueldo_base
+                      if (col.campo === 'sueldo_base' && configuracionEspeciales.salarioDiario) {
+                        elementos.push(
+                          <td key="salario_diario_especial" className="p-3 text-right bg-indigo-50/30 text-indigo-900 font-bold">
+                            {valores.salarioDiario > 0 ? `$${valores.salarioDiario.toFixed(2)}` : "$0.00"}
+                          </td>
+                        );
+                      }
+                      
+                      // 🔥 Insertar antigüedad después de fecha_ingreso
+                      if (col.campo === 'fecha_ingreso' && configuracionEspeciales.antiguedad) {
+                        elementos.push(
+                          <td key="antiguedad_especial" className="p-3 text-right bg-amber-50/30 text-amber-900 font-semibold" title={`Ingreso: ${emp.fecha_ingreso || 'N/A'}`}>
+                            {antiguedad.texto}
+                          </td>
+                        );
+                      }
+                      
+                      return elementos;
                     })}
+                    
+                    {/* 🔥 Fallback si no están en el mapeo */}
+                    {!columnasActivas.some(c => c.campo === 'sueldo_base') && configuracionEspeciales.salarioDiario && (
+                      <td className="p-3 text-right bg-indigo-50/30 text-indigo-900 font-bold">
+                        {valores.salarioDiario > 0 ? `$${valores.salarioDiario.toFixed(2)}` : "$0.00"}
+                      </td>
+                    )}
+                    {!columnasActivas.some(c => c.campo === 'fecha_ingreso') && configuracionEspeciales.antiguedad && (
+                      <td className="p-3 text-right bg-amber-50/30 text-amber-900 font-semibold">
+                        {antiguedad.texto}
+                      </td>
+                    )}
+                    
                     <td className="p-3 text-center">{estaActivo ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold">Activo</span> : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">Baja</span>}</td>
                     <td className="p-3">
                       <div className="flex gap-1.5 justify-center">
@@ -409,6 +521,81 @@ export default function Empleados() {
         </div>
       </div>
 
+      {/* 🔥 NUEVO MODAL: Configuración de Columnas Especiales */}
+      {modalEspeciales && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">⚡ Columnas Especiales Calculadas</h3>
+                <p className="text-xs text-gray-500">Estas columnas se calculan automáticamente en tiempo real</p>
+              </div>
+              <button onClick={() => setModalEspeciales(false)} className="text-gray-400 font-bold text-xl">✕</button>
+            </div>
+
+            <div className="bg-purple-50 border border-purple-200 text-purple-800 p-3 rounded-xl text-xs font-medium">
+              💡 Estas columnas no ocupan espacio en la base de datos. Se calculan automáticamente al mostrar la tabla.
+            </div>
+
+            <div className="space-y-3">
+              {/* Salario Diario */}
+              <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition ${configuracionEspeciales.salarioDiario ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 bg-slate-50'}`}>
+                <input 
+                  type="checkbox" 
+                  checked={configuracionEspeciales.salarioDiario} 
+                  onChange={() => toggleColumnaEspecial('salarioDiario')} 
+                  className="w-5 h-5 text-indigo-600 rounded mt-0.5" 
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-800">💰 Salario Diario</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-semibold">AUTOMÁTICO</span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Se calcula como <strong>Sueldo Base ÷ 7 días</strong>. Se actualiza automáticamente si cambias el sueldo base.
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1 italic">
+                    📍 Aparece justo después de la columna "Sueldo Base"
+                  </p>
+                </div>
+              </label>
+
+              {/* Antigüedad */}
+              <label className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition ${configuracionEspeciales.antiguedad ? 'border-amber-500 bg-amber-50/50' : 'border-slate-200 bg-slate-50'}`}>
+                <input 
+                  type="checkbox" 
+                  checked={configuracionEspeciales.antiguedad} 
+                  onChange={() => toggleColumnaEspecial('antiguedad')} 
+                  className="w-5 h-5 text-amber-600 rounded mt-0.5" 
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-800">📅 Antigüedad</span>
+                    <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">DINÁMICO</span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Calcula los <strong>años, meses y días</strong> desde la fecha de ingreso hasta hoy. Se actualiza automáticamente cada día.
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1 italic">
+                    📍 Aparece justo después de la columna "Fecha de Ingreso"
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="pt-3 border-t flex justify-between items-center">
+              <span className="text-xs text-slate-500">
+                {totalEspecialesActivas} de 2 columnas especiales activas
+              </span>
+              <button onClick={() => setModalEspeciales(false)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition">
+                Aplicar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Columnas del Mapeo (sin cambios) */}
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">

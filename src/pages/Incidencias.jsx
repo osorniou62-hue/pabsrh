@@ -1,909 +1,725 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "../services/supabase";
-import { useNavigate } from "react-router-dom";
+import Layout from "../components/Layout";
+import KpiCard from "../components/KpiCard";
+
+const formatearNombreColumna = (texto) => String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+const normalizar = (texto) => String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+const esCampoMonetario = (campo) => {
+  const n = normalizar(campo);
+  return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total', 'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss', 'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
+};
 
 export default function Incidencias() {
-  const navigate = useNavigate();
-
-  // --- ESTADOS DE CATÁLOGOS Y DATOS ---
-  const [departamentos, setDepartamentos] = useState([]);
-  const [empleadosCatalogo, setEmpleadosCatalogo] = useState([]);
-  const [periodos, setPeriodos] = useState([]);
+  const [empleados, setEmpleados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
+  const [periodos, setPeriodos] = useState([]);
+  const [departamentosLista, setDepartamentosLista] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // --- ESTADOS DE FILTROS POR DEPARTAMENTO / SUPERVISOR ---
-  const [busquedaDepto, setBusquedaDepto] = useState("");
-  const [deptoSeleccionado, setDeptoSeleccionado] = useState(null);
-  const [supervisorSeleccionado, setSupervisorSeleccionado] = useState("");
-  const [mostrarDropdownDepto, setMostrarDropdownDepto] = useState(false);
+  const [vistaActual, setVistaActual] = useState("rrhh");
+  const [periodoId, setPeriodoId] = useState("");
+  const [departamentoFiltro, setDepartamentoFiltro] = useState("TODOS");
+  const [estadoFiltro, setEstadoFiltro] = useState("TODOS");
+  const [busqueda, setBusqueda] = useState("");
 
-  // --- ESTADO BUSCADOR POR EMPLEADO ---
-  const [busquedaEmpleado, setBusquedaEmpleado] = useState("");
-  const [empleadoSeleccionado, setEmpleadoSeleccionado] = useState(null);
-  const [mostrarDropdownEmpleado, setMostrarDropdownEmpleado] = useState(false);
+  const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
+  const [modalRevision, setModalRevision] = useState({ abierto: false, incidencia: null });
+  const [modalAprobacionMasiva, setModalAprobacionMasiva] = useState(false);
+  const [modalConfigColumnas, setModalConfigColumnas] = useState(false);
+  const [modalRelacion, setModalRelacion] = useState(false);
+  
+  // 🔥 NUEVO: Modal y estado para permisos de supervisor
+  const [modalPermisos, setModalPermisos] = useState(false);
+  const [permisosSupervisor, setPermisosSupervisor] = useState({});
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
 
-  // --- ESTADOS DE MODALES ---
-  const [modalReglas, setModalReglas] = useState(false);
-  const [modalPermisos, setModalPermisos] = useState({ abierto: false, datos: null });
-  const [modalVacaciones, setModalVacaciones] = useState({ abierto: false, datos: null });
-  const [modalRecibo, setModalRecibo] = useState({ abierto: false, datos: null });
-  const [modalEdicion, setModalEdicion] = useState({ abierto: false, datos: null });
   const [guardando, setGuardando] = useState(false);
+  const [comentarioRRHH, setComentarioRRHH] = useState("");
 
-  // --- CARGA INICIAL ---
+  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
+  const [ordenColumnas, setOrdenColumnas] = useState(() => {
+    try { const g = localStorage.getItem("incidencias_orden_columnas"); return g ? JSON.parse(g) : []; } catch { return []; }
+  });
+  const [columnasVisibles, setColumnasVisibles] = useState(() => {
+    try { const g = localStorage.getItem("incidencias_columnas_visibles"); return g ? JSON.parse(g) : {}; } catch { return {}; }
+  });
+
+  // 🔥 LEER PERMISOS DESDE EL ESTADO LOCAL (que viene de la BD)
+  const columnasDelMapeo = useMemo(() => {
+    if (!configuracionMapeo?.asignacion) return [];
+    const validas = [];
+    Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
+      if (info.tablaDestino === 'incidencias' && (info.campoDestino || info.campoManual)) {
+        const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+        if (campoFinal) {
+          validas.push({
+            original: colOriginal,
+            tabla: info.tablaDestino,
+            campo: campoFinal,
+            etiqueta: formatearNombreColumna(campoFinal),
+            permite_supervisor: permisosSupervisor[campoFinal] || false, // <-- Controlado desde el modal de permisos
+          });
+        }
+      }
+    });
+    const unicas = new Map();
+    validas.forEach(item => { if (!unicas.has(item.campo)) unicas.set(item.campo, item); });
+    return Array.from(unicas.values());
+  }, [configuracionMapeo, permisosSupervisor]);
+
+  const columnasActivas = useMemo(() => {
+    const visibles = columnasDelMapeo.filter(c => columnasVisibles[c.campo] !== false);
+    return visibles.sort((a, b) => {
+      const idxA = ordenColumnas.indexOf(a.campo);
+      const idxB = ordenColumnas.indexOf(b.campo);
+      return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+    });
+  }, [columnasDelMapeo, columnasVisibles, ordenColumnas]);
+
+  const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
+  const columnasRH = useMemo(() => columnasActivas, [columnasActivas]);
+
   useEffect(() => {
-    cargarDepartamentos();
-    cargarEmpleadosCatalogo();
     cargarPeriodos();
-    cargarIncidencias();
+    cargarDepartamentos();
+    cargarEmpleados();
+    cargarRelacionCamposConfiguracion();
+    cargarPermisos(); // 🔥 Cargar permisos al iniciar
   }, []);
 
-  const cargarDepartamentos = async () => {
-    const { data, error } = await supabase.from("departamentos").select("*").order("nombre");
-    if (error) console.error("❌ Error al cargar departamentos:", error.message);
-    else setDepartamentos(data || []);
+  useEffect(() => { if (periodoId) cargarIncidencias(); }, [periodoId, empleados]);
+
+  useEffect(() => {
+    if (columnasDelMapeo.length > 0) {
+      setColumnasVisibles(prev => {
+        const nuevo = { ...prev };
+        columnasDelMapeo.forEach(col => { if (nuevo[col.campo] === undefined) nuevo[col.campo] = true; });
+        return nuevo;
+      });
+      setOrdenColumnas(prev => {
+        const nuevoOrden = [...prev];
+        columnasDelMapeo.forEach(col => { if (!nuevoOrden.includes(col.campo)) nuevoOrden.push(col.campo); });
+        return nuevoOrden;
+      });
+    }
+  }, [columnasDelMapeo]);
+
+  useEffect(() => { localStorage.setItem("incidencias_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
+  useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
+
+  // 🔥 FUNCIONES DE PERMISOS
+  const cargarPermisos = async () => {
+    try {
+      const { data } = await supabase.from("configuracion_tablas").select("configuracion").eq("clave", "permisos_incidencias").maybeSingle();
+      if (data?.configuracion) {
+        setPermisosSupervisor(data.configuracion);
+      } else {
+        const local = localStorage.getItem("permisos_incidencias");
+        if (local) setPermisosSupervisor(JSON.parse(local));
+      }
+    } catch (err) { console.error("Error cargando permisos:", err); }
   };
 
-  const cargarEmpleadosCatalogo = async () => {
-    // Usamos select("*") para evitar errores si una columna específica no existe en la BD
-    const { data, error } = await supabase
-      .from("empleados")
-      .select("*")
-      .order("nombre_completo");
-
-    if (error) {
-      console.error("❌ Error al cargar catálogo de empleados:", error.message);
-    } else {
-      setEmpleadosCatalogo(data || []);
+  const guardarPermisos = async () => {
+    setGuardandoPermisos(true);
+    try {
+      await supabase.from("configuracion_tablas").upsert({
+        clave: "permisos_incidencias",
+        configuracion: permisosSupervisor
+      });
+      localStorage.setItem("permisos_incidencias", JSON.stringify(permisosSupervisor));
+      alert("✅ Permisos de supervisor actualizados correctamente");
+      setModalPermisos(false);
+    } catch (err) {
+      alert("Error al guardar permisos: " + err.message);
+    } finally {
+      setGuardandoPermisos(false);
     }
   };
 
   const cargarPeriodos = async () => {
-    const { data, error } = await supabase.from("periodos_nomina").select("*").eq("estatus", "ABIERTO");
-    if (error) console.error("❌ Error al cargar periodos:", error.message);
-    else setPeriodos(data || []);
+    const { data } = await supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false });
+    setPeriodos(data || []);
+    if (data && data.length > 0) setPeriodoId(data[0].id);
+  };
+
+  const cargarDepartamentos = async () => {
+    const { data } = await supabase.from("departamentos").select("*").order("nombre");
+    setDepartamentosLista(data || []);
+  };
+
+  const cargarEmpleados = async () => {
+    try {
+      const { data: emps, error } = await supabase.from("empleados").select("*, departamentos(*), puestos(*)").eq("activo", true);
+      if (error) throw error;
+      setEmpleados(emps || []);
+    } catch (err) { console.error("Error cargando empleados:", err); setEmpleados([]); }
   };
 
   const cargarIncidencias = async () => {
-    // Seleccionamos la relación completa de empleados (*) para garantizar compatibilidad
-    const { data, error } = await supabase
-      .from("incidencias")
-      .select(`
-        *,
-        empleados!incidencias_empleado_fk ( * ),
-        periodos_nomina!incidencias_periodo_fk ( * )
-      `)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("❌ Error al cargar incidencias:", error.message);
-    } else {
+    if (!periodoId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+      if (error) throw error;
       setIncidencias(data || []);
-    }
+    } catch (err) { console.error("Error cargando incidencias:", err); setIncidencias([]); }
+    finally { setLoading(false); }
   };
 
-  // --- DERIVACIÓN DE DATOS (EN MEMORIA) ---
-  const supervisoresDisponibles = deptoSeleccionado
-    ? empleadosCatalogo.filter((emp) => emp.departamento_id === deptoSeleccionado.id && emp.supervisor_id)
-    : [];
-
-  const deptosFiltrados = departamentos.filter((d) =>
-    (d.nombre || "").toLowerCase().includes(busquedaDepto.toLowerCase())
-  );
-
-  const empleadosBusquedaFiltrados = empleadosCatalogo.filter((e) =>
-    (e.nombre_completo || "").toLowerCase().includes(busquedaEmpleado.toLowerCase())
-  );
-
-  // --- MANEJO DE SELECCIONES ---
-  const handleSeleccionarDepto = (depto) => {
-    setBusquedaDepto(depto.nombre);
-    setDeptoSeleccionado(depto);
-    setSupervisorSeleccionado("");
-    setEmpleadoSeleccionado(null);
-    setBusquedaEmpleado("");
-    setMostrarDropdownDepto(false);
+  const cargarRelacionCamposConfiguracion = async () => {
+    try {
+      const { data } = await supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle();
+      if (data?.configuracion) setConfiguracionMapeo(data.configuracion);
+      else {
+        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+        if (local) setConfiguracionMapeo(JSON.parse(local));
+      }
+    } catch (err) { console.error("Error cargando configuración:", err); }
   };
 
-  const handleSeleccionarEmpleadoDirecto = (emp) => {
-    setEmpleadoSeleccionado(emp);
-    setBusquedaEmpleado(emp.nombre_completo || "");
-    setDeptoSeleccionado(null);
-    setBusquedaDepto("");
-    setSupervisorSeleccionado("");
-    setMostrarDropdownEmpleado(false);
-  };
-
-  const limpiarFiltros = () => {
-    setDeptoSeleccionado(null);
-    setBusquedaDepto("");
-    setSupervisorSeleccionado("");
-    setEmpleadoSeleccionado(null);
-    setBusquedaEmpleado("");
-  };
-
-  // --- FILTRADO FINAL DE LA TABLA DE INCIDENCIAS ---
-  const incidenciasMostrar = incidencias.filter((item) => {
-    const emp = item.empleados;
-    if (!emp) return false;
-
-    if (empleadoSeleccionado) {
-      return String(emp.id) === String(empleadoSeleccionado.id);
-    }
-
-    if (supervisorSeleccionado) {
-      return String(emp.supervisor_id) === String(supervisorSeleccionado);
-    }
-
-    if (deptoSeleccionado) {
-      return String(emp.departamento_id) === String(deptoSeleccionado.id);
-    }
-
-    return true;
-  });
-
-  // --- CÁLCULO FINANCIERO CON BUSQUEDA DE SUELDO BASE ---
-  const calcularNominaIncidencia = (empleado, incidencia) => {
-    // Busca en cualquier campo posible donde pueda estar guardado el sueldo base semanal
-    const sueldoBaseSemanal = Number(
-      empleado?.sueldo_base ?? 
-      empleado?.salario_base ?? 
-      empleado?.salario_semanal ?? 
-      empleado?.sueldo_semanal ?? 
-      incidencia?.sueldo_base ?? 
-      incidencia?.salario_base
-    ) || 0;
-
-    // Regla de Sueldo Diario: Sueldo Base Semanal entre 7 días
-    const sueldoDiario = sueldoBaseSemanal > 0 ? sueldoBaseSemanal / 7 : 0;
-    const valorHora = sueldoDiario > 0 ? sueldoDiario / 8 : 0;
-
-    // Horas Extras
-    const hrsCalculo = incidencia.horas_extra_reales !== null && incidencia.horas_extra_reales !== undefined
-      ? Number(incidencia.horas_extra_reales)
-      : Number(incidencia.horas_extra) || 0;
-
-    const pagoHorasExtra = hrsCalculo * (valorHora * 2);
-
-    // Faltas
-    const totalFaltasInjust = incidencia.faltas_injustificadas !== null && incidencia.faltas_injustificadas !== undefined
-      ? Number(incidencia.faltas_injustificadas)
-      : Number(incidencia.faltas) || 0;
-
-    const descuentoFaltas = totalFaltasInjust * sueldoDiario;
-
-    // Retardos
-    const totalRetardosSinPermiso = incidencia.retardos_sin_permiso !== null && incidencia.retardos_sin_permiso !== undefined
-      ? Number(incidencia.retardos_sin_permiso)
-      : Number(incidencia.retardos) || 0;
-
-    const descuentoRetardos = totalRetardosSinPermiso * (valorHora * 0.5);
-
-    const montoFinalSemanal = sueldoBaseSemanal + pagoHorasExtra - descuentoFaltas - descuentoRetardos;
-
-    return {
-      sueldoDiario,
-      sueldoBaseSemanal,
-      pagoHorasExtra,
-      descuentoFaltas,
-      descuentoRetardos,
-      montoFinalSemanal: montoFinalSemanal < 0 ? 0 : montoFinalSemanal,
-    };
-  };
-
-  // --- GUARDAR EDICIÓN DE INCIDENCIA ---
-  const guardarEdicion = async (e) => {
-    e.preventDefault();
-    if (!modalEdicion.datos) return;
-
+  const guardarCapturaSupervisor = async (empleadoId, valores) => {
     setGuardando(true);
-    const d = modalEdicion.datos;
-
-    const { error } = await supabase
-      .from("incidencias")
-      .update({
-        horas_extra: Number(d.horas_extra) || 0,
-        faltas_justificadas: Number(d.faltas_justificadas) || 0,
-        faltas_injustificadas: Number(d.faltas_injustificadas) || 0,
-        retardos_con_permiso: Number(d.retardos_con_permiso) || 0,
-        retardos_sin_permiso: Number(d.retardos_sin_permiso) || 0,
-        horas_extra_reales: Number(d.horas_extra_reales) || 0,
-        faltas: Number(d.faltas) || 0,
-        retardos: Number(d.retardos) || 0,
-      })
-      .eq("id", d.id);
-
-    setGuardando(false);
-
-    if (error) {
-      alert("Error al actualizar la incidencia: " + error.message);
-    } else {
-      setModalEdicion({ abierto: false, datos: null });
-      cargarIncidencias();
-    }
+    try {
+      const payload = { empleado_id: empleadoId, periodo_id: Number(periodoId), estado: "pendiente", ...valores };
+      Object.keys(payload).forEach(k => { if (payload[k] === "" || payload[k] === null || payload[k] === undefined) delete payload[k]; });
+      const { error } = await supabase.from("incidencias").upsert([payload], { onConflict: "empleado_id, periodo_id" });
+      if (error) throw error;
+      setModalCaptura({ abierto: false, empleado: null });
+      await cargarIncidencias();
+    } catch (err) { alert("Error al guardar captura: " + err.message); }
+    finally { setGuardando(false); }
   };
+
+  const guardarRevisionRRHH = async (incidenciaId, valores, estado, comentario) => {
+    setGuardando(true);
+    try {
+      const payload = { ...valores, estado, comentarios_rrhh: comentario || null, fecha_revision: new Date().toISOString() };
+      const { error } = await supabase.from("incidencias").update(payload).eq("id", incidenciaId);
+      if (error) throw error;
+      setModalRevision({ abierto: false, incidencia: null });
+      setComentarioRRHH("");
+      await cargarIncidencias();
+    } catch (err) { alert("Error al guardar revisión: " + err.message); }
+    finally { setGuardando(false); }
+  };
+
+  const aprobarMasivamente = async () => {
+    if (!confirm("¿Aprobar todas las incidencias pendientes del período?")) return;
+    setGuardando(true);
+    try {
+      const pendientes = incidencias.filter(i => i.estado === "pendiente");
+      if (pendientes.length === 0) { alert("No hay incidencias pendientes"); setGuardando(false); return; }
+      const updates = pendientes.map(i => ({ id: i.id, estado: "aprobado", fecha_revision: new Date().toISOString(), comentarios_rrhh: i.comentarios_rrhh || "Aprobado en lote por RH" }));
+      const { error } = await supabase.from("incidencias").upsert(updates);
+      if (error) throw error;
+      setModalAprobacionMasiva(false);
+      await cargarIncidencias();
+      alert(`✅ ${updates.length} incidencias aprobadas`);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardando(false); }
+  };
+
+  const cambiarVisibilidadColumna = (campo) => setColumnasVisibles(prev => ({ ...prev, [campo]: !prev[campo] }));
+  const moverColumna = (campo, direccion) => {
+    setOrdenColumnas(prev => {
+      const idx = prev.indexOf(campo);
+      if (idx === -1) return prev;
+      const nuevo = [...prev];
+      if (direccion === 'arriba' && idx > 0) [nuevo[idx - 1], nuevo[idx]] = [nuevo[idx], nuevo[idx - 1]];
+      else if (direccion === 'abajo' && idx < prev.length - 1) [nuevo[idx], nuevo[idx + 1]] = [nuevo[idx + 1], nuevo[idx]];
+      return nuevo;
+    });
+  };
+  const restablecerOrden = () => setOrdenColumnas(columnasDelMapeo.map(c => c.campo));
+
+  const empleadosConIncidencias = useMemo(() => {
+    return empleados.map(emp => ({ ...emp, incidencia: incidencias.find(i => i.empleado_id === emp.id) || null }));
+  }, [empleados, incidencias]);
+
+  const empleadosFiltrados = useMemo(() => {
+    const texto = busqueda.toLowerCase().trim();
+    return empleadosConIncidencias.filter(emp => {
+      const coincide = [emp.nombre_completo, emp.numero_empleado, emp.departamentos?.nombre, emp.puestos?.nombre].some(c => String(c || "").toLowerCase().includes(texto));
+      const coincideDepto = departamentoFiltro === "TODOS" || emp.departamentos?.nombre === departamentoFiltro;
+      const coincideEstado = estadoFiltro === "TODOS" || (emp.incidencia?.estado || "sin_captura") === estadoFiltro;
+      return coincide && coincideDepto && coincideEstado;
+    });
+  }, [empleadosConIncidencias, busqueda, departamentoFiltro, estadoFiltro]);
+
+  const kpis = useMemo(() => {
+    const total = empleados.length;
+    const conCaptura = incidencias.length;
+    const pendientes = incidencias.filter(i => i.estado === "pendiente").length;
+    const aprobados = incidencias.filter(i => i.estado === "aprobado").length;
+    const rechazados = incidencias.filter(i => i.estado === "rechazado").length;
+    return { total, conCaptura, pendientes, aprobados, rechazados, sinCaptura: total - conCaptura };
+  }, [empleados, incidencias]);
+
+  const departamentos = ["TODOS", ...new Set(empleados.map(e => e?.departamentos?.nombre).filter(Boolean))].sort();
+
+  const totales = useMemo(() => {
+    const resultado = {};
+    columnasRH.filter(c => esCampoMonetario(c.campo)).forEach(col => {
+      resultado[col.campo] = incidencias.reduce((acc, inc) => acc + Number(inc[col.campo] || 0), 0);
+    });
+    return resultado;
+  }, [incidencias, columnasRH]);
+
+  const periodoActual = periodos.find(p => p.id === periodoId);
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8">
-      <h1 className="text-3xl font-bold text-gray-800">
-        📋 Control de Incidencias y Nómina Semanal
-      </h1>
-
-      {/* ================= BOTÓN DE REGLAS DE SUELDO DIARIO ================= */}
-      <div className="flex justify-start">
-        <button
-          onClick={() => setModalReglas(true)}
-          className="bg-indigo-600 text-white text-xs font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700 shadow-sm flex items-center gap-2 transition-all"
-        >
-          <span>⚙️</span> Reglas del Sueldo Diario
-        </button>
-      </div>
-
-      {/* ================= CONTENEDOR DE BÚSQUEDAS ================= */}
+    <Layout>
       <div className="space-y-6">
-        {/* Bloque 1: Búsqueda por Departamento y Supervisor */}
-        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 grid md:grid-cols-2 gap-6">
-          <div className="relative">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              1. Buscar Departamento
-            </label>
-            <input
-              type="text"
-              placeholder="Escribe el nombre del departamento..."
-              value={busquedaDepto}
-              onFocus={() => setMostrarDropdownDepto(true)}
-              onChange={(e) => {
-                setBusquedaDepto(e.target.value);
-                setMostrarDropdownDepto(true);
-                if (!e.target.value) {
-                  setDeptoSeleccionado(null);
-                  setSupervisorSeleccionado("");
-                }
-              }}
-              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-            />
-
-            {mostrarDropdownDepto && deptosFiltrados.length > 0 && (
-              <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-                {deptosFiltrados.map((d) => (
-                  <li
-                    key={d.id}
-                    onMouseDown={() => handleSeleccionarDepto(d)}
-                    className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm"
-                  >
-                    {d.nombre}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              2. Seleccionar Supervisor
-            </label>
-            <select
-              disabled={!deptoSeleccionado}
-              value={supervisorSeleccionado}
-              onChange={(e) => setSupervisorSeleccionado(e.target.value)}
-              className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100"
-            >
-              <option value="">
-                {!deptoSeleccionado
-                  ? "Selecciona primero un departamento"
-                  : "Todos los supervisores"}
-              </option>
-              {supervisoresDisponibles.map((sup) => (
-                <option key={sup.id} value={sup.id}>
-                  {sup.nombre_completo}
-                </option>
-              ))}
+            <h1 className="text-4xl font-bold text-gray-800">⚡ Incidencias</h1>
+            <p className="text-gray-500 mt-2">Captura propuesta por Supervisor · Validación y ajuste por RH</p>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-4 md:mt-0">
+            <button onClick={() => setModalPermisos(true)} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center gap-2">🔒 Permisos Supervisor</button>
+            <button onClick={() => setModalConfigColumnas(true)} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center gap-2">⚙️ Columnas ({columnasActivas.length})</button>
+            <button onClick={() => setModalRelacion(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center gap-2">🔗 Relación</button>
+            <button onClick={() => setModalAprobacionMasiva(true)} disabled={kpis.pendientes === 0} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center gap-2">✅ Aprobar Todo ({kpis.pendientes})</button>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-200">
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <label className="font-bold text-slate-800">📅 Período de Nómina:</label>
+            <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-blue-300 rounded-xl p-3 bg-white font-semibold focus:ring-2 focus:ring-blue-500 outline-none">
+              {periodos.map(p => <option key={p.id} value={p.id}>{p.descripcion}</option>)}
             </select>
+            {periodoActual && <div className="text-xs text-slate-600">📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}</div>}
           </div>
         </div>
 
-        {/* Bloque 2: Búsqueda Directa por Empleado */}
-        <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100">
-          <div className="relative">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              🔍 O Buscar Directamente por Nombre de Empleado ({empleadosCatalogo.length} registrados)
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Escribe el nombre del empleado..."
-                  value={busquedaEmpleado}
-                  onFocus={() => setMostrarDropdownEmpleado(true)}
-                  onChange={(e) => {
-                    setBusquedaEmpleado(e.target.value);
-                    setMostrarDropdownEmpleado(true);
-                    if (!e.target.value) setEmpleadoSeleccionado(null);
-                  }}
-                  className="w-full border p-2.5 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <KpiCard titulo="Empleados" valor={kpis.total} icono="👥" color="text-blue-600" />
+          <KpiCard titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="text-indigo-600" />
+          <KpiCard titulo="Sin Captura" valor={kpis.sinCaptura} icono="⚠️" color="text-gray-600" />
+          <KpiCard titulo="Pendientes" valor={kpis.pendientes} icono="⏳" color="text-amber-600" />
+          <KpiCard titulo="Aprobados" valor={kpis.aprobados} icono="✅" color="text-emerald-600" />
+          <KpiCard titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="text-red-600" />
+        </div>
 
-                {mostrarDropdownEmpleado && empleadosBusquedaFiltrados.length > 0 && (
-                  <ul className="absolute z-20 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
-                    {empleadosBusquedaFiltrados.map((emp) => (
-                      <li
-                        key={emp.id}
-                        onMouseDown={() => handleSeleccionarEmpleadoDirecto(emp)}
-                        className="p-2.5 hover:bg-blue-50 cursor-pointer border-b text-sm flex justify-between items-center"
-                      >
-                        <span>{emp.nombre_completo || "Sin Nombre"}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl">
+          <button onClick={() => setVistaActual("supervisor")} className={`flex-1 py-3 px-4 rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 ${vistaActual === "supervisor" ? "bg-white text-blue-700 shadow-md" : "text-slate-600 hover:text-slate-800"}`}>
+            👷 Vista Supervisor <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Solo campos permitidos</span>
+          </button>
+          <button onClick={() => setVistaActual("rrhh")} className={`flex-1 py-3 px-4 rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 ${vistaActual === "rrhh" ? "bg-white text-purple-700 shadow-md" : "text-slate-600 hover:text-slate-800"}`}>
+            🔍 Vista RH <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Control total y validación</span>
+          </button>
+        </div>
 
-              {(busquedaEmpleado || deptoSeleccionado || supervisorSeleccionado) && (
-                <button
-                  type="button"
-                  onClick={limpiarFiltros}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
-                >
-                  Limpiar Filtros
-                </button>
-              )}
-            </div>
+        <div className="bg-white rounded-2xl shadow-lg p-5">
+          <div className="grid md:grid-cols-4 gap-3">
+            <input type="text" placeholder="🔍 Buscar empleado..." value={busqueda} onChange={e => setBusqueda(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none" />
+            <select value={departamentoFiltro} onChange={e => setDepartamentoFiltro(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
+              {departamentos.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <select value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)} className="border rounded-xl p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
+              <option value="TODOS">Todos los estados</option>
+              <option value="sin_captura">⚠️ Sin captura</option>
+              <option value="pendiente">⏳ Pendiente (Por validar RH)</option>
+              <option value="aprobado">✅ Aprobado</option>
+              <option value="rechazado">❌ Rechazado</option>
+            </select>
+            <div className="flex items-center justify-end text-sm text-slate-600">Mostrando <strong className="mx-1">{empleadosFiltrados.length}</strong> de <strong>{empleados.length}</strong></div>
           </div>
         </div>
-      </div>
 
-      {/* DETALLE DEL TRABAJADOR SELECCIONADO */}
-      {empleadoSeleccionado && (() => {
-        const valSueldoBase = Number(
-          empleadoSeleccionado.sueldo_base ?? 
-          empleadoSeleccionado.salario_base ?? 
-          empleadoSeleccionado.salario_semanal ?? 
-          empleadoSeleccionado.sueldo_semanal
-        ) || 0;
-        return (
-          <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 space-y-3">
-            <div className="flex justify-between items-center">
-              <h3 className="font-semibold text-blue-900 text-base">
-                👤 Detalle del Trabajador Seleccionado:
-              </h3>
-              <button
-                onClick={limpiarFiltros}
-                className="text-xs text-red-600 hover:underline font-bold"
-              >
-                Quitar Filtro
-              </button>
-            </div>
-
-            <div className="bg-white p-4 rounded-lg border border-blue-100 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4 text-xs md:text-sm">
-              <div>
-                <span className="text-gray-500 block">Nombre del Trabajador:</span>
-                <span className="font-bold text-gray-800">{empleadoSeleccionado.nombre_completo}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Sueldo Base Semanal:</span>
-                <span className="font-semibold text-green-700">
-                  {valSueldoBase > 0 ? `$${valSueldoBase.toFixed(2)}` : "Sin Asignar"}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500 block">Sueldo Diario Calculado:</span>
-                <span className="font-semibold text-indigo-900">
-                  {valSueldoBase > 0 ? `$${(valSueldoBase / 7).toFixed(2)}` : "$0.00"}
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ================= TABLA PRINCIPAL DE INCIDENCIAS ================= */}
-      <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 overflow-x-auto">
-        <h2 className="text-xl font-bold mb-4 text-gray-800">
-          Historial y Resumen de Ajustes ({incidenciasMostrar.length} registros)
-        </h2>
-
-        <table className="w-full text-left border-collapse text-xs md:text-sm">
-          <thead>
-            <tr className="bg-gray-100 border-b text-gray-700 font-bold">
-              <th className="p-3 border">Empleado</th>
-              <th className="p-3 border">Periodo</th>
-              <th className="p-3 border text-right bg-blue-50">Sueldo Base Semanal</th>
-              <th className="p-3 border text-right bg-indigo-50">Sueldo Diario</th>
-              <th className="p-3 border text-center">Hrs Extra Rep. (J)</th>
-              <th className="p-3 border text-center">Hrs Extra Real</th>
-              <th className="p-3 border text-center">Retardos</th>
-              <th className="p-3 border text-center">Faltas (T)</th>
-              <th className="p-3 border text-right">Monto Hrs Extra (L)</th>
-              <th className="p-3 border text-right">Desc. Faltas (U)</th>
-              <th className="p-3 border text-center">Permisos (AV)</th>
-              <th className="p-3 border text-center">Vacaciones (AF)</th>
-              <th className="p-3 border text-right bg-green-50">Monto Final Semanal</th>
-              <th className="p-3 border text-center">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {incidenciasMostrar.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
+          <table className="w-full text-left text-xs whitespace-nowrap">
+            <thead className="bg-slate-100 text-gray-700 font-bold border-b sticky top-0">
               <tr>
-                <td colSpan="14" className="text-center p-6 text-gray-500">
-                  No hay datos de incidencias registrados para el filtro seleccionado.
-                </td>
+                <th className="p-3 bg-slate-100">No.</th>
+                <th className="p-3 bg-slate-100">Colaborador</th>
+                <th className="p-3 bg-slate-100">Depto</th>
+                <th className="p-3 bg-slate-100">Estado</th>
+                {columnasActivas.map(col => (
+                  <th key={col.campo} className={`p-3 text-right ${esCampoMonetario(col.campo) ? 'bg-emerald-50 text-emerald-900' : col.permite_supervisor ? 'bg-blue-50 text-blue-900' : 'bg-gray-50'}`}>
+                    {col.etiqueta}
+                    {col.permite_supervisor && <span className="ml-1 text-[9px] bg-blue-200 text-blue-800 px-1 rounded" title="Editable por supervisor">👷</span>}
+                  </th>
+                ))}
+                {vistaActual === "rrhh" && <th className="p-3 bg-slate-100">💬 Obs. RH</th>}
+                <th className="p-3 text-center bg-slate-100">Acciones</th>
               </tr>
-            ) : (
-              incidenciasMostrar.map((item) => {
-                const tienePermisos = Boolean(item.permisos_detalle || item.permisos > 0 || item.hrs_permiso > 0);
-                const tieneVacaciones = Boolean(item.vacaciones_detalle || item.vacaciones > 0 || item.dias_vacaciones > 0);
-                const calculo = calcularNominaIncidencia(item.empleados, item);
+              {vistaActual === "rrhh" && Object.keys(totales).length > 0 && (
+                <tr className="bg-emerald-100 border-t-2 border-emerald-300">
+                  <td colSpan={4} className="p-3 font-black text-emerald-900 text-right">💰 TOTALES DEL PERÍODO:</td>
+                  {columnasActivas.map(col => {
+                    const val = totales[col.campo] || 0;
+                    return (<td key={`total-${col.campo}`} className="p-3 text-right font-black text-emerald-900">{esCampoMonetario(col.campo) ? `$${val.toFixed(2)}` : val > 0 ? val : "-"}</td>);
+                  })}
+                  {vistaActual === "rrhh" && <td></td>}
+                  <td></td>
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={20} className="p-6 text-center text-gray-500">Cargando...</td></tr>}
+              {!loading && empleadosFiltrados.map(emp => {
+                const inc = emp.incidencia;
+                const estado = inc?.estado || "sin_captura";
+                const estadoColor = { sin_captura: "bg-gray-100 text-gray-600", pendiente: "bg-amber-100 text-amber-800", aprobado: "bg-emerald-100 text-emerald-800", rechazado: "bg-red-100 text-red-800" }[estado];
+                const estadoIcono = { sin_captura: "⚠️", pendiente: "⏳", aprobado: "✅", rechazado: "❌" }[estado];
+                const estadoLabel = { sin_captura: "Sin captura", pendiente: "Pendiente", aprobado: "Aprobado", rechazado: "Rechazado" }[estado];
 
                 return (
-                  <tr key={item.id} className="hover:bg-gray-50 border-b">
-                    <td className="p-3 border font-medium">
-                      {item.empleados?.nombre_completo || "N/A"}
-                    </td>
-                    <td className="p-3 border">
-                      {item.periodos_nomina?.descripcion || "N/A"}
-                    </td>
-                    <td className="p-3 border text-right font-semibold text-gray-800 bg-blue-50/50">
-                      {calculo.sueldoBaseSemanal > 0 ? (
-                        `$${calculo.sueldoBaseSemanal.toFixed(2)}`
-                      ) : (
-                        <span className="text-amber-600 font-bold">Sin Asignar</span>
-                      )}
-                    </td>
-                    <td className="p-3 border text-right font-semibold text-indigo-900 bg-indigo-50/50">
-                      {calculo.sueldoDiario > 0 ? (
-                        `$${calculo.sueldoDiario.toFixed(2)}`
-                      ) : (
-                        <span className="text-amber-600 font-bold">$0.00</span>
-                      )}
-                    </td>
-                    <td className="p-3 border text-center">{item.horas_extra || 0}h</td>
-                    <td className="p-3 border text-center font-semibold text-blue-600">
-                      {item.horas_extra_reales || item.horas_extra || 0}h
-                    </td>
-                    <td className="p-3 border text-center">
-                      {item.retardos_sin_permiso ?? item.retardos ?? 0}
-                    </td>
-                    <td className="p-3 border text-center text-red-600 font-semibold">
-                      {item.faltas_injustificadas ?? item.faltas ?? 0}d
-                    </td>
-                    <td className="p-3 border text-right text-green-600 font-medium">
-                      +${calculo.pagoHorasExtra.toFixed(2)}
-                    </td>
-                    <td className="p-3 border text-right text-red-600 font-medium">
-                      -${calculo.descuentoFaltas.toFixed(2)}
-                    </td>
-
-                    <td className="p-3 border text-center">
-                      {tienePermisos ? (
-                        <button
-                          onClick={() => setModalPermisos({ abierto: true, datos: item })}
-                          className="bg-amber-100 text-amber-800 px-2.5 py-1 rounded font-bold text-xs hover:bg-amber-200"
-                        >
-                          SÍ 👁️
-                        </button>
-                      ) : (
-                        <span className="text-gray-400">NO</span>
-                      )}
-                    </td>
-
-                    <td className="p-3 border text-center">
-                      {tieneVacaciones ? (
-                        <button
-                          onClick={() => setModalVacaciones({ abierto: true, datos: item })}
-                          className="bg-purple-100 text-purple-800 px-2.5 py-1 rounded font-bold text-xs hover:bg-purple-200"
-                        >
-                          SÍ 🏖️
-                        </button>
-                      ) : (
-                        <span className="text-gray-400">NO</span>
-                      )}
-                    </td>
-
-                    <td className="p-3 border text-right font-bold bg-green-50 text-green-800 text-base">
-                      ${calculo.montoFinalSemanal.toFixed(2)}
-                    </td>
-
-                    <td className="p-3 border text-center">
+                  <tr key={emp.id} className={`border-t hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
+                    <td className="p-3 font-mono">{emp.numero_empleado}</td>
+                    <td className="p-3 font-semibold text-gray-800">{emp.nombre_completo}</td>
+                    <td className="p-3 text-slate-600">{emp.departamentos?.nombre || "-"}</td>
+                    <td className="p-3"><span className={`${estadoColor} px-2 py-0.5 rounded-full text-[10px] font-bold`}>{estadoIcono} {estadoLabel}</span></td>
+                    {columnasActivas.map(col => {
+                      const val = inc?.[col.campo];
+                      const esMonet = esCampoMonetario(col.campo);
+                      const displayVal = val !== null && val !== undefined && val !== "" ? (esMonet ? `$${Number(val).toFixed(2)}` : val) : <span className="text-slate-300">-</span>;
+                      return (<td key={col.campo} className={`p-3 text-right ${esMonet ? 'text-emerald-700 font-semibold' : ''}`}>{displayVal}</td>);
+                    })}
+                    {vistaActual === "rrhh" && (
+                      <td className="p-3 max-w-[150px] truncate" title={inc?.comentarios_rrhh || ""}>
+                        {inc?.comentarios_rrhh ? <span className="text-slate-600 text-[10px]">💬 {inc.comentarios_rrhh}</span> : <span className="text-slate-300">-</span>}
+                      </td>
+                    )}
+                    <td className="p-3">
                       <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => setModalEdicion({ abierto: true, datos: { ...item } })}
-                          className="bg-amber-500 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-amber-600"
-                          title="Editar Incidencia"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          onClick={() =>
-                            setModalRecibo({
-                              abierto: true,
-                              datos: { ...item, calculo },
-                            })
-                          }
-                          className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-semibold hover:bg-blue-700"
-                          title="Ver Recibo"
-                        >
-                          📄
-                        </button>
+                        {vistaActual === "supervisor" && (
+                          <button onClick={() => setModalCaptura({ abierto: true, empleado: emp })} className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded-lg font-semibold text-xs">
+                            {inc ? "✏️ Modificar" : "📝 Capturar"}
+                          </button>
+                        )}
+                        {vistaActual === "rrhh" && (
+                          <button onClick={() => { setModalRevision({ abierto: true, incidencia: { ...inc, empleado: emp } }); setComentarioRRHH(inc?.comentarios_rrhh || ""); }} className="bg-purple-500 hover:bg-purple-600 text-white px-2 py-1 rounded-lg font-semibold text-xs">
+                            🔍 Validar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
+              })}
+              {!loading && empleadosFiltrados.length === 0 && <tr><td colSpan={20} className="p-6 text-center text-gray-500">Sin resultados</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* ================= MODAL REGLAS DEL SUELDO DIARIO ================= */}
-      {modalReglas && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 border border-indigo-100">
-            <div className="border-b pb-3 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
-                <span>⚙️</span> Reglas de Cálculo: Sueldo Diario
-              </h3>
-              <button
-                onClick={() => setModalReglas(false)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs md:text-sm text-gray-700">
-              <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 space-y-2">
-                <p className="font-semibold text-indigo-950">
-                  📌 Criterios de Cálculo Semanal:
-                </p>
-                <ul className="list-disc list-inside space-y-1.5 text-indigo-900">
-                  <li>
-                    <strong>Sueldo Base Semanal:</strong> Monto base acordado por semana laborada.
-                  </li>
-                  <li>
-                    <strong>Composición de la Semana:</strong> <strong>6 días laborados</strong> + <strong>1 día de descanso</strong> (7 días en total).
-                  </li>
-                  <li>
-                    <strong>Fórmula del Sueldo Diario:</strong> 
-                    <span className="block mt-1 bg-white p-2 rounded border border-indigo-200 font-mono text-center font-bold text-indigo-700">
-                      Sueldo Diario = Sueldo Base Semanal / 7 días
-                    </span>
-                  </li>
-                </ul>
-              </div>
-
-              <p className="text-gray-500 text-xs">
-                * Este sueldo diario se utiliza para obtener el costo por hora e imputar faltas o compensar horas extra.
-              </p>
-            </div>
-
-            <div className="flex justify-end pt-3 border-t">
-              <button
-                onClick={() => setModalReglas(false)}
-                className="bg-indigo-600 text-white text-xs font-semibold px-5 py-2 rounded-lg hover:bg-indigo-700 shadow-md"
-              >
-                Entendido
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL EDICIÓN MULTINIVEL ================= */}
-      {modalEdicion.abierto && modalEdicion.datos && (() => {
-        const d = modalEdicion.datos;
-        const calculoEnv = calcularNominaIncidencia(d.empleados, d);
-
-        return (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <form
-              onSubmit={guardarEdicion}
-              className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-6 my-8"
-            >
-              <div className="border-b pb-3 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-bold text-gray-800">
-                    ✏️ Gestión y Edición de Incidencia
-                  </h3>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Empleado: <strong className="text-gray-700">{d.empleados?.nombre_completo}</strong>
-                  </p>
-                </div>
-                <span className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full font-bold">
-                  Periodo: {d.periodos_nomina?.descripcion || "S/D"}
-                </span>
-              </div>
-
-              {/* BLOQUE 1: INFORMACIÓN SUBIDA POR EL SUPERVISOR */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>👔</span> 1. Información Reportada por Supervisor
-                </h4>
-                
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <label className="block text-gray-600 mb-1 font-medium">Horas Extras Rep.</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={d.horas_extra ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, horas_extra: e.target.value },
-                        })
-                      }
-                      className="w-full border p-2 rounded bg-white font-semibold text-gray-800"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1 font-medium">Faltas Justificadas</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.faltas_justificadas ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, faltas_justificadas: e.target.value },
-                        })
-                      }
-                      className="w-full border p-2 rounded bg-white font-semibold text-green-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1 font-medium">Faltas Injustificadas</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.faltas_injustificadas ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, faltas_injustificadas: e.target.value },
-                        })
-                      }
-                      className="w-full border p-2 rounded bg-white font-semibold text-red-600"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1 font-medium">Retardos Con Permiso</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.retardos_con_permiso ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, retardos_con_permiso: e.target.value },
-                        })
-                      }
-                      className="w-full border p-2 rounded bg-white font-semibold text-gray-800"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1 font-medium">Retardos Sin Permiso</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.retardos_sin_permiso ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, retardos_sin_permiso: e.target.value },
-                        })
-                      }
-                      className="w-full border p-2 rounded bg-white font-semibold text-amber-700"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* BLOQUE 2: AJUSTES AUTORIZADOS POR EL ADMINISTRADOR */}
-              <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3">
-                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>🛠️</span> 2. Ajustes de Autorización (Administrador)
-                </h4>
-
-                <div className="grid grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <label className="block text-amber-900 mb-1 font-medium">Horas Extra Aprobadas</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={d.horas_extra_reales ?? d.horas_extra ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, horas_extra_reales: e.target.value },
-                        })
-                      }
-                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-blue-700 focus:ring-2 focus:ring-amber-500 outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-amber-900 mb-1 font-medium">Total Faltas p/ Nómina</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.faltas ?? d.faltas_injustificadas ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, faltas: e.target.value },
-                        })
-                      }
-                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-red-700 focus:ring-2 focus:ring-amber-500 outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-amber-900 mb-1 font-medium">Retardos a Descontar</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={d.retardos ?? d.retardos_sin_permiso ?? 0}
-                      onChange={(e) =>
-                        setModalEdicion({
-                          ...modalEdicion,
-                          datos: { ...d, retardos: e.target.value },
-                        })
-                      }
-                      className="w-full border-amber-300 border p-2 rounded bg-white font-bold text-gray-800 focus:ring-2 focus:ring-amber-500 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* BLOQUE 3: RESULTADOS FINALES PARA NÓMINA */}
-              <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 space-y-2">
-                <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>💵</span> 3. Resultados Proyectados en Recibo de Nómina
-                </h4>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs pt-1">
-                  <div className="bg-white p-2.5 rounded border border-emerald-100">
-                    <span className="text-gray-500 block">Sueldo Base Semanal:</span>
-                    <span className="font-bold text-gray-800">${calculoEnv.sueldoBaseSemanal.toFixed(2)}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded border border-emerald-100">
-                    <span className="text-gray-500 block">Monto Hrs Extra (+):</span>
-                    <span className="font-bold text-emerald-600">+${calculoEnv.pagoHorasExtra.toFixed(2)}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded border border-emerald-100">
-                    <span className="text-gray-500 block">Descuento Faltas (-):</span>
-                    <span className="font-bold text-red-600">-${calculoEnv.descuentoFaltas.toFixed(2)}</span>
-                  </div>
-                  <div className="bg-emerald-600 text-white p-2.5 rounded shadow-sm text-right">
-                    <span className="block text-[10px] opacity-90 uppercase font-semibold">Neto Semanal Est.</span>
-                    <span className="font-black text-base">${calculoEnv.montoFinalSemanal.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setModalEdicion({ abierto: false, datos: null })}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardando}
-                  className="bg-blue-600 text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:bg-blue-300 shadow-md"
-                >
-                  {guardando ? "Guardando Cambios..." : "Guardar Registro Final"}
-                </button>
-              </div>
-            </form>
-          </div>
-        );
-      })()}
-
-      {/* MODAL PERMISOS */}
-      {modalPermisos.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
-            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">
-              📋 Detalle de Permiso - {modalPermisos.datos?.empleados?.nombre_completo}
-            </h3>
-            <div className="space-y-2 text-sm text-gray-600">
-              <p><strong>Periodo:</strong> {modalPermisos.datos?.periodos_nomina?.descripcion}</p>
-              <p><strong>Días / Horas Totales:</strong> {modalPermisos.datos?.permisos || modalPermisos.datos?.hrs_permiso || 1} concepto(s)</p>
-            </div>
-            <div className="flex justify-between items-center pt-4 border-t">
-              <button
-                onClick={() => {
-                  setModalPermisos({ abierto: false, datos: null });
-                  navigate("/solicitudes");
-                }}
-                className="bg-gray-800 text-white text-xs px-4 py-2 rounded hover:bg-black font-semibold"
-              >
-                📜 Ver Historial Completo
-              </button>
-              <button
-                onClick={() => setModalPermisos({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 text-xs px-4 py-2 rounded hover:bg-gray-300 font-semibold"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL VACACIONES */}
-      {modalVacaciones.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
-            <h3 className="text-lg font-bold text-purple-900 border-b pb-2">
-              🏖️ Registro Integrado de Vacaciones
-            </h3>
-            <div className="space-y-2 text-sm text-gray-600">
-              <p><strong>Empleado:</strong> {modalVacaciones.datos?.empleados?.nombre_completo}</p>
-              <p><strong>Días Solicitados:</strong> {modalVacaciones.datos?.vacaciones || modalVacaciones.datos?.dias_vacaciones} día(s)</p>
-            </div>
-            <div className="flex justify-between items-center pt-4 border-t">
-              <button
-                onClick={() => {
-                  const empId = modalVacaciones.datos?.empleados?.id;
-                  setModalVacaciones({ abierto: false, datos: null });
-                  navigate(`/vacaciones?empleado_id=${empId}`);
-                }}
-                className="bg-purple-700 text-white text-xs px-4 py-2 rounded hover:bg-purple-800 font-semibold"
-              >
-                ➡️ Ir a Pantalla Vacaciones
-              </button>
-              <button
-                onClick={() => setModalVacaciones({ abierto: false, datos: null })}
-                className="bg-gray-200 text-gray-700 text-xs px-4 py-2 rounded hover:bg-gray-300 font-semibold"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL RECIBO */}
-      {modalRecibo.abierto && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-xl w-full p-6 shadow-2xl relative space-y-4 border-2 border-dashed border-gray-400">
-            <div className="bg-amber-100 text-amber-900 text-center text-xs font-bold py-1 rounded">
-              ⚠️ VISTA PREVIA / EJEMPLO SIN VALOR OFICIAL
-            </div>
-            <div className="flex justify-between items-start border-b pb-3">
+      {/* 🔥 MODAL: PERMISOS DE SUPERVISOR (Exclusivo de RH) */}
+      {modalPermisos && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center pb-3 border-b flex-shrink-0">
               <div>
-                <h2 className="font-bold text-lg text-gray-800">RECIBO DE NÓMINA (SEMANAL)</h2>
-                <p className="text-xs text-gray-500">Periodo: {modalRecibo.datos?.periodos_nomina?.descripcion}</p>
+                <h3 className="text-lg font-bold text-slate-800">🔒 Permisos de Captura (Supervisor)</h3>
+                <p className="text-xs text-gray-500">Marca las columnas que el supervisor podrá llenar o modificar. Las demás serán exclusivas de RH.</p>
               </div>
-              <div className="text-right text-xs">
-                <p className="font-bold text-gray-700">EMPRESA S.A. DE C.V.</p>
-              </div>
+              <button onClick={() => setModalPermisos(false)} className="text-gray-400 font-bold text-xl">✕</button>
             </div>
-            <div className="flex justify-between items-center font-bold text-base pt-2">
-              <span>NETO ESTIMADO A PAGAR:</span>
-              <span className="text-green-800">${modalRecibo.datos?.calculo?.montoFinalSemanal?.toFixed(2)}</span>
+            
+            <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+              {columnasDelMapeo.map(col => (
+                <label key={col.campo} className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 cursor-pointer transition">
+                  <input 
+                    type="checkbox" 
+                    checked={permisosSupervisor[col.campo] || false} 
+                    onChange={(e) => setPermisosSupervisor(prev => ({ ...prev, [col.campo]: e.target.checked }))}
+                    className="w-5 h-5 text-amber-600 rounded focus:ring-amber-500" 
+                  />
+                  <div className="flex-1">
+                    <div className="font-semibold text-slate-700 text-sm">{col.etiqueta}</div>
+                    <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
+                  </div>
+                  {permisosSupervisor[col.campo] ? (
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold">👷 Supervisor</span>
+                  ) : (
+                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded font-bold">🔒 Solo RH</span>
+                  )}
+                </label>
+              ))}
+              {columnasDelMapeo.length === 0 && (
+                <div className="text-center text-gray-500 py-8">No hay columnas mapeadas a incidencias aún. Ve a Configuración de Tablas.</div>
+              )}
             </div>
-            <div className="flex justify-end pt-4">
-              <button
-                onClick={() => setModalRecibo({ abierto: false, datos: null })}
-                className="bg-gray-800 text-white text-xs px-5 py-2 rounded hover:bg-black font-semibold"
-              >
-                Cerrar Vista Previa
+
+            <div className="pt-3 border-t flex justify-end gap-2 flex-shrink-0">
+              <button onClick={() => setModalPermisos(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+              <button onClick={guardarPermisos} disabled={guardandoPermisos} className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-amber-300">
+                {guardandoPermisos ? "Guardando..." : "💾 Guardar Permisos"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* MODAL CAPTURA SUPERVISOR */}
+      {modalCaptura.abierto && modalCaptura.empleado && (
+        <CapturaSupervisorModal
+          empleado={modalCaptura.empleado}
+          incidencia={modalCaptura.empleado.incidencia}
+          columnas={columnasSupervisor}
+          guardando={guardando}
+          onGuardar={guardarCapturaSupervisor}
+          onCerrar={() => setModalCaptura({ abierto: false, empleado: null })}
+        />
+      )}
+
+      {/* MODAL REVISIÓN RH */}
+      {modalRevision.abierto && modalRevision.incidencia && (
+        <RevisionRRHHModal
+          incidencia={modalRevision.incidencia}
+          columnas={columnasRH}
+          guardando={guardando}
+          comentario={comentarioRRHH}
+          setComentario={setComentarioRRHH}
+          onGuardar={guardarRevisionRRHH}
+          onCerrar={() => { setModalRevision({ abierto: false, incidencia: null }); setComentarioRRHH(""); }}
+        />
+      )}
+
+      {/* MODAL APROBACIÓN MASIVA */}
+      {modalAprobacionMasiva && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-800 mb-2">✅ Aprobar Todas las Pendientes</h3>
+            <p className="text-sm text-slate-600 mb-4">Se aprobarán <strong className="text-amber-700">{kpis.pendientes}</strong> incidencias pendientes del período actual.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setModalAprobacionMasiva(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+              <button onClick={aprobarMasivamente} disabled={guardando} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-gray-300">{guardando ? "Procesando..." : "✅ Confirmar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIG COLUMNAS (Drag & Drop) */}
+      {modalConfigColumnas && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <div><h3 className="text-lg font-bold text-slate-800">⚙️ Columnas de Incidencias</h3><p className="text-xs text-gray-500">Arrastra para reordenar. 👷 = Permitido por RH</p></div>
+              <button onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
+            </div>
+            <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
+              <span className="text-xs text-slate-600">Mostrando <strong>{columnasActivas.length}</strong> de <strong>{columnasDelMapeo.length}</strong></span>
+              <button onClick={restablecerOrden} className="bg-purple-100 hover:bg-purple-200 text-purple-800 px-3 py-2 rounded-lg text-xs font-semibold">🔄 Orden original</button>
+            </div>
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {columnasDelMapeo.map(col => {
+                const idx = ordenColumnas.indexOf(col.campo);
+                return (
+                  <div key={col.campo} draggable
+                    onDragStart={(e) => { e.dataTransfer.setData('text/plain', col.campo); e.currentTarget.classList.add('opacity-40'); }}
+                    onDragEnd={(e) => { e.currentTarget.classList.remove('opacity-40', 'ring-2', 'ring-blue-400'); }}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
+                    onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
+                    onDrop={(e) => {
+                      e.preventDefault(); e.currentTarget.classList.remove('ring-2', 'ring-blue-400');
+                      const campoArrastrado = e.dataTransfer.getData('text/plain');
+                      if (campoArrastrado !== col.campo) {
+                        setOrdenColumnas(prev => { const nuevo = prev.filter(c => c !== campoArrastrado); nuevo.splice(nuevo.indexOf(col.campo), 0, campoArrastrado); return nuevo; });
+                      }
+                    }}
+                    className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition cursor-move group">
+                    <div className="text-slate-400 cursor-grab select-none">⋮⋮</div>
+                    <div className="bg-slate-200 text-slate-700 text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center">{idx + 1}</div>
+                    <input type="checkbox" checked={columnasVisibles[col.campo] !== false} onChange={(e) => { e.stopPropagation(); cambiarVisibilidadColumna(col.campo); }} className="w-4 h-4 text-blue-600 rounded" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-700 text-sm truncate flex items-center gap-2">
+                        {col.etiqueta}
+                        {col.permite_supervisor && <span className="text-[9px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">👷 Supervisor</span>}
+                        {esCampoMonetario(col.campo) && <span className="text-[9px] bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">💰</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">📄 {col.original}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => moverColumna(col.campo, 'arriba')} disabled={idx === 0} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↑</button>
+                      <button onClick={() => moverColumna(col.campo, 'abajo')} disabled={idx === ordenColumnas.length - 1} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↓</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="pt-3 border-t flex justify-end"><button onClick={() => setModalConfigColumnas(false)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold">Aplicar</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RELACIÓN */}
+      {modalRelacion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-center pb-4 border-b mb-4">
+              <h2 className="text-xl font-bold">🔗 Relación de Incidencias</h2>
+              <button onClick={() => setModalRelacion(false)} className="text-slate-500 font-bold text-xl">✕</button>
+            </div>
+            <div className="border rounded-xl overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-100"><tr><th className="p-2">Excel</th><th className="p-2">Campo</th><th className="p-2">Permisos</th></tr></thead>
+                <tbody className="divide-y">
+                  {columnasDelMapeo.map((col, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="p-2 font-semibold">{col.original}</td>
+                      <td className="p-2 font-mono">{col.campo}</td>
+                      <td className="p-2">
+                        {col.permite_supervisor ? (
+                          <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">👷 Supervisor + RH</span>
+                        ) : (
+                          <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">🔒 Solo RH</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 flex justify-end"><button onClick={() => setModalRelacion(false)} className="bg-slate-800 text-white px-5 py-2 rounded-xl text-xs font-semibold">Cerrar</button></div>
+          </div>
+        </div>
+      )}
+    </Layout>
+  );
+}
+
+// ================================
+// COMPONENTE: Modal Captura Supervisor
+// ================================
+function CapturaSupervisorModal({ empleado, incidencia, columnas, guardando, onGuardar, onCerrar }) {
+  const [valores, setValores] = useState(() => {
+    const init = {};
+    columnas.forEach(col => { init[col.campo] = incidencia?.[col.campo] ?? 0; });
+    return init;
+  });
+
+  const handleSubmit = (e) => { e.preventDefault(); onGuardar(empleado.id, valores); };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="border-b pb-3 px-6 pt-5 flex justify-between items-center">
+          <div>
+            <h3 className="text-lg font-bold text-blue-800">📝 Propuesta de Incidencias</h3>
+            <p className="text-xs text-gray-500"><strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre}</p>
+            <p className="text-[10px] text-amber-600 mt-1">⚠️ Tu captura quedará como "Pendiente" hasta que RH la valide.</p>
+          </div>
+          <button type="button" onClick={onCerrar} className="text-gray-400 font-bold text-2xl">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="grid md:grid-cols-2 gap-3">
+            {columnas.map(col => (
+              <div key={col.campo} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <label className="block text-xs font-bold text-blue-800 mb-1">{col.etiqueta}</label>
+                <input type="number" step="0.01" min="0" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            ))}
+          </div>
+          {columnas.length === 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+              ⚠️ RH no ha habilitado ningún campo para que los supervisores capturen incidencias.
+            </div>
+          )}
+        </div>
+        <div className="border-t px-6 py-4 flex justify-end gap-2">
+          <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+          <button type="submit" disabled={guardando} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300">
+            {guardando ? "Guardando..." : "📝 Enviar a Validación RH"}
+          </button>
+        </div>
+      </form>
     </div>
   );
-} 
+}
+
+// ================================
+// COMPONENTE: Modal Revisión RH
+// ================================
+function RevisionRRHHModal({ incidencia, columnas, guardando, comentario, setComentario, onGuardar, onCerrar }) {
+  const [valores, setValores] = useState(() => {
+    const init = {};
+    columnas.forEach(col => { init[col.campo] = incidencia?.[col.campo] ?? 0; });
+    return init;
+  });
+  const [estadoFinal, setEstadoFinal] = useState(incidencia?.estado || "pendiente");
+
+  const columnasSup = columnas.filter(c => c.permite_supervisor);
+  const columnasRHOnly = columnas.filter(c => !c.permite_supervisor);
+
+  const totalSumas = columnas.filter(c => esCampoMonetario(c.campo) && !normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/)).reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
+  const totalRestas = columnas.filter(c => esCampoMonetario(c.campo) && normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/)).reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
+  const neto = totalSumas - totalRestas;
+
+  const handleSubmit = (e) => { e.preventDefault(); onGuardar(incidencia.id, valores, estadoFinal, comentario); };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col">
+        <div className="border-b pb-3 px-6 pt-5 flex justify-between items-center">
+          <div>
+            <h3 className="text-lg font-bold text-purple-800">🔍 Validación y Ajuste de RH</h3>
+            <p className="text-xs text-gray-500"><strong>{incidencia.empleado?.nombre_completo}</strong> · {incidencia.empleado?.departamentos?.nombre}</p>
+          </div>
+          <button type="button" onClick={onCerrar} className="text-gray-400 font-bold text-2xl">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            {["pendiente", "aprobado", "rechazado"].map(est => (
+              <button key={est} type="button" onClick={() => setEstadoFinal(est)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${estadoFinal === est ? (est === "aprobado" ? "bg-emerald-100 border-emerald-500 text-emerald-800" : est === "rechazado" ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-800") : "bg-white border-slate-200 text-slate-500"}`}>
+                {est === "pendiente" ? "⏳ Dejar Pendiente" : est === "aprobado" ? "✅ Aprobar" : "❌ Rechazar"}
+              </button>
+            ))}
+          </div>
+
+          {columnasSup.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h4 className="font-bold text-blue-900 mb-3 flex items-center gap-2"><span>👷</span> Datos propuestos por Supervisor ({columnasSup.length}) <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-normal">Verificar con reloj checador</span></h4>
+              <div className="grid md:grid-cols-3 gap-3">
+                {columnasSup.map(col => (
+                  <div key={col.campo}>
+                    <label className="block text-xs font-semibold text-blue-800 mb-1">{col.etiqueta}</label>
+                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {columnasRHOnly.length > 0 && (
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+              <h4 className="font-bold text-purple-900 mb-3 flex items-center gap-2"><span>🔒</span> Campos exclusivos de RH ({columnasRHOnly.length})</h4>
+              <div className="grid md:grid-cols-3 gap-3">
+                {columnasRHOnly.map(col => (
+                  <div key={col.campo}>
+                    <label className="block text-xs font-semibold text-purple-800 mb-1">{col.etiqueta}</label>
+                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-purple-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-purple-500" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-1">💬 Observaciones de RH</label>
+            <textarea rows="3" value={comentario} onChange={e => setComentario(e.target.value)} placeholder="Ej: Ajustado a 22 min según reporte de reloj checador #4521..." className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
+          </div>
+        </div>
+
+        <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4">
+          <div className="grid md:grid-cols-3 gap-4 mb-4">
+            <div className="text-center"><div className="text-xs text-slate-500 uppercase font-semibold">Percepciones</div><div className="text-xl font-bold text-emerald-600">+ ${totalSumas.toFixed(2)}</div></div>
+            <div className="text-center border-x border-slate-300 px-4"><div className="text-xs text-slate-500 uppercase font-semibold">Deducciones</div><div className="text-xl font-bold text-red-600">- ${totalRestas.toFixed(2)}</div></div>
+            <div className="text-center bg-white rounded-xl p-3 shadow-md border-2 border-purple-500"><div className="text-xs text-purple-600 uppercase font-bold">Neto</div><div className="text-2xl font-black text-purple-900">${neto.toFixed(2)}</div></div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+            <button type="submit" disabled={guardando} className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-purple-300">
+              {guardando ? "Guardando..." : `💾 Guardar como ${estadoFinal.toUpperCase()}`}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}

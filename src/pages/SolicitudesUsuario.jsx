@@ -39,7 +39,7 @@ export default function SolicitudesUsuario() {
         options: {
           data: {
             nombre: solicitud.nombre,
-            rol: "supervisor", // 🔥 Asignamos el rol para que el Login lo detecte
+            rol: "SUPERVISOR", // 🔥 Asignamos el rol para que el Login lo detecte
           },
         },
       });

@@ -24,6 +24,7 @@ import ConfiguracionEmpresa from "./pages/ConfiguracionEmpresa";
 import ImportarEmpleados from "./pages/ImportarEmpleados";
 import ConfiguracionTablas from "./pages/ConfiguracionTablas";
 import IncidenciasSupervisor from "./pages/IncidenciasSupervisor";
+import NuevoEmpleado from "./pages/NuevoEmpleado";
  
 
 
@@ -154,7 +155,10 @@ export default function App() {
 
 <Route path="/configuracion-tablas" element={<ConfiguracionTablas />} />
 
-<Route path="/incidencias/supervisor" element={<IncidenciasSupervisor />} />      
+<Route path="/incidencias/supervisor" element={<IncidenciasSupervisor />} />   
+
+<Route path="/empleados/nuevo" element={<NuevoEmpleado />} />
+
       </Routes>
 
     </BrowserRouter>

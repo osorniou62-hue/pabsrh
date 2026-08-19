@@ -9,22 +9,13 @@ export default function SolicitudesUsuario() {
   const [modalConfirmacion, setModalConfirmacion] = useState({ abierto: false, solicitud: null, accion: "" });
   const navigate = useNavigate();
 
-  useEffect(() => {
-    cargarSolicitudes();
-  }, []);
+  useEffect(() => { cargarSolicitudes(); }, []);
 
   const cargarSolicitudes = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("solicitudes_usuario")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error cargando solicitudes:", error);
-    } else {
-      setSolicitudes(data || []);
-    }
+    const { data, error } = await supabase.from("solicitudes_usuario").select("*").order("created_at", { ascending: false });
+    if (error) console.error("Error cargando solicitudes:", error);
+    else setSolicitudes(data || []);
     setLoading(false);
   };
 
@@ -42,76 +33,51 @@ export default function SolicitudesUsuario() {
   const ejecutarAprobacion = async (solicitud) => {
     try {
       setLoading(true);
-
       const correoRaw = solicitud.correo || solicitud.email || "";
       const passwordRaw = solicitud.password || "";
-
       const correoLimpio = String(correoRaw).trim().toLowerCase();
       const passwordLimpio = String(passwordRaw).trim();
 
       if (!correoLimpio || !correoLimpio.includes('@')) {
-        alert(`⚠️ El correo electrónico es inválido o está vacío.\nValor recibido: "${correoRaw}"`);
+        alert("⚠️ El correo electrónico es inválido o está vacío.\nValor recibido: \"" + correoRaw + "\"");
         setLoading(false);
         return;
       }
-
       if (passwordLimpio.length < 6) {
         alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
         setLoading(false);
         return;
       }
 
-      // 1. Intentar crear el usuario en Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: correoLimpio,
         password: passwordLimpio,
-        options: {
-          data: { nombre: solicitud.nombre, rol: "SUPERVISOR" },
-        },
+        options: { data: { nombre: solicitud.nombre, rol: "SUPERVISOR" } },
       });
 
-      // 2. Manejo si el correo ya existe en Auth
       if (authError) {
         if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
-          alert(`⚠️ El correo "${correoLimpio}" ya tiene una cuenta de inicio de sesión en el sistema.\n\nPor favor, ve al módulo de "Usuarios", busca este correo y asegúrate de que su Rol sea "SUPERVISOR" y esté "Activo".\n\nLuego, puedes eliminar esta solicitud de esta pantalla con el botón 🗑️.`);
+          alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.\n\nVe al módulo de Usuarios y asegúrate de que su Rol sea SUPERVISOR.\n\nLuego elimina esta solicitud con 🗑️.");
           setLoading(false);
+          setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
           return;
         }
-        throw new Error(`Error de autenticación: ${authError.message}`);
+        throw new Error("Error de autenticación: " + authError.message);
       }
 
       const nuevoUserId = authData.user?.id;
-
       if (nuevoUserId) {
-        // 3. 🔥 CORRECCIÓN: Solo guardamos las columnas que sabemos que existen en 'profiles'
-        // (id, nombre, rol, activo). El correo ya está seguro en Supabase Auth.
-        const { error: profileError } = await supabase.from("profiles").upsert(
-          {
-            id: nuevoUserId,
-            nombre: solicitud.nombre,
-            rol: "SUPERVISOR",
-            activo: true,
-          },
-          { onConflict: "id" }
-        );
-
+        const { error: profileError } = await supabase.from("profiles").upsert({ id: nuevoUserId, nombre: solicitud.nombre, rol: "SUPERVISOR", activo: true }, { onConflict: "id" });
         if (profileError) throw profileError;
 
-        // 4. Actualizar estado de la solicitud en pantalla y BD
-        setSolicitudes(prev => prev.map(s => 
-          s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s
-        ));
+        const { data: verificacion } = await supabase.from("profiles").select("rol").eq("id", nuevoUserId).single();
+        console.log("✅ Rol guardado:", verificacion?.rol);
 
-        const { error: updateError } = await supabase
-          .from("solicitudes_usuario")
-          .update({ estatus: "APROBADA" })
-          .eq("id", solicitud.id);
+        setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s));
+        await supabase.from("solicitudes_usuario").update({ estatus: "APROBADA" }).eq("id", solicitud.id);
 
-        if (updateError) throw updateError;
-
-        await supabase.auth.signOut();
-        alert("✅ Usuario y perfil creados exitosamente. Por seguridad, inicia sesión nuevamente.");
-        navigate("/login");
+        alert("✅ Usuario creado exitosamente con rol SUPERVISOR.\n\nCorreo: " + correoLimpio + "\nContraseña: " + passwordLimpio + "\n\n💡 Para probar, abre una ventana de incógnito e inicia sesión.");
+        await cargarSolicitudes();
       }
     } catch (error) {
       console.error("Error al aprobar:", error);
@@ -126,21 +92,10 @@ export default function SolicitudesUsuario() {
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
-
-      const { data, error } = await supabase
-        .from("solicitudes_usuario")
-        .update({ estatus: "RECHAZADA" })
-        .eq("id", solicitud.id)
-        .select();
-
-      if (error) throw new Error(`Error de base de datos: ${error.message}`);
-
-      setSolicitudes(prev => prev.map(s => 
-        s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s
-      ));
-
+      const { error } = await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id).select();
+      if (error) throw new Error("Error de base de datos: " + error.message);
+      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
       setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
-
     } catch (error) {
       console.error("Error al rechazar:", error);
       alert("Error al rechazar: " + error.message);
@@ -151,7 +106,7 @@ export default function SolicitudesUsuario() {
   };
 
   const eliminarDefinitivamente = async (id) => {
-    if (!window.confirm("¿Estás seguro de eliminar esta solicitud permanentemente?")) return;
+    if (!window.confirm("¿Eliminar esta solicitud permanentemente?")) return;
     try {
       const { error } = await supabase.from("solicitudes_usuario").delete().eq("id", id);
       if (error) throw error;
@@ -168,25 +123,23 @@ export default function SolicitudesUsuario() {
           <h1 className="text-3xl font-bold text-slate-800">📨 Solicitudes de Usuario</h1>
           <p className="text-slate-500 mt-1">Aprueba solicitudes para crear cuentas de Supervisores</p>
         </div>
-        <Link to="/dashboard" className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-sm">
-          ← Volver al Dashboard
-        </Link>
+        <Link to="/dashboard" className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-sm">← Volver al Dashboard</Link>
       </div>
 
       <div className="grid md:grid-cols-4 gap-3">
-        <button onClick={() => setFiltro("PENDIENTES")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "PENDIENTES" ? "bg-amber-50 border-amber-400 shadow-md" : "bg-white border-slate-200 hover:border-amber-200"}`}>
+        <button onClick={() => setFiltro("PENDIENTES")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "PENDIENTES" ? "bg-amber-50 border-amber-400 shadow-md" : "bg-white border-slate-200 hover:border-amber-200")}>
           <div className="text-xs text-slate-500 font-semibold uppercase">Pendientes</div>
           <div className="text-3xl font-black text-amber-600">{pendientes}</div>
         </button>
-        <button onClick={() => setFiltro("APROBADAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "APROBADAS" ? "bg-emerald-50 border-emerald-400 shadow-md" : "bg-white border-slate-200 hover:border-emerald-200"}`}>
+        <button onClick={() => setFiltro("APROBADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "APROBADAS" ? "bg-emerald-50 border-emerald-400 shadow-md" : "bg-white border-slate-200 hover:border-emerald-200")}>
           <div className="text-xs text-slate-500 font-semibold uppercase">Aprobadas</div>
           <div className="text-3xl font-black text-emerald-600">{aprobadas}</div>
         </button>
-        <button onClick={() => setFiltro("RECHAZADAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "RECHAZADAS" ? "bg-red-50 border-red-400 shadow-md" : "bg-white border-slate-200 hover:border-red-200"}`}>
+        <button onClick={() => setFiltro("RECHAZADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "RECHAZADAS" ? "bg-red-50 border-red-400 shadow-md" : "bg-white border-slate-200 hover:border-red-200")}>
           <div className="text-xs text-slate-500 font-semibold uppercase">Rechazadas</div>
           <div className="text-3xl font-black text-red-600">{rechazadas}</div>
         </button>
-        <button onClick={() => setFiltro("TODAS")} className={`rounded-xl p-4 border-2 text-left transition ${filtro === "TODAS" ? "bg-blue-50 border-blue-400 shadow-md" : "bg-white border-slate-200 hover:border-blue-200"}`}>
+        <button onClick={() => setFiltro("TODAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "TODAS" ? "bg-blue-50 border-blue-400 shadow-md" : "bg-white border-slate-200 hover:border-blue-200")}>
           <div className="text-xs text-slate-500 font-semibold uppercase">Todas</div>
           <div className="text-3xl font-black text-blue-600">{solicitudes.length}</div>
         </button>
@@ -194,16 +147,11 @@ export default function SolicitudesUsuario() {
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {loading && solicitudes.length === 0 ? (
-          <div className="p-12 text-center text-slate-500"><div className="animate-spin text-4xl mb-2">⏳</div>Cargando solicitudes...</div>
+          <div className="p-12 text-center text-slate-500"><div className="animate-spin text-4xl mb-2">⏳</div>Cargando...</div>
         ) : solicitudesFiltradas.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <div className="text-6xl mb-3">📭</div>
-            <p className="font-semibold">
-              {filtro === "PENDIENTES" && "No hay solicitudes pendientes"}
-              {filtro === "APROBADAS" && "No hay solicitudes aprobadas"}
-              {filtro === "RECHAZADAS" && "No hay solicitudes rechazadas"}
-              {filtro === "TODAS" && "No hay solicitudes registradas"}
-            </p>
+            <p className="font-semibold">No hay solicitudes en esta categoría</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -221,7 +169,7 @@ export default function SolicitudesUsuario() {
                 {solicitudesFiltradas.map((solicitud) => (
                   <tr key={solicitud.id} className="hover:bg-slate-50 transition">
                     <td className="p-4 font-semibold text-slate-800">{solicitud.nombre}</td>
-                    <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo || solicitud.email || "No disponible"}</td>
+                    <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo || solicitud.email || "N/A"}</td>
                     <td className="p-4 text-slate-600">{solicitud.telefono || "-"}</td>
                     <td className="p-4 text-center">
                       {solicitud.estatus === "PENDIENTE" && <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-bold">🟡 Pendiente</span>}
@@ -250,7 +198,7 @@ export default function SolicitudesUsuario() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <div className="text-center mb-4">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 ${modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100"}`}>
+              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100")}>
                 {modalConfirmacion.accion === "aprobar" ? "✅" : "❌"}
               </div>
               <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.accion === "aprobar" ? "Aprobar Solicitud" : "Rechazar Solicitud"}</h3>
@@ -261,11 +209,7 @@ export default function SolicitudesUsuario() {
             </div>
             <div className="flex gap-3">
               <button onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "" })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
-              <button
-                onClick={() => modalConfirmacion.accion === "aprobar" ? ejecutarAprobacion(modalConfirmacion.solicitud) : ejecutarRechazo(modalConfirmacion.solicitud)}
-                disabled={loading}
-                className={`flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 ${modalConfirmacion.accion === "aprobar" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}
-              >
+              <button onClick={() => modalConfirmacion.accion === "aprobar" ? ejecutarAprobacion(modalConfirmacion.solicitud) : ejecutarRechazo(modalConfirmacion.solicitud)} disabled={loading} className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.accion === "aprobar" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700")}>
                 {loading ? "Procesando..." : modalConfirmacion.accion === "aprobar" ? "✅ Confirmar" : "❌ Rechazar"}
               </button>
             </div>

@@ -1,7 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
-import useRequireRole from "../hooks/useRequireRole";
 
 const formatearNombreColumna = (texto) => String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 const normalizar = (texto) => String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
@@ -23,9 +22,6 @@ const limpiarPayload = (payload) => {
 export default function IncidenciasSupervisor() {
   const navigate = useNavigate();
   
-  // 🔥 VERIFICAR AUTENTICACIÓN Y ROL AL CARGAR (Solo SUPERVISOR puede entrar)
-  const { perfil, cargando: cargandoAuth, tieneAcceso } = useRequireRole("SUPERVISOR", "/dashboard");
-
   const [supervisorActual, setSupervisorActual] = useState(null);
   const [empleadosSupervisados, setEmpleadosSupervisados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
@@ -34,26 +30,62 @@ export default function IncidenciasSupervisor() {
   const [columnasSupervisor, setColumnasSupervisor] = useState([]);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  const [rolUsuario, setRolUsuario] = useState(null);
 
   const [busqueda, setBusqueda] = useState("");
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
 
-  // 🔥 Cargar datos del supervisor cuando el hook confirme que tiene acceso
+  // 🔥 VERIFICAR AUTENTICACIÓN Y ROL AL CARGAR
   useEffect(() => {
-    if (!tieneAcceso || !perfil) return;
-
-    const cargarDatosSupervisor = async () => {
+    const cargarInicial = async () => {
       setLoading(true);
       try {
-        // Buscar al supervisor en la tabla empleados usando el perfil.id
-        const { data: supervisorData } = await supabase
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          navigate("/login");
+          return;
+        }
+
+        const { data: perfil } = await supabase
+          .from("profiles")
+          .select("rol, nombre")
+          .eq("id", user.id)
+          .single();
+
+        setRolUsuario(perfil?.rol || null);
+
+        // 🔒 Solo SUPERVISOR puede estar aquí
+        if (perfil?.rol !== "SUPERVISOR") {
+          alert("⛔ Acceso denegado. Esta sección es exclusiva para Supervisores.");
+          navigate("/dashboard");
+          return;
+        }
+
+        // 🔍 BUSQUEDA INTELIGENTE DEL SUPERVISOR EN LA TABLA EMPLEADOS
+        
+        // Intento 1: Buscar por ID de autenticación (si se creó desde Solicitudes y se vinculó)
+        let { data: supervisorData } = await supabase
           .from("empleados")
           .select("*, puestos(nombre), departamentos(nombre)")
-          .eq("id", perfil.id)
+          .eq("id", user.id)
           .maybeSingle();
 
+        // Intento 2: Si no se encuentra, buscar por nombre completo (si ya existía en Empleados antes de tener usuario)
+        if (!supervisorData && perfil?.nombre) {
+          console.log("🔄 No encontrado por ID, intentando búsqueda por nombre...");
+          const { data: dataPorNombre } = await supabase
+            .from("empleados")
+            .select("*, puestos(nombre), departamentos(nombre)")
+            .ilike("nombre_completo", perfil.nombre) // ilike ignora mayúsculas/minúsculas
+            .maybeSingle();
+          
+          supervisorData = dataPorNombre;
+        }
+
+        console.log("📡 Datos del supervisor encontrados:", supervisorData);
+
         if (!supervisorData) {
-          alert("No se encontró tu perfil de empleado. Contacta a RH.");
+          alert(`⚠️ No se encontró tu perfil de empleado en el sistema.\n\nPor favor, contacta a RH para que te registren primero en el módulo de 'Empleados' con tu nombre exacto: '${perfil.nombre}'`);
           await supabase.auth.signOut();
           navigate("/login");
           return;
@@ -106,9 +138,8 @@ export default function IncidenciasSupervisor() {
         setLoading(false);
       }
     };
-
-    cargarDatosSupervisor();
-  }, [tieneAcceso, perfil, navigate]);
+    cargarInicial();
+  }, [navigate]);
 
   // Cargar incidencias
   useEffect(() => {
@@ -200,24 +231,7 @@ export default function IncidenciasSupervisor() {
     navigate("/login");
   };
 
-  // 🔥 PANTALLA DE CARGA DE AUTENTICACIÓN
-  if (cargandoAuth) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin text-6xl mb-4">⏳</div>
-          <p className="text-slate-600 font-semibold">Verificando acceso...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // 🔥 SI NO TIENE ACCESO, NO RENDERIZAR NADA (el hook ya lo redirigió)
-  if (!tieneAcceso) {
-    return null;
-  }
-
-  // 🔥 PANTALLA DE CARGA DE DATOS DEL SUPERVISOR
+  // 🔥 PANTALLA DE CARGA
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">

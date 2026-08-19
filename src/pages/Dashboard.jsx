@@ -1,4 +1,5 @@
- import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 import { Link } from "react-router-dom";
 
@@ -6,10 +7,47 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [activos, setActivos] = useState(0);
   const [bajas, setBajas] = useState(0);
   const [departamentos, setDepartamentos] = useState(0);
   const [puestos, setPuestos] = useState(0);
+  const [rolUsuario, setRolUsuario] = useState(null);
+
+  // 🔥 MEDIDA DE SEGURIDAD: Verificar rol al cargar el Dashboard
+  useEffect(() => {
+    const verificarAcceso = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        // No hay sesión, ir al login
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      const { data: perfil, error } = await supabase
+        .from("profiles")
+        .select("rol")
+        .eq("id", user.id)
+        .single();
+
+      if (error || !perfil) {
+        // No tiene perfil, cerrar sesión
+        await supabase.auth.signOut();
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      setRolUsuario(perfil.rol);
+
+      // 🔒 Si es SUPERVISOR o VISOR, NO puede estar en el Dashboard
+      if (perfil.rol === "SUPERVISOR" || perfil.rol === "VISOR") {
+        navigate("/incidencias/supervisor", { replace: true });
+      }
+    };
+
+    verificarAcceso();
+  }, [navigate]);
 
   useEffect(() => {
     cargarIndicadores();
@@ -18,33 +56,21 @@ export default function Dashboard() {
   const cargarIndicadores = async () => {
     const { count: empleadosActivos } = await supabase
       .from("empleados")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
+      .select("*", { count: "exact", head: true })
       .eq("activo", true);
 
     const { count: empleadosBaja } = await supabase
       .from("empleados")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
+      .select("*", { count: "exact", head: true })
       .eq("activo", false);
 
     const { count: totalDepartamentos } = await supabase
       .from("departamentos")
-      .select("*", {
-        count: "exact",
-        head: true,
-      });
+      .select("*", { count: "exact", head: true });
 
     const { count: totalPuestos } = await supabase
       .from("puestos")
-      .select("*", {
-        count: "exact",
-        head: true,
-      });
+      .select("*", { count: "exact", head: true });
 
     setActivos(empleadosActivos || 0);
     setBajas(empleadosBaja || 0);
@@ -60,14 +86,7 @@ export default function Dashboard() {
   const Modulo = ({ titulo, descripcion, ruta, icono }) => (
     <Link
       to={ruta}
-      className="
-        bg-white
-        rounded-2xl
-        shadow-lg
-        p-6
-        hover:shadow-xl
-        transition
-      "
+      className="bg-white rounded-2xl shadow-lg p-6 hover:shadow-xl transition"
     >
       <div className="text-4xl mb-3">{icono}</div>
       <h3 className="text-xl font-bold mb-2">{titulo}</h3>
@@ -75,188 +94,69 @@ export default function Dashboard() {
     </Link>
   );
 
+  // 🔥 Mientras verifica el rol, mostrar pantalla de carga
+  if (rolUsuario === null) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center">
+            <div className="animate-spin text-6xl mb-4">⏳</div>
+            <p className="text-slate-600 font-semibold">Verificando acceso...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-4xl font-bold">Dashboard</h1>
-          <p className="text-gray-500 mt-2">
-            Bienvenido al Sistema RH y Nómina
-          </p>
+          <p className="text-gray-500 mt-2">Bienvenido al Sistema RH y Nómina</p>
+          <div className="mt-2">
+            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-bold">
+              🔐 Rol: {rolUsuario}
+            </span>
+          </div>
         </div>
 
         <button
           onClick={cerrarSesion}
-          className="
-            bg-red-600
-            hover:bg-red-700
-            text-white
-            px-5
-            py-3
-            rounded-xl
-            transition
-          "
+          className="bg-red-600 hover:bg-red-700 text-white px-5 py-3 rounded-xl transition"
         >
           Cerrar Sesión
         </button>
       </div>
 
       <div className="grid md:grid-cols-4 gap-6 mb-10">
-        <KpiCard
-          titulo="Activos"
-          valor={activos}
-          icono="👥"
-          color="text-green-600"
-        />
-        <KpiCard
-          titulo="Bajas"
-          valor={bajas}
-          icono="🚫"
-          color="text-red-600"
-        />
-        <KpiCard
-          titulo="Departamentos"
-          valor={departamentos}
-          icono="🏢"
-          color="text-blue-600"
-        />
-        <KpiCard
-          titulo="Puestos"
-          valor={puestos}
-          icono="💼"
-          color="text-purple-600"
-        />
+        <KpiCard titulo="Activos" valor={activos} icono="👥" color="text-green-600" />
+        <KpiCard titulo="Bajas" valor={bajas} icono="🚫" color="text-red-600" />
+        <KpiCard titulo="Departamentos" valor={departamentos} icono="🏢" color="text-blue-600" />
+        <KpiCard titulo="Puestos" valor={puestos} icono="💼" color="text-purple-600" />
       </div>
 
       <h2 className="text-2xl font-bold mb-6">Módulos</h2>
 
       <div className="grid md:grid-cols-3 xl:grid-cols-4 gap-6">
-        <Modulo
-          icono="👥"
-          titulo="Empleados"
-          descripcion="Altas, bajas y consultas."
-          ruta="/empleados"
-        />
-
-        <Modulo
-          icono="🏢"
-          titulo="Departamentos"
-          descripcion="Administración de departamentos."
-          ruta="/departamentos"
-        />
-
-        <Modulo
-          icono="💼"
-          titulo="Puestos"
-          descripcion="Administración de puestos."
-          ruta="/puestos"
-        />
-
-        <Modulo
-          icono="📅"
-          titulo="Periodos"
-          descripcion="Periodos de nómina."
-          ruta="/periodos"
-        />
-
-        {/* MÓDULO DE INCIDENCIAS AGREGADO */}
-        <Modulo
-          icono="📝"
-          titulo="Incidencias"
-          descripcion="Horas extra, faltas y novedades."
-          ruta="/incidencias"
-        />
-
-        <Modulo
-          icono="👤"
-          titulo="Usuarios"
-          descripcion="Administración de accesos."
-          ruta="/usuarios"
-        />
-
-        <Modulo
-          icono="📨"
-          titulo="Solicitudes"
-          descripcion="Solicitudes de usuarios."
-          ruta="/solicitudes"
-        />
-
-        <Modulo
-          icono="🏖"
-          titulo="Vacaciones"
-          descripcion="Control de vacaciones."
-          ruta="/vacaciones"
-        />
-
-        <Modulo
-          icono="💳"
-          titulo="Préstamos"
-          descripcion="Administración de préstamos."
-          ruta="/prestamos"
-        />
-
-        <Modulo
-          icono="🧮"
-          titulo="Nómina"
-          descripcion="Generación de nómina."
-          ruta="/nomina"
-        />
-
-        <Modulo
-          icono="📦"
-          titulo="Recibos Masivos"
-          descripcion="PDF y ZIP de recibos."
-          ruta="/recibos-masivos"
-        />
-
-        <Modulo
-          icono="📊"
-          titulo="Reportes"
-          descripcion="Exportación a Excel."
-          ruta="/reportes"
-        />
-
-        <Modulo
-          icono="📈"
-          titulo="Dashboard Ejecutivo"
-          descripcion="KPIs y gráficas."
-          ruta="/dashboard-ejecutivo"
-        />
-
-        <Modulo
-          icono="🔔"
-          titulo="Notificaciones"
-          descripcion="Centro de alertas."
-          ruta="/notificaciones"
-        />
-
-        <Modulo
-          icono="📋"
-          titulo="Auditoría"
-          descripcion="Bitácora del sistema."
-          ruta="/auditoria"
-        />
-        <Modulo
-          icono="📊"
-          titulo="Configuración de Tablas"
-          descripcion="Administra y mapea columnas de Excel a Supabase."
-          ruta="/configuracion-tablas"
-        />
-
-        <Modulo
-          icono="⚙️"
-          titulo="Configuración"
-          descripcion="Datos corporativos."
-          ruta="/configuracion"
-        />
-
-<Modulo
-  icono="👷"
-  titulo="Portal Supervisor"
-  descripcion="Captura de incidencias del equipo."
-  ruta="/incidencias/supervisor"
-/>
-        
+        <Modulo icono="👥" titulo="Empleados" descripcion="Altas, bajas y consultas." ruta="/empleados" />
+        <Modulo icono="🏢" titulo="Departamentos" descripcion="Administración de departamentos." ruta="/departamentos" />
+        <Modulo icono="💼" titulo="Puestos" descripcion="Administración de puestos." ruta="/puestos" />
+        <Modulo icono="📅" titulo="Periodos" descripcion="Periodos de nómina." ruta="/periodos" />
+        <Modulo icono="📝" titulo="Incidencias" descripcion="Horas extra, faltas y novedades." ruta="/incidencias" />
+        <Modulo icono="👤" titulo="Usuarios" descripcion="Administración de accesos." ruta="/usuarios" />
+        <Modulo icono="📨" titulo="Solicitudes" descripcion="Solicitudes de usuarios." ruta="/solicitudes" />
+        <Modulo icono="🏖" titulo="Vacaciones" descripcion="Control de vacaciones." ruta="/vacaciones" />
+        <Modulo icono="💳" titulo="Préstamos" descripcion="Administración de préstamos." ruta="/prestamos" />
+        <Modulo icono="🧮" titulo="Nómina" descripcion="Generación de nómina." ruta="/nomina" />
+        <Modulo icono="📦" titulo="Recibos Masivos" descripcion="PDF y ZIP de recibos." ruta="/recibos-masivos" />
+        <Modulo icono="📊" titulo="Reportes" descripcion="Exportación a Excel." ruta="/reportes" />
+        <Modulo icono="📈" titulo="Dashboard Ejecutivo" descripcion="KPIs y gráficas." ruta="/dashboard-ejecutivo" />
+        <Modulo icono="🔔" titulo="Notificaciones" descripcion="Centro de alertas." ruta="/notificaciones" />
+        <Modulo icono="📋" titulo="Auditoría" descripcion="Bitácora del sistema." ruta="/auditoria" />
+        <Modulo icono="📊" titulo="Configuración de Tablas" descripcion="Administra y mapea columnas de Excel a Supabase." ruta="/configuracion-tablas" />
+        <Modulo icono="⚙️" titulo="Configuración" descripcion="Datos corporativos." ruta="/configuracion" />
+        <Modulo icono="👷" titulo="Portal Supervisor" descripcion="Captura de incidencias del equipo." ruta="/incidencias/supervisor" />
       </div>
     </Layout>
   );

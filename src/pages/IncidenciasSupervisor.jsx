@@ -1,19 +1,13 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
-import Layout from "../components/Layout";
 
-const formatearNombreColumna = (texto) =>
-  String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-
-const normalizar = (texto) =>
-  String(texto || "").toLowerCase().normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+const formatearNombreColumna = (texto) => String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+const normalizar = (texto) => String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 
 const esCampoMonetario = (campo) => {
   const n = normalizar(campo);
-  return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total',
-    'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss',
-    'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
+  return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total', 'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss', 'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
 };
 
 const limpiarPayload = (payload) => {
@@ -26,8 +20,8 @@ const limpiarPayload = (payload) => {
 };
 
 export default function IncidenciasSupervisor() {
-  const [supervisorId, setSupervisorId] = useState("");
-  const [supervisores, setSupervisores] = useState([]);
+  const navigate = useNavigate();
+  
   const [supervisorActual, setSupervisorActual] = useState(null);
   const [empleadosSupervisados, setEmpleadosSupervisados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
@@ -36,73 +30,92 @@ export default function IncidenciasSupervisor() {
   const [columnasSupervisor, setColumnasSupervisor] = useState([]);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  const [rolUsuario, setRolUsuario] = useState(null);
 
   const [busqueda, setBusqueda] = useState("");
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
 
-  // 🔥 CARGA INICIAL
+  // 🔥 VERIFICAR AUTENTICACIÓN Y ROL AL CARGAR
   useEffect(() => {
     const cargarInicial = async () => {
       setLoading(true);
       try {
-        const [resSupervisores, resPeriodos, resConfig] = await Promise.all([
-          // Buscar empleados que son supervisores (tienen gente a su cargo)
-          supabase.from("empleados").select("id, numero_empleado, nombre_completo, puestos(nombre)").eq("activo", true),
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          navigate("/login");
+          return;
+        }
+
+        const { data: perfil } = await supabase
+          .from("profiles")
+          .select("rol, nombre")
+          .eq("id", user.id)
+          .single();
+
+        setRolUsuario(perfil?.rol || null);
+
+        // 🔒 Solo SUPERVISOR puede estar aquí
+        if (perfil?.rol !== "SUPERVISOR") {
+          alert("⛔ Acceso denegado. Esta sección es exclusiva para Supervisores.");
+          navigate("/dashboard");
+          return;
+        }
+
+        // Buscar al supervisor en la tabla empleados
+        const { data: supervisorData } = await supabase
+          .from("empleados")
+          .select("*, puestos(nombre), departamentos(nombre)")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (!supervisorData) {
+          alert("No se encontró tu perfil de empleado. Contacta a RH.");
+          await supabase.auth.signOut();
+          navigate("/login");
+          return;
+        }
+
+        setSupervisorActual(supervisorData);
+
+        // Cargar períodos y configuración en paralelo
+        const [resPeriodos, resConfig] = await Promise.all([
           supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false }),
           supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle(),
         ]);
 
-        // Filtrar solo los que son supervisores (tienen empleados a su cargo)
-        const { data: empleadosConSupervisor } = await supabase
-          .from("empleados")
-          .select("supervisor_id")
-          .not("supervisor_id", "is", null);
-
-        const idsSupervisores = new Set((empleadosConSupervisor || []).map(e => e.supervisor_id));
-        const supervisoresFiltrados = (resSupervisores.data || []).filter(s => idsSupervisores.has(s.id));
-        setSupervisores(supervisoresFiltrados);
-
         setPeriodos(resPeriodos.data || []);
         if (resPeriodos.data?.length > 0) setPeriodoId(resPeriodos.data[0].id);
 
-        // Cargar columnas permitidas para supervisor
-        if (resConfig.data?.configuracion?.asignacion) {
+        // Cargar columnas permitidas
+        let config = resConfig.data?.configuracion;
+        if (!config) {
+          const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+          if (local) config = JSON.parse(local);
+        }
+
+        if (config?.asignacion) {
           const columnas = [];
-          Object.entries(resConfig.data.configuracion.asignacion).forEach(([colOriginal, info]) => {
+          Object.entries(config.asignacion).forEach(([colOriginal, info]) => {
             if (info.tablaDestino === 'incidencias' && info.permite_supervisor) {
               const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
               if (campoFinal) {
-                columnas.push({
-                  original: colOriginal,
-                  campo: campoFinal,
-                  etiqueta: formatearNombreColumna(campoFinal),
-                });
+                columnas.push({ original: colOriginal, campo: campoFinal, etiqueta: formatearNombreColumna(campoFinal) });
               }
             }
           });
           setColumnasSupervisor(columnas);
-        } else {
-          const local = localStorage.getItem("config_mapeo_columnas_dinamico");
-          if (local) {
-            const config = JSON.parse(local);
-            if (config?.asignacion) {
-              const columnas = [];
-              Object.entries(config.asignacion).forEach(([colOriginal, info]) => {
-                if (info.tablaDestino === 'incidencias' && info.permite_supervisor) {
-                  const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
-                  if (campoFinal) {
-                    columnas.push({
-                      original: colOriginal,
-                      campo: campoFinal,
-                      etiqueta: formatearNombreColumna(campoFinal),
-                    });
-                  }
-                }
-              });
-              setColumnasSupervisor(columnas);
-            }
-          }
         }
+
+        // Cargar empleados a cargo
+        const { data: empleadosData } = await supabase
+          .from("empleados")
+          .select("*, puestos(nombre), departamentos(nombre)")
+          .eq("supervisor_id", supervisorData.id)
+          .eq("activo", true)
+          .order("nombre_completo");
+        
+        setEmpleadosSupervisados(empleadosData || []);
+
       } catch (err) {
         console.error("Error:", err);
       } finally {
@@ -110,41 +123,17 @@ export default function IncidenciasSupervisor() {
       }
     };
     cargarInicial();
-  }, []);
+  }, [navigate]);
 
-  // 🔥 Cuando cambia el supervisor, cargar sus empleados
+  // Cargar incidencias
   useEffect(() => {
-    if (!supervisorId) {
-      setSupervisorActual(null);
-      setEmpleadosSupervisados([]);
-      return;
-    }
-    const cargarDatosSupervisor = async () => {
-      setLoading(true);
-      try {
-        const [resSupervisor, resEmpleados] = await Promise.all([
-          supabase.from("empleados").select("*, puestos(nombre), departamentos(nombre)").eq("id", supervisorId).maybeSingle(),
-          supabase.from("empleados").select("*, puestos(nombre), departamentos(nombre)").eq("supervisor_id", supervisorId).eq("activo", true).order("nombre_completo"),
-        ]);
-        setSupervisorActual(resSupervisor.data || null);
-        setEmpleadosSupervisados(resEmpleados.data || []);
-      } catch (err) {
-        console.error("Error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    cargarDatosSupervisor();
-  }, [supervisorId]);
-
-  // 🔥 Cargar incidencias cuando cambia el período o supervisor
-  useEffect(() => {
-    if (!periodoId || empleadosSupervisados.length === 0) {
-      setIncidencias([]);
-      return;
-    }
+    if (!periodoId || !supervisorActual) return;
     const cargarIncidencias = async () => {
       const idsEmpleados = empleadosSupervisados.map(e => e.id);
+      if (idsEmpleados.length === 0) {
+        setIncidencias([]);
+        return;
+      }
       const { data, error } = await supabase
         .from("incidencias")
         .select("*")
@@ -153,9 +142,9 @@ export default function IncidenciasSupervisor() {
       if (!error) setIncidencias(data || []);
     };
     cargarIncidencias();
-  }, [periodoId, empleadosSupervisados]);
+  }, [periodoId, empleadosSupervisados, supervisorActual]);
 
-  // 🔥 GUARDAR CAPTURA
+  // Guardar captura
   const guardarCaptura = async (empleadoId, valores) => {
     setGuardando(true);
     try {
@@ -184,13 +173,9 @@ export default function IncidenciasSupervisor() {
       if (error) throw error;
 
       setModalCaptura({ abierto: false, empleado: null });
-      // Recargar solo incidencias
+      
       const idsEmpleados = empleadosSupervisados.map(e => e.id);
-      const { data } = await supabase
-        .from("incidencias")
-        .select("*")
-        .eq("periodo_id", periodoId)
-        .in("empleado_id", idsEmpleados);
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId).in("empleado_id", idsEmpleados);
       setIncidencias(data || []);
     } catch (err) {
       alert("Error al guardar: " + err.message);
@@ -199,7 +184,6 @@ export default function IncidenciasSupervisor() {
     }
   };
 
-  // 🔥 Combinar empleados con incidencias
   const empleadosConIncidencias = useMemo(() => {
     return empleadosSupervisados.map(emp => ({
       empleado: emp,
@@ -207,7 +191,6 @@ export default function IncidenciasSupervisor() {
     }));
   }, [empleadosSupervisados, incidencias]);
 
-  // 🔥 Filtrar por búsqueda
   const empleadosFiltrados = useMemo(() => {
     if (!busqueda.trim()) return empleadosConIncidencias;
     const texto = busqueda.toLowerCase().trim();
@@ -217,79 +200,91 @@ export default function IncidenciasSupervisor() {
     );
   }, [empleadosConIncidencias, busqueda]);
 
-  // 🔥 KPIs del supervisor
   const kpis = useMemo(() => {
     const total = empleadosSupervisados.length;
     const conCaptura = incidencias.length;
     const pendientes = incidencias.filter(i => i.estado === "pendiente").length;
     const aprobados = incidencias.filter(i => i.estado === "aprobado").length;
-    const rechazados = incidencias.filter(i => i.estado === "rechazado").length;
-    return { total, conCaptura, pendientes, aprobados, rechazados, sinCaptura: total - conCaptura };
+    return { total, conCaptura, pendientes, aprobados, sinCaptura: total - conCaptura };
   }, [empleadosSupervisados, incidencias]);
 
   const periodoActual = periodos.find(p => p.id === periodoId);
 
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
+
+  // 🔥 PANTALLA DE CARGA
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin text-6xl mb-4">⏳</div>
+          <p className="text-slate-600 font-semibold">Cargando tu portal...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 🔥 LAYOUT PROPIO DEL SUPERVISOR (sin sidebar administrativo)
   return (
-    <Layout>
-      <div className="space-y-5 max-w-6xl mx-auto">
-        {/* 🔥 HEADER DEL SUPERVISOR */}
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-xl">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-2xl">
+    <div className="min-h-screen bg-slate-50">
+      {/* 🔥 BARRA SUPERIOR MINIMALISTA */}
+      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-black">
               👷
             </div>
             <div>
-              <h1 className="text-2xl font-black">Portal del Supervisor</h1>
-              <p className="text-white/80 text-sm">Captura de incidencias de tu equipo</p>
+              <h1 className="text-lg font-bold text-slate-800">Portal del Supervisor</h1>
+              <p className="text-xs text-slate-500">Captura de incidencias</p>
             </div>
           </div>
-
-          {/* Selector de Supervisor */}
-          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/20">
-            <label className="text-xs font-bold text-white/90 uppercase mb-2 block">Selecciona tu nombre</label>
-            <select
-              value={supervisorId}
-              onChange={e => setSupervisorId(e.target.value)}
-              className="w-full bg-white text-slate-800 rounded-xl p-3 font-semibold focus:ring-2 focus:ring-white outline-none"
+          
+          <div className="flex items-center gap-4">
+            {supervisorActual && (
+              <div className="hidden md:flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                  {supervisorActual.nombre_completo?.charAt(0).toUpperCase()}
+                </div>
+                <div className="text-xs">
+                  <div className="font-semibold text-slate-800">{supervisorActual.nombre_completo}</div>
+                  <div className="text-slate-500">{supervisorActual.puestos?.nombre}</div>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={cerrarSesion}
+              className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5"
             >
-              <option value="">-- Selecciona supervisor --</option>
-              {supervisores.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.nombre_completo} {s.puestos?.nombre ? `· ${s.puestos.nombre}` : ""}
-                </option>
-              ))}
-            </select>
+              🚪 <span className="hidden sm:inline">Cerrar Sesión</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* 🔥 CONTENIDO PRINCIPAL */}
+      <main className="max-w-7xl mx-auto p-6 space-y-5">
+        {/* HEADER DEL SUPERVISOR */}
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-xl">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-3xl font-black">
+              {supervisorActual?.nombre_completo?.charAt(0).toUpperCase() || "S"}
+            </div>
+            <div>
+              <h2 className="text-2xl font-black">¡Hola, {supervisorActual?.nombre_completo?.split(' ')[0]}!</h2>
+              <p className="text-white/80 text-sm mt-0.5">
+                {supervisorActual?.puestos?.nombre} · {supervisorActual?.departamentos?.nombre}
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* 🔥 INFO DEL SUPERVISOR SELECCIONADO */}
-        {supervisorActual && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black shadow-md">
-                {supervisorActual.nombre_completo?.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1">
-                <h2 className="text-xl font-black text-slate-800">{supervisorActual.nombre_completo}</h2>
-                <p className="text-sm text-slate-600 flex items-center gap-2 mt-1">
-                  <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-lg font-semibold text-xs">
-                    💼 {supervisorActual.puestos?.nombre || "Sin puesto"}
-                  </span>
-                  <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-lg font-semibold text-xs">
-                    🏢 {supervisorActual.departamentos?.nombre || "Sin departamento"}
-                  </span>
-                  <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-lg font-semibold text-xs">
-                    👥 {empleadosSupervisados.length} empleados a cargo
-                  </span>
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 🔥 SELECTOR DE PERÍODO + KPIs */}
         {supervisorActual && (
           <>
+            {/* SELECTOR DE PERÍODO */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
               <div className="flex flex-col md:flex-row items-center gap-4">
                 <div className="flex items-center gap-3">
@@ -311,7 +306,7 @@ export default function IncidenciasSupervisor() {
             </div>
 
             {/* KPIs */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-white rounded-xl p-3 border border-slate-200">
                 <div className="text-xs text-slate-500 font-medium">Mi Equipo</div>
                 <div className="text-2xl font-black text-blue-600">{kpis.total}</div>
@@ -328,23 +323,16 @@ export default function IncidenciasSupervisor() {
                 <div className="text-xs text-slate-500 font-medium">Pendientes RH</div>
                 <div className="text-2xl font-black text-indigo-600">{kpis.pendientes}</div>
               </div>
-              <div className="bg-white rounded-xl p-3 border border-slate-200">
-                <div className="text-xs text-slate-500 font-medium">Aprobados</div>
-                <div className="text-2xl font-black text-emerald-600">{kpis.aprobados}</div>
-              </div>
             </div>
 
-            {/* 🔥 LISTA DE EMPLEADOS CON SCROLL */}
+            {/* LISTA DE EMPLEADOS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-4 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                    <span className="text-xl">👥</span>
-                    Mi Equipo ({empleadosFiltrados.length})
+                    <span className="text-xl">👥</span> Mi Equipo ({empleadosFiltrados.length})
                   </h3>
-                  <div className="text-xs text-slate-500">
-                    {columnasSupervisor.length} campos disponibles
-                  </div>
+                  <div className="text-xs text-slate-500">{columnasSupervisor.length} campos disponibles</div>
                 </div>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
@@ -358,14 +346,8 @@ export default function IncidenciasSupervisor() {
                 </div>
               </div>
 
-              {/* 🔥 LISTA SCROLLABLE */}
               <div className="max-h-[600px] overflow-y-auto">
-                {loading ? (
-                  <div className="p-8 text-center text-slate-500">
-                    <div className="animate-spin text-4xl mb-2">⏳</div>
-                    Cargando equipo...
-                  </div>
-                ) : empleadosFiltrados.length === 0 ? (
+                {empleadosFiltrados.length === 0 ? (
                   <div className="p-12 text-center">
                     <div className="text-6xl mb-3">📭</div>
                     <div className="text-slate-500 font-semibold">
@@ -386,12 +368,9 @@ export default function IncidenciasSupervisor() {
                       return (
                         <div key={empleado.id} className={`p-4 hover:bg-slate-50 transition ${estadoConfig.bgRow}`}>
                           <div className="flex items-center gap-4">
-                            {/* Avatar */}
                             <div className="w-12 h-12 bg-gradient-to-br from-slate-400 to-slate-600 rounded-xl flex items-center justify-center text-white font-bold flex-shrink-0">
                               {empleado.nombre_completo?.charAt(0).toUpperCase()}
                             </div>
-
-                            {/* Info */}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-mono text-xs text-slate-500">#{empleado.numero_empleado}</span>
@@ -401,23 +380,16 @@ export default function IncidenciasSupervisor() {
                                 <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium">
                                   {empleado.puestos?.nombre || "Sin puesto"}
                                 </span>
-                                <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium">
-                                  {empleado.departamentos?.nombre || "Sin depto"}
-                                </span>
                                 <span className={`${estadoConfig.color} px-2 py-0.5 rounded-full font-bold`}>
                                   {estadoConfig.icono} {estadoConfig.label}
                                 </span>
                               </div>
                             </div>
-
-                            {/* Botón */}
                             <button
                               onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })}
                               disabled={columnasSupervisor.length === 0}
                               className={`px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm transition flex-shrink-0 ${
-                                incidencia
-                                  ? "bg-blue-500 hover:bg-blue-600 text-white"
-                                  : "bg-emerald-500 hover:bg-emerald-600 text-white"
+                                incidencia ? "bg-blue-500 hover:bg-blue-600 text-white" : "bg-emerald-500 hover:bg-emerald-600 text-white"
                               } disabled:bg-slate-300 disabled:cursor-not-allowed`}
                             >
                               {incidencia ? "✏️ Editar" : "📝 Capturar"}
@@ -432,18 +404,9 @@ export default function IncidenciasSupervisor() {
             </div>
           </>
         )}
+      </main>
 
-        {/* 🔥 MENSAJE INICIAL SI NO HAY SUPERVISOR */}
-        {!supervisorActual && !loading && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-12 text-center">
-            <div className="text-6xl mb-4">👆</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Selecciona tu nombre para comenzar</h3>
-            <p className="text-slate-500">Elige tu nombre en el selector de arriba para ver tu equipo y capturar incidencias.</p>
-          </div>
-        )}
-      </div>
-
-      {/* 🔥 MODAL DE CAPTURA */}
+      {/* MODAL DE CAPTURA */}
       {modalCaptura.abierto && modalCaptura.empleado && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <ModalCapturaSupervisor
@@ -455,11 +418,11 @@ export default function IncidenciasSupervisor() {
           />
         </div>
       )}
-    </Layout>
+    </div>
   );
 }
 
-// 🔥 MODAL DE CAPTURA (SIMPLIFICADO)
+// MODAL DE CAPTURA
 function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
@@ -469,25 +432,16 @@ function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCe
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col">
-      {/* Header */}
       <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-6 py-4 rounded-t-2xl">
         <div className="flex justify-between items-start">
           <div>
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <span>📝</span> Captura de Incidencia
-            </h3>
-            <p className="text-sm text-white/90 mt-1">
-              <strong>{empleado.nombre_completo}</strong>
-            </p>
-            <p className="text-xs text-white/70 mt-0.5">
-              {empleado.puestos?.nombre} · {empleado.departamentos?.nombre}
-            </p>
+            <h3 className="text-lg font-bold flex items-center gap-2"><span>📝</span> Captura de Incidencia</h3>
+            <p className="text-sm text-white/90 mt-1"><strong>{empleado.nombre_completo}</strong></p>
+            <p className="text-xs text-white/70 mt-0.5">{empleado.puestos?.nombre} · {empleado.departamentos?.nombre}</p>
           </div>
           <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl leading-none">✕</button>
         </div>
       </div>
-
-      {/* Body */}
       <div className="flex-1 overflow-y-auto p-6">
         {columnas.length > 0 ? (
           <div className="space-y-3">
@@ -523,17 +477,9 @@ function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCe
           </div>
         )}
       </div>
-
-      {/* Footer */}
       <div className="border-t border-slate-200 px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
-        <button type="button" onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50">
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          disabled={guardando || columnas.length === 0}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300 shadow-sm"
-        >
+        <button type="button" onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50">Cancelar</button>
+        <button type="submit" disabled={guardando || columnas.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300 shadow-sm">
           {guardando ? "⏳ Guardando..." : "📝 Enviar a RH"}
         </button>
       </div>

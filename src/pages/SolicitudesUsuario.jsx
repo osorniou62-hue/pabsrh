@@ -6,15 +6,20 @@ export default function SolicitudesUsuario() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState("PENDIENTES");
+  const [empleados, setEmpleados] = useState([]);
   const [modalConfirmacion, setModalConfirmacion] = useState({ 
     abierto: false, 
     solicitud: null, 
     accion: "", 
-    rolSeleccionado: "SUPERVISOR" // 🔥 Nuevo estado para el rol
+    rolSeleccionado: "SUPERVISOR",
+    empleadoSeleccionado: ""
   });
   const navigate = useNavigate();
 
-  useEffect(() => { cargarSolicitudes(); }, []);
+  useEffect(() => { 
+    cargarSolicitudes();
+    cargarEmpleados();
+  }, []);
 
   const cargarSolicitudes = async () => {
     setLoading(true);
@@ -22,6 +27,18 @@ export default function SolicitudesUsuario() {
     if (error) console.error("Error cargando solicitudes:", error);
     else setSolicitudes(data || []);
     setLoading(false);
+  };
+
+  const cargarEmpleados = async () => {
+    const { data, error } = await supabase
+      .from("empleados")
+      .select("id, nombre_completo, numero_empleado, puestos(nombre), departamentos(nombre)")
+      .eq("activo", true)
+      .order("nombre_completo");
+    
+    if (!error && data) {
+      setEmpleados(data);
+    }
   };
 
   const solicitudesFiltradas = solicitudes.filter(s => {
@@ -35,8 +52,8 @@ export default function SolicitudesUsuario() {
   const aprobadas = solicitudes.filter(s => s.estatus === "APROBADA").length;
   const rechazadas = solicitudes.filter(s => s.estatus === "RECHAZADA").length;
 
-  // 🔥 Ahora recibe el 'rol' como parámetro
-  const ejecutarAprobacion = async (solicitud, rol) => {
+  // 🔥 APROBAR SOLICITUD
+  const ejecutarAprobacion = async (solicitud, rol, empleadoId) => {
     try {
       setLoading(true);
       const correoRaw = solicitud.correo || solicitud.email || "";
@@ -55,7 +72,6 @@ export default function SolicitudesUsuario() {
         return;
       }
 
-      // 1. Crear el usuario en Supabase Authentication con el rol seleccionado
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: correoLimpio,
         password: passwordLimpio,
@@ -66,7 +82,7 @@ export default function SolicitudesUsuario() {
         if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
           alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.\n\nVe al módulo de Usuarios y asegúrate de que su Rol sea " + rol + ".\n\nLuego elimina esta solicitud con 🗑️.");
           setLoading(false);
-          setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR" });
+          setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "" });
           return;
         }
         throw new Error("Error de autenticación: " + authError.message);
@@ -74,21 +90,50 @@ export default function SolicitudesUsuario() {
 
       const nuevoUserId = authData.user?.id;
       if (nuevoUserId) {
-        // 2. Crear el perfil con el rol seleccionado dinámicamente
         const { error: profileError } = await supabase.from("profiles").upsert(
           { id: nuevoUserId, nombre: solicitud.nombre, rol: rol, activo: true }, 
           { onConflict: "id" }
         );
         if (profileError) throw profileError;
 
+        if (empleadoId) {
+          console.log("🔗 Vinculando usuario con empleado:", empleadoId);
+          
+          const { error: updateEmpleadoError } = await supabase
+            .from("empleados")
+            .update({ id: nuevoUserId })
+            .eq("id", empleadoId);
+
+          if (updateEmpleadoError) {
+            console.warn("⚠️ No se pudo actualizar el ID del empleado:", updateEmpleadoError.message);
+          } else {
+            console.log("✅ Empleado vinculado correctamente");
+
+            const { error: updateSupervisorError } = await supabase
+              .from("empleados")
+              .update({ supervisor_id: nuevoUserId })
+              .eq("supervisor_id", empleadoId);
+
+            if (updateSupervisorError) {
+              console.warn("⚠️ No se pudieron actualizar las referencias de supervisor:", updateSupervisorError.message);
+            } else {
+              console.log("✅ Referencias de supervisor actualizadas");
+            }
+          }
+        }
+
         const { data: verificacion } = await supabase.from("profiles").select("rol").eq("id", nuevoUserId).single();
         console.log("✅ Rol guardado:", verificacion?.rol);
 
-        // 3. Actualizar estado de la solicitud
         setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s));
         await supabase.from("solicitudes_usuario").update({ estatus: "APROBADA" }).eq("id", solicitud.id);
 
-        alert(`✅ Usuario creado exitosamente con rol: ${rol}.\n\nCorreo: ${correoLimpio}\nContraseña: ${passwordLimpio}\n\n💡 Para probar, abre una ventana de incógnito e inicia sesión.`);
+        const empleadoInfo = empleados.find(e => e.id === empleadoId);
+        const mensajeEmpleado = empleadoInfo 
+          ? "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo + " (" + empleadoInfo.numero_empleado + ")"
+          : "\n\n⚠️ No se vinculó a ningún empleado existente.";
+
+        alert("✅ Usuario creado exitosamente con rol: " + rol + ".\n\nCorreo: " + correoLimpio + "\nContraseña: " + passwordLimpio + mensajeEmpleado + "\n\n💡 Para probar, abre una ventana de incógnito e inicia sesión.");
         await cargarSolicitudes();
       }
     } catch (error) {
@@ -97,17 +142,18 @@ export default function SolicitudesUsuario() {
       await cargarSolicitudes();
     } finally {
       setLoading(false);
-      setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR" });
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "" });
     }
   };
 
+  // 🔥 RECHAZAR SOLICITUD
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
       const { error } = await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id).select();
       if (error) throw new Error("Error de base de datos: " + error.message);
       setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR" });
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "" });
     } catch (error) {
       console.error("Error al rechazar:", error);
       alert("Error al rechazar: " + error.message);
@@ -117,43 +163,185 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 ELIMINACIÓN EN CASCADA: Borra la solicitud y el perfil de usuario asociado
-  const eliminarDefinitivamente = async (id) => {
-    const confirmacion = window.confirm(
-      "¿Eliminar esta solicitud permanentemente?\n\n" +
-      "⚠️ Nota: Si la solicitud fue APROBADA, se eliminará el perfil de usuario asociado de la base de datos. " +
-      "El correo quedará registrado en el sistema de autenticación de Supabase, pero el usuario no podrá iniciar sesión al no tener perfil."
-    );
-    
-    if (!confirmacion) return;
-
+  // 🔥 DAR DE BAJA (DESHABILITAR TEMPORALMENTE)
+  const darDeBajaUsuario = async (solicitud) => {
     try {
-      const solicitud = solicitudes.find(s => s.id === id);
+      setLoading(true);
       
-      // Si fue aprobada, intentamos limpiar el perfil asociado
-      if (solicitud && solicitud.estatus === "APROBADA") {
-        // Buscamos perfiles que coincidan con el nombre de la solicitud
-        const { data: perfiles, error: errorBusqueda } = await supabase
+      // Buscar el perfil asociado por nombre
+      const { data: perfiles, error: errorBusqueda } = await supabase
+        .from("profiles")
+        .select("id, nombre, rol")
+        .eq("nombre", solicitud.nombre);
+        
+      if (errorBusqueda) throw errorBusqueda;
+
+      if (perfiles && perfiles.length > 0) {
+        const idsPerfiles = perfiles.map(p => p.id);
+        
+        // 🔥 DESACTIVAR en lugar de eliminar
+        const { error: updateError } = await supabase
           .from("profiles")
-          .select("id")
-          .eq("nombre", solicitud.nombre);
-          
-        if (!errorBusqueda && perfiles && perfiles.length > 0) {
-          const idsPerfiles = perfiles.map(p => p.id);
-          await supabase.from("profiles").delete().in("id", idsPerfiles);
-          console.log("✅ Perfiles de usuario asociados eliminados");
+          .update({ 
+            activo: false,
+            fecha_baja: new Date().toISOString()
+          })
+          .in("id", idsPerfiles);
+
+        if (updateError) throw updateError;
+
+        console.log("✅ Usuario(s) dado(s) de baja correctamente:", idsPerfiles);
+      }
+
+      // Marcar la solicitud como RECHAZADA (conservar historial)
+      const { error } = await supabase
+        .from("solicitudes_usuario")
+        .update({ estatus: "RECHAZADA" })
+        .eq("id", solicitud.id);
+
+      if (error) throw error;
+      
+      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
+      
+      alert(
+        "✅ Usuario dado de baja correctamente.\n\n" +
+        "🔒 No podrá iniciar sesión hasta ser reactivado.\n" +
+        "🔄 Para reactivarlo, ve al módulo de Usuarios y cambia su estado a 'Activo'.\n" +
+        "📋 La solicitud quedará registrada en 'Rechazadas' para historial."
+      );
+    } catch (error) {
+      console.error("Error al dar de baja:", error);
+      alert("Error al dar de baja: " + error.message);
+    } finally {
+      setLoading(false);
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
+    }
+  };
+
+  // 🔥 ELIMINACIÓN PERMANENTE
+  const eliminarDefinitivamente = async (solicitud) => {
+    try {
+      setLoading(true);
+      
+      // 🔥 PASO 1: Buscar y eliminar el perfil
+      const { data: perfiles, error: errorBusqueda } = await supabase
+        .from("profiles")
+        .select("id, nombre")
+        .eq("nombre", solicitud.nombre);
+        
+      if (!errorBusqueda && perfiles && perfiles.length > 0) {
+        const idsPerfiles = perfiles.map(p => p.id);
+        const { error: deleteProfileError } = await supabase
+          .from("profiles")
+          .delete()
+          .in("id", idsPerfiles);
+
+        if (deleteProfileError) {
+          console.warn("⚠️ No se pudo eliminar el perfil:", deleteProfileError.message);
+        } else {
+          console.log("✅ Perfil eliminado:", idsPerfiles);
         }
       }
 
-      // Eliminar la solicitud
-      const { error } = await supabase.from("solicitudes_usuario").delete().eq("id", id);
-      if (error) throw error;
+      // 🔥 PASO 2: Eliminar la solicitud
+      const { error: deleteSolicitudError } = await supabase
+        .from("solicitudes_usuario")
+        .delete()
+        .eq("id", solicitud.id);
+
+      if (deleteSolicitudError) throw deleteSolicitudError;
       
-      setSolicitudes(prev => prev.filter(s => s.id !== id));
-      alert("✅ Solicitud y perfil de usuario eliminados correctamente.");
+      setSolicitudes(prev => prev.filter(s => s.id !== solicitud.id));
+      
+      alert(
+        "✅ Usuario y solicitud eliminados permanentemente.\n\n" +
+        "⚠️ Nota: El correo puede seguir registrado en Supabase Authentication.\n" +
+        "Si necesitas eliminarlo completamente, ve a Supabase > Authentication > Users."
+      );
     } catch (error) {
       console.error("Error al eliminar:", error);
       alert("Error al eliminar: " + error.message);
+    } finally {
+      setLoading(false);
+      setModalConfirmacion({ abierto: false, solicitud: null, accion: "" });
+    }
+  };
+
+  // 🔥 MODAL DE CONFIRMACIÓN DINÁMICO
+  const confirmarAccion = (solicitud, accion) => {
+    let titulo = "";
+    let descripcion = "";
+    let colorIcono = "";
+    let icono = "";
+    let colorBoton = "";
+    let textoBoton = "";
+
+    switch (accion) {
+      case "aprobar":
+        titulo = "Aprobar Solicitud";
+        descripcion = "Se creará una cuenta con el rol y vinculación seleccionados.";
+        colorIcono = "bg-emerald-100";
+        icono = "✅";
+        colorBoton = "bg-emerald-600 hover:bg-emerald-700";
+        textoBoton = "✅ Confirmar Aprobación";
+        break;
+      case "rechazar":
+        titulo = "Rechazar Solicitud";
+        descripcion = "La solicitud se marcará como rechazada. El usuario NO tendrá acceso.";
+        colorIcono = "bg-red-100";
+        icono = "❌";
+        colorBoton = "bg-red-600 hover:bg-red-700";
+        textoBoton = "❌ Confirmar Rechazo";
+        break;
+      case "baja":
+        titulo = "Dar de Baja al Usuario";
+        descripcion = "El usuario NO podrá iniciar sesión hasta ser reactivado. Sus datos se conservarán.";
+        colorIcono = "bg-orange-100";
+        icono = "🚫";
+        colorBoton = "bg-orange-600 hover:bg-orange-700";
+        textoBoton = "🚫 Confirmar Baja";
+        break;
+      case "eliminar":
+        titulo = "⚠️ ELIMINACIÓN PERMANENTE";
+        descripcion = "Esta acción NO se puede deshacer. Se eliminará el perfil y la solicitud. El correo puede quedar en Supabase Auth.";
+        colorIcono = "bg-red-100";
+        icono = "🗑️";
+        colorBoton = "bg-red-700 hover:bg-red-800";
+        textoBoton = "🗑️ Sí, Eliminar Permanentemente";
+        break;
+    }
+
+    setModalConfirmacion({
+      abierto: true,
+      solicitud,
+      accion,
+      rolSeleccionado: "SUPERVISOR",
+      empleadoSeleccionado: "",
+      titulo,
+      descripcion,
+      colorIcono,
+      icono,
+      colorBoton,
+      textoBoton
+    });
+  };
+
+  const ejecutarAccion = () => {
+    const { accion, solicitud, rolSeleccionado, empleadoSeleccionado } = modalConfirmacion;
+    
+    switch (accion) {
+      case "aprobar":
+        ejecutarAprobacion(solicitud, rolSeleccionado, empleadoSeleccionado);
+        break;
+      case "rechazar":
+        ejecutarRechazo(solicitud);
+        break;
+      case "baja":
+        darDeBajaUsuario(solicitud);
+        break;
+      case "eliminar":
+        eliminarDefinitivamente(solicitud);
+        break;
     }
   };
 
@@ -162,7 +350,7 @@ export default function SolicitudesUsuario() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">📨 Solicitudes de Usuario</h1>
-          <p className="text-slate-500 mt-1">Aprueba solicitudes y asigna roles de acceso</p>
+          <p className="text-slate-500 mt-1">Aprueba solicitudes, asigna roles y gestiona usuarios</p>
         </div>
         <Link to="/dashboard" className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-sm">← Volver al Dashboard</Link>
       </div>
@@ -219,12 +407,27 @@ export default function SolicitudesUsuario() {
                     </td>
                     <td className="p-4 text-center">
                       {solicitud.estatus === "PENDIENTE" ? (
-                        <div className="flex gap-2 justify-center">
-                          <button onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "aprobar", rolSeleccionado: "SUPERVISOR" })} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm">✅ Aprobar</button>
-                          <button onClick={() => setModalConfirmacion({ abierto: true, solicitud, accion: "rechazar", rolSeleccionado: "SUPERVISOR" })} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-4 py-2 rounded-lg text-xs font-semibold transition shadow-sm">❌ Rechazar</button>
+                        <div className="flex gap-2 justify-center flex-wrap">
+                          <button onClick={() => confirmarAccion(solicitud, "aprobar")} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">✅ Aprobar</button>
+                          <button onClick={() => confirmarAccion(solicitud, "rechazar")} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">❌ Rechazar</button>
                         </div>
                       ) : (
-                        <button onClick={() => eliminarDefinitivamente(solicitud.id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1 mx-auto">🗑️ Eliminar</button>
+                        <div className="flex gap-2 justify-center flex-wrap">
+                          {solicitud.estatus === "APROBADA" && (
+                            <button 
+                              onClick={() => confirmarAccion(solicitud, "baja")} 
+                              className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm flex items-center gap-1"
+                            >
+                              🚫 Dar de Baja
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => confirmarAccion(solicitud, "eliminar")} 
+                            className="bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm flex items-center gap-1"
+                          >
+                            🗑️ Eliminar
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -235,28 +438,84 @@ export default function SolicitudesUsuario() {
         )}
       </div>
 
+      {/* 🔥 MODAL DE CONFIRMACIÓN DINÁMICO */}
       {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="text-center mb-4">
-              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.accion === "aprobar" ? "bg-emerald-100" : "bg-red-100")}>
-                {modalConfirmacion.accion === "aprobar" ? "✅" : "❌"}
+              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.colorIcono || "bg-slate-100")}>
+                {modalConfirmacion.icono || "❓"}
               </div>
-              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.accion === "aprobar" ? "Aprobar Solicitud" : "Rechazar Solicitud"}</h3>
+              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.titulo}</h3>
+              <p className="text-sm text-slate-600 mt-2">{modalConfirmacion.descripcion}</p>
               
-              {/* 🔥 Selector de Rol (Solo visible al aprobar) */}
+              {/* 🔥 SELECTORES SOLO PARA APROBACIÓN */}
               {modalConfirmacion.accion === "aprobar" && (
-                <div className="mt-4 text-left">
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol de Acceso:</label>
-                  <select 
-                    value={modalConfirmacion.rolSeleccionado}
-                    onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))}
-                    className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
-                  >
-                    <option value="SUPERVISOR">👷 Supervisor</option>
-                    <option value="ADMINISTRATIVO">💼 Administrativo</option>
-                    <option value="VISOR">👁️ Visor (Solo lectura)</option>
-                  </select>
+                <div className="mt-4 text-left space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol de Acceso:</label>
+                    <select 
+                      value={modalConfirmacion.rolSeleccionado}
+                      onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))}
+                      className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
+                    >
+                      <option value="SUPERVISOR">👷 Supervisor</option>
+                      <option value="ADMINISTRATIVO">💼 Administrativo</option>
+                      <option value="VISOR">👁️ Visor (Solo lectura)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">
+                      🔗 Vincular a Empleado Existente:
+                    </label>
+                    <select 
+                      value={modalConfirmacion.empleadoSeleccionado}
+                      onChange={(e) => setModalConfirmacion(prev => ({ ...prev, empleadoSeleccionado: e.target.value }))}
+                      className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
+                    >
+                      <option value="">-- Sin vincular (crear solo usuario) --</option>
+                      {empleados.map(emp => (
+                        <option key={emp.id} value={emp.id}>
+                          #{emp.numero_empleado} - {emp.nombre_completo} {emp.puestos?.nombre ? "(" + emp.puestos.nombre + ")" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      💡 Selecciona el empleado al que pertenece este usuario para vincularlo correctamente.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 🔥 ALERTA ESPECIAL PARA ELIMINACIÓN */}
+              {modalConfirmacion.accion === "eliminar" && (
+                <div className="mt-4 bg-red-50 border-2 border-red-300 rounded-lg p-3 text-left">
+                  <p className="text-sm text-red-800 font-semibold">⚠️ ADVERTENCIA</p>
+                  <p className="text-xs text-red-700 mt-1">
+                    Esta acción es <strong>IRREVERSIBLE</strong>. Se eliminarán:
+                  </p>
+                  <ul className="text-xs text-red-700 mt-2 list-disc list-inside space-y-1">
+                    <li>El perfil del usuario en la base de datos</li>
+                    <li>La solicitud de esta lista</li>
+                    <li>Todos los datos asociados</li>
+                  </ul>
+                  <p className="text-xs text-red-700 mt-2">
+                    💡 Si solo quieres bloquear el acceso temporalmente, usa "Dar de Baja" en su lugar.
+                  </p>
+                </div>
+              )}
+
+              {/* 🔥 ALERTA ESPECIAL PARA BAJA */}
+              {modalConfirmacion.accion === "baja" && (
+                <div className="mt-4 bg-orange-50 border-2 border-orange-300 rounded-lg p-3 text-left">
+                  <p className="text-sm text-orange-800 font-semibold">ℹ️ ¿Qué sucede al dar de baja?</p>
+                  <ul className="text-xs text-orange-700 mt-2 list-disc list-inside space-y-1">
+                    <li>El usuario NO podrá iniciar sesión</li>
+                    <li>Sus datos se CONSERVAN en el sistema</li>
+                    <li>Puede ser reactivado desde el módulo de Usuarios</li>
+                    <li>Se registra la fecha de baja</li>
+                  </ul>
                 </div>
               )}
 
@@ -266,19 +525,18 @@ export default function SolicitudesUsuario() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR" })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
               <button 
-                onClick={() => {
-                  if (modalConfirmacion.accion === "aprobar") {
-                    ejecutarAprobacion(modalConfirmacion.solicitud, modalConfirmacion.rolSeleccionado);
-                  } else {
-                    ejecutarRechazo(modalConfirmacion.solicitud);
-                  }
-                }} 
-                disabled={loading} 
-                className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.accion === "aprobar" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700")}
+                onClick={() => setModalConfirmacion({ abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "" })} 
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition"
               >
-                {loading ? "Procesando..." : modalConfirmacion.accion === "aprobar" ? "✅ Confirmar" : "❌ Rechazar"}
+                Cancelar
+              </button>
+              <button 
+                onClick={ejecutarAccion}
+                disabled={loading}
+                className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.colorBoton || "bg-blue-600")}
+              >
+                {loading ? "Procesando..." : modalConfirmacion.textoBoton}
               </button>
             </div>
           </div>

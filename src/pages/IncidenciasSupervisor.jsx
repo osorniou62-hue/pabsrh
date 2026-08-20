@@ -61,15 +61,17 @@ export default function IncidenciasSupervisor() {
           return;
         }
 
-        // 2. 🔍 BÚSQUEDA ESTRICTA POR id_usuario (Vinculación oficial)
+        // 2. 🔍 BÚSQUEDA ESTRICTA POR id_usuario (SIN JOINS AMBIGUOS)
         console.log("🔍 Buscando supervisor por id_usuario:", user.id);
         const { data: supervisorData, error: errSup } = await supabase
           .from("empleados")
-          .select("*, puestos(nombre), departamentos(nombre)")
+          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo") // 🔥 Consulta plana, sin relaciones anidadas
           .eq("id_usuario", user.id)
           .maybeSingle();
 
-        if (errSup) console.warn("Error buscando supervisor:", errSup.message);
+        if (errSup) {
+          console.error("❌ Error buscando supervisor:", errSup.message);
+        }
 
         if (!supervisorData) {
           console.warn("⚠️ No hay empleado vinculado a este usuario (id_usuario):", user.id);
@@ -111,14 +113,15 @@ export default function IncidenciasSupervisor() {
           setColumnasSupervisor(columnas);
         }
 
-        // 5. Cargar empleados a cargo
-        const { data: empleadosData } = await supabase
+        // 5. Cargar empleados a cargo (SIN JOINS AMBIGUOS)
+        const { data: empleadosData, error: errEmps } = await supabase
           .from("empleados")
-          .select("*, puestos(nombre), departamentos(nombre)")
+          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo") // 🔥 Consulta plana
           .eq("supervisor_id", supervisorData.id)
           .eq("activo", true)
           .order("nombre_completo");
         
+        if (errEmps) console.error("Error cargando empleados:", errEmps.message);
         setEmpleadosSupervisados(empleadosData || []);
 
       } catch (err) {
@@ -200,7 +203,7 @@ export default function IncidenciasSupervisor() {
     if (!busqueda.trim()) return empleadosConIncidencias;
     const texto = busqueda.toLowerCase().trim();
     return empleadosConIncidencias.filter(({ empleado }) =>
-      [empleado.nombre_completo, empleado.numero_empleado, empleado.puestos?.nombre]
+      [empleado.nombre_completo, empleado.numero_empleado, empleado.puesto]
         .some(c => String(c || "").toLowerCase().includes(texto))
     );
   }, [empleadosConIncidencias, busqueda]);
@@ -249,7 +252,7 @@ export default function IncidenciasSupervisor() {
                 </div>
                 <div className="text-xs">
                   <div className="font-semibold text-slate-800">{supervisorActual.nombre_completo}</div>
-                  <div className="text-slate-500">{supervisorActual.puestos?.nombre}</div>
+                  <div className="text-slate-500">{supervisorActual.puesto || "Sin puesto"}</div>
                 </div>
               </div>
             )}
@@ -270,7 +273,7 @@ export default function IncidenciasSupervisor() {
             <div>
               <h2 className="text-2xl font-black">¡Hola, {supervisorActual?.nombre_completo?.split(' ')[0]}!</h2>
               <p className="text-white/80 text-sm mt-0.5">
-                {supervisorActual?.puestos?.nombre} · {supervisorActual?.departamentos?.nombre}
+                {supervisorActual?.puesto || "Sin puesto"} · {supervisorActual?.departamento || "Sin departamento"}
               </p>
             </div>
           </div>
@@ -372,7 +375,7 @@ export default function IncidenciasSupervisor() {
                               </div>
                               <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 flex-wrap">
                                 <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium">
-                                  {empleado.puestos?.nombre || "Sin puesto"}
+                                  {empleado.puesto || "Sin puesto"}
                                 </span>
                                 <span className={`${estadoConfig.color} px-2 py-0.5 rounded-full font-bold`}>
                                   {estadoConfig.icono} {estadoConfig.label}
@@ -431,7 +434,7 @@ function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCe
           <div>
             <h3 className="text-lg font-bold flex items-center gap-2"><span>📝</span> Captura de Incidencia</h3>
             <p className="text-sm text-white/90 mt-1"><strong>{empleado.nombre_completo}</strong></p>
-            <p className="text-xs text-white/70 mt-0.5">{empleado.puestos?.nombre} · {empleado.departamentos?.nombre}</p>
+            <p className="text-xs text-white/70 mt-0.5">{empleado.puesto || "Sin puesto"} · {empleado.departamento || "Sin departamento"}</p>
           </div>
           <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl leading-none">✕</button>
         </div>

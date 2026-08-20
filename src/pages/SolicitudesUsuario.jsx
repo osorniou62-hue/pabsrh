@@ -96,18 +96,13 @@ export default function SolicitudesUsuario() {
   const ejecutarAprobacion = async (solicitud, rol, empleadoId, passwordAdmin) => {
     try {
       setLoading(true);
-
       const { data: { user: adminUser } } = await supabase.auth.getUser();
       const emailAdmin = adminUser?.email;
 
-      if (!emailAdmin || !passwordAdmin) {
-        throw new Error("No se pudo obtener las credenciales del administrador");
-      }
+      if (!emailAdmin || !passwordAdmin) throw new Error("No se pudo obtener las credenciales del administrador");
 
-      const correoRaw = solicitud.correo || solicitud.email || "";
-      const passwordRaw = solicitud.password || "";
-      const correoLimpio = String(correoRaw).trim().toLowerCase();
-      const passwordLimpio = String(passwordRaw).trim();
+      const correoLimpio = String(solicitud.correo || solicitud.email || "").trim().toLowerCase();
+      const passwordLimpio = String(solicitud.password || "").trim();
 
       if (!correoLimpio || !correoLimpio.includes('@')) {
         alert("⚠️ El correo electrónico es inválido.");
@@ -120,12 +115,11 @@ export default function SolicitudesUsuario() {
         return;
       }
 
-      // 🔥 VALIDACIÓN: Si se seleccionó un empleado, verificar que exista
       let empleadoInfo = null;
       if (empleadoId) {
         empleadoInfo = empleados.find(e => String(e.id) === String(empleadoId));
         if (!empleadoInfo) {
-          alert("⚠️ El empleado seleccionado no existe. Selecciona un empleado válido.");
+          alert("⚠️ El empleado seleccionado no existe.");
           setLoading(false);
           return;
         }
@@ -141,10 +135,11 @@ export default function SolicitudesUsuario() {
       if (authError) {
         if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
           alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.");
-          setLoading(false);
-          return;
+        } else {
+          alert("Error de autenticación: " + authError.message);
         }
-        throw new Error("Error de autenticación: " + authError.message);
+        setLoading(false);
+        return;
       }
 
       const nuevoUserId = authData.user?.id;
@@ -157,11 +152,9 @@ export default function SolicitudesUsuario() {
       );
       if (profileError) throw profileError;
 
-      // 3. 🔥 VINCULACIÓN: SOLO por el empleado seleccionado (id_usuario)
+      // 3. 🔥 VINCULACIÓN
       let vinculadoCorrectamente = false;
       if (empleadoId && empleadoInfo) {
-        console.log("🔗 Vinculando usuario", nuevoUserId, "con empleado", empleadoInfo.nombre_completo);
-
         const { error: updateError } = await supabase
           .from("empleados")
           .update({ id_usuario: nuevoUserId })
@@ -169,49 +162,19 @@ export default function SolicitudesUsuario() {
 
         if (!updateError) {
           vinculadoCorrectamente = true;
-          console.log("✅ Vinculación exitosa por id_usuario");
-        } else {
-          console.error("❌ Error vinculando:", updateError.message);
-          // Si falla por falta de columna, intentar crearla
-          if (updateError.message.includes("id_usuario")) {
-            try {
-              await supabase.rpc("agregar_columna_dinamica", {
-                p_tabla: "empleados",
-                p_columna: "id_usuario",
-                p_tipo: "UUID"
-              });
-              // Reintentar vinculación
-              const { error: retryError } = await supabase
-                .from("empleados")
-                .update({ id_usuario: nuevoUserId })
-                .eq("id", empleadoId);
-              if (!retryError) vinculadoCorrectamente = true;
-            } catch (e) {
-              console.error("No se pudo crear la columna id_usuario:", e);
-            }
+        } else if (updateError.message.includes("id_usuario")) {
+          try {
+            await supabase.rpc("agregar_columna_dinamica", { p_tabla: "empleados", p_columna: "id_usuario", p_tipo: "UUID" });
+            const { error: retryError } = await supabase.from("empleados").update({ id_usuario: nuevoUserId }).eq("id", empleadoId);
+            if (!retryError) vinculadoCorrectamente = true;
+          } catch (e) {
+            console.error("No se pudo crear la columna id_usuario:", e);
           }
         }
       }
 
-      // 4. 🔥 ACTUALIZAR LA SOLICITUD con datos del usuario creado (para mostrar en "Aprobadas")
-      const { error: updateSolError } = await supabase
-        .from("solicitudes_usuario")
-        .update({
-          estatus: "APROBADA",
-          usuario_creado_id: nuevoUserId,
-          correo_creado: correoLimpio,
-          password_creada: passwordLimpio,
-          empleado_vinculado_id: empleadoId || null,
-          empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
-          rol_asignado: rol
-        })
-        .eq("id", solicitud.id);
-
-      if (updateSolError) console.warn("No se pudo actualizar solicitud:", updateSolError.message);
-
-      // 5. Actualizar estado local
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? {
-        ...s,
+      // 4. Actualizar la solicitud
+      await supabase.from("solicitudes_usuario").update({
         estatus: "APROBADA",
         usuario_creado_id: nuevoUserId,
         correo_creado: correoLimpio,
@@ -219,38 +182,27 @@ export default function SolicitudesUsuario() {
         empleado_vinculado_id: empleadoId || null,
         empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
         rol_asignado: rol
+      }).eq("id", solicitud.id);
+
+      // 5. Actualizar estado local
+      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? {
+        ...s, estatus: "APROBADA", usuario_creado_id: nuevoUserId, correo_creado: correoLimpio,
+        password_creada: passwordLimpio, empleado_vinculado_id: empleadoId || null,
+        empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null, rol_asignado: rol
       } : s));
 
       // 6. Restaurar sesión del admin
       await supabase.auth.signOut();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: emailAdmin,
-        password: passwordAdmin
-      });
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: emailAdmin, password: passwordAdmin });
 
       if (signInError) {
-        alert(
-          "✅ Usuario creado.\n\n⚠️ Tu sesión fue cerrada. Inicia sesión nuevamente.\n\n" +
-          "Correo: " + correoLimpio + "\nContraseña: " + passwordLimpio
-        );
+        alert("✅ Usuario creado.\n\n⚠️ Tu sesión fue cerrada. Inicia sesión nuevamente.\n\nCorreo: " + correoLimpio + "\nContraseña: " + passwordLimpio);
       } else {
-        let mensajeEmpleado = "";
-        if (empleadoInfo && vinculadoCorrectamente) {
-          mensajeEmpleado = "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo +
-            " (#" + empleadoInfo.numero_empleado + ")";
-        } else if (empleadoInfo) {
-          mensajeEmpleado = "\n\n⚠️ No se pudo vincular al empleado. Revisa la consola.";
-        } else {
-          mensajeEmpleado = "\n\nℹ️ No se vinculó a ningún empleado (usuario independiente).";
-        }
+        let mensajeEmpleado = vinculadoCorrectamente 
+          ? "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo + " (#" + empleadoInfo.numero_empleado + ")"
+          : (empleadoInfo ? "\n\n⚠️ No se pudo vincular al empleado." : "\n\nℹ️ No se vinculó a ningún empleado.");
 
-        alert(
-          "✅ Usuario creado exitosamente.\n\n" +
-          "📧 Correo: " + correoLimpio +
-          "\n🔑 Contraseña: " + passwordLimpio +
-          mensajeEmpleado +
-          "\n\n💡 Estos datos quedarán visibles en 'Aprobadas'."
-        );
+        alert("✅ Usuario creado exitosamente.\n\n📧 Correo: " + correoLimpio + "\n🔑 Contraseña: " + passwordLimpio + mensajeEmpleado);
       }
 
       await cargarSolicitudes();
@@ -265,13 +217,58 @@ export default function SolicitudesUsuario() {
     }
   };
 
+  // 🔥 NUEVO: CAMBIAR VINCULACIÓN DE UN USUARIO YA APROBADO
+  const ejecutarCambioVinculacion = async (solicitud, nuevoEmpleadoId) => {
+    try {
+      setLoading(true);
+      const userId = solicitud.usuario_creado_id;
+      const oldEmpleadoId = solicitud.empleado_vinculado_id;
+
+      // 1. Desvincular el empleado anterior si existe
+      if (oldEmpleadoId) {
+        await supabase.from("empleados").update({ id_usuario: null }).eq("id", oldEmpleadoId);
+      }
+
+      // 2. Vincular al nuevo empleado
+      let nuevoEmpleadoInfo = null;
+      if (nuevoEmpleadoId) {
+        nuevoEmpleadoInfo = empleados.find(e => String(e.id) === String(nuevoEmpleadoId));
+        if (nuevoEmpleadoInfo) {
+          const { error: updateError } = await supabase
+            .from("empleados")
+            .update({ id_usuario: userId })
+            .eq("id", nuevoEmpleadoId);
+          
+          if (updateError) throw updateError;
+        }
+      }
+
+      // 3. Actualizar el registro de la solicitud
+      const { error: updateSolError } = await supabase
+        .from("solicitudes_usuario")
+        .update({
+          empleado_vinculado_id: nuevoEmpleadoId || null,
+          empleado_vinculado_nombre: nuevoEmpleadoInfo?.nombre_completo || null
+        })
+        .eq("id", solicitud.id);
+
+      if (updateSolError) throw updateSolError;
+
+      alert("✅ Vinculación actualizada correctamente.");
+      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
+      await cargarSolicitudes();
+    } catch (error) {
+      console.error("Error al cambiar vinculación:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
-      const { error } = await supabase
-        .from("solicitudes_usuario")
-        .update({ estatus: "RECHAZADA" })
-        .eq("id", solicitud.id);
+      const { error } = await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id);
       if (error) throw new Error(error.message);
       setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
       setModalConfirmacion(prev => ({ ...prev, abierto: false }));
@@ -288,9 +285,7 @@ export default function SolicitudesUsuario() {
       setLoading(true);
       const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
       if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles")
-          .update({ activo: false, fecha_baja: new Date().toISOString() })
-          .in("id", perfiles.map(p => p.id));
+        await supabase.from("profiles").update({ activo: false, fecha_baja: new Date().toISOString() }).in("id", perfiles.map(p => p.id));
       }
       await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id);
       setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
@@ -303,17 +298,52 @@ export default function SolicitudesUsuario() {
     }
   };
 
+  // 🔥 ELIMINACIÓN PROFUNDA (Con soporte para Edge Function)
   const eliminarDefinitivamente = async (solicitud) => {
+    if (!window.confirm("⚠️ ¿Estás seguro? Esto eliminará al usuario de TODAS las tablas y de la autenticación de Supabase.")) {
+      return;
+    }
+
     try {
       setLoading(true);
-      const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
-      if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles").delete().in("id", perfiles.map(p => p.id));
+      const userId = solicitud.usuario_creado_id;
+
+      // 1. Eliminar de Auth (si existe la Edge Function)
+      if (userId) {
+        try {
+          const { error: authError } = await supabase.functions.invoke('delete-user-auth', { body: { userId } });
+          if (authError) {
+            console.warn("⚠️ No se pudo eliminar de Auth (¿Edge Function no configurada?):", authError.message);
+          } else {
+            console.log("✅ Usuario eliminado de Supabase Authentication");
+          }
+        } catch (e) {
+          console.warn("⚠️ Error invocando Edge Function (asegúrate de crearla en Supabase):", e);
+        }
       }
+
+      // 2. Eliminar de profiles
+      if (userId) {
+        await supabase.from("profiles").delete().eq("id", userId);
+      }
+
+      // 3. Desvincular de empleados
+      if (solicitud.empleado_vinculado_id) {
+        await supabase.from("empleados").update({ id_usuario: null }).eq("id", solicitud.empleado_vinculado_id);
+      }
+
+      // 4. Eliminar la solicitud
       await supabase.from("solicitudes_usuario").delete().eq("id", solicitud.id);
+      
       setSolicitudes(prev => prev.filter(s => s.id !== solicitud.id));
-      alert("✅ Usuario eliminado permanentemente.");
+      
+      let msg = "✅ Usuario y solicitud eliminados de las tablas.";
+      if (userId) {
+        msg += "\n\n⚠️ Si no configuraste la Edge Function 'delete-user-auth', el correo seguirá existiendo en Supabase > Authentication > Users. Deberás borrarlo manualmente desde ahí para que pueda volver a registrarse con el mismo correo.";
+      }
+      alert(msg);
     } catch (error) {
+      console.error("Error al eliminar:", error);
       alert("Error: " + error.message);
     } finally {
       setLoading(false);
@@ -323,6 +353,21 @@ export default function SolicitudesUsuario() {
 
   const confirmarAccion = (solicitud, accion) => {
     if (accion === "aprobar") { solicitarAprobacion(solicitud); return; }
+    
+    if (accion === "cambiar_vinculacion") {
+      setModalConfirmacion({
+        abierto: true, solicitud, accion,
+        rolSeleccionado: solicitud.rol_asignado || "SUPERVISOR",
+        empleadoSeleccionado: solicitud.empleado_vinculado_id || "",
+        busquedaEmpleado: "",
+        titulo: "🔗 Cambiar Vinculación de Empleado",
+        descripcion: "Selecciona el empleado correcto para vincular con este usuario. La vinculación anterior se eliminará automáticamente.",
+        colorIcono: "bg-blue-100", icono: "🔗",
+        colorBoton: "bg-blue-600 hover:bg-blue-700",
+        textoBoton: "💾 Guardar Cambios"
+      });
+      return;
+    }
 
     const config = {
       rechazar: { titulo: "Rechazar Solicitud", descripcion: "La solicitud se marcará como rechazada.", colorIcono: "bg-red-100", icono: "❌", colorBoton: "bg-red-600 hover:bg-red-700", textoBoton: "❌ Confirmar Rechazo" },
@@ -341,9 +386,10 @@ export default function SolicitudesUsuario() {
   };
 
   const ejecutarAccion = () => {
-    const { accion, solicitud } = modalConfirmacion;
+    const { accion, solicitud, empleadoSeleccionado } = modalConfirmacion;
     switch (accion) {
       case "aprobar": confirmarAprobacionInicial(); break;
+      case "cambiar_vinculacion": ejecutarCambioVinculacion(solicitud, empleadoSeleccionado); break;
       case "rechazar": ejecutarRechazo(solicitud); break;
       case "baja": darDeBajaUsuario(solicitud); break;
       case "eliminar": eliminarDefinitivamente(solicitud); break;
@@ -427,7 +473,10 @@ export default function SolicitudesUsuario() {
                       ) : (
                         <div className="flex gap-2 justify-center flex-wrap">
                           {solicitud.estatus === "APROBADA" && (
-                            <button onClick={() => confirmarAccion(solicitud, "baja")} disabled={loading} className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🚫 Dar de Baja</button>
+                            <>
+                              <button onClick={() => confirmarAccion(solicitud, "cambiar_vinculacion")} disabled={loading} className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🔗 Cambiar Vinculación</button>
+                              <button onClick={() => confirmarAccion(solicitud, "baja")} disabled={loading} className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🚫 Dar de Baja</button>
+                            </>
                           )}
                           <button onClick={() => confirmarAccion(solicitud, "eliminar")} disabled={loading} className="bg-red-700 hover:bg-red-800 disabled:bg-red-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🗑️ Eliminar</button>
                         </div>
@@ -441,16 +490,12 @@ export default function SolicitudesUsuario() {
         )}
       </div>
 
-      {/* 🔥 TABLA DETALLADA DE APROBADAS (con datos del usuario creado) */}
+      {/* 🔥 TABLA DETALLADA DE APROBADAS */}
       {filtro === "APROBADAS" && solicitudesFiltradas.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-emerald-200 overflow-hidden">
           <div className="bg-emerald-50 border-b border-emerald-200 p-4">
-            <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
-              <span>🔐</span> Credenciales de Usuarios Creados
-            </h3>
-            <p className="text-xs text-emerald-700 mt-1">
-              Información de acceso de los usuarios aprobados. Comparte estas credenciales con cada usuario.
-            </p>
+            <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2"><span>🔐</span> Credenciales de Usuarios Creados</h3>
+            <p className="text-xs text-emerald-700 mt-1">Información de acceso de los usuarios aprobados. Comparte estas credenciales con cada usuario.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -467,28 +512,18 @@ export default function SolicitudesUsuario() {
                 {solicitudesFiltradas.filter(s => s.estatus === "APROBADA").map((sol) => (
                   <tr key={sol.id} className="hover:bg-slate-50">
                     <td className="p-4 font-semibold text-slate-800">{sol.nombre}</td>
-                    <td className="p-4 font-mono text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded">
-                      {sol.correo_creado || sol.correo || sol.email || "N/A"}
-                    </td>
+                    <td className="p-4 font-mono text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded">{sol.correo_creado || sol.correo || sol.email || "N/A"}</td>
                     <td className="p-4">
                       {sol.password_creada ? (
-                        <span className="font-mono text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded border border-amber-200">
-                          🔑 {sol.password_creada}
-                        </span>
+                        <span className="font-mono text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded border border-amber-200">🔑 {sol.password_creada}</span>
                       ) : (
                         <span className="text-slate-400 text-xs italic">No disponible</span>
                       )}
                     </td>
-                    <td className="p-4">
-                      <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-bold">
-                        {sol.rol_asignado || "N/A"}
-                      </span>
-                    </td>
+                    <td className="p-4"><span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-bold">{sol.rol_asignado || "N/A"}</span></td>
                     <td className="p-4">
                       {sol.empleado_vinculado_nombre ? (
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-semibold">
-                          ✅ {sol.empleado_vinculado_nombre}
-                        </span>
+                        <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-semibold">✅ {sol.empleado_vinculado_nombre}</span>
                       ) : (
                         <span className="text-slate-400 text-xs italic">Sin vincular</span>
                       )}
@@ -512,19 +547,23 @@ export default function SolicitudesUsuario() {
               <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.titulo}</h3>
               <p className="text-sm text-slate-600 mt-2">{modalConfirmacion.descripcion}</p>
 
-              {modalConfirmacion.accion === "aprobar" && (
+              {(modalConfirmacion.accion === "aprobar" || modalConfirmacion.accion === "cambiar_vinculacion") && (
                 <div className="mt-4 text-left space-y-3">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol:</label>
-                    <select value={modalConfirmacion.rolSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
-                      <option value="SUPERVISOR">👷 Supervisor</option>
-                      <option value="ADMINISTRATIVO">💼 Administrativo</option>
-                      <option value="VISOR">👁️ Visor</option>
-                    </select>
-                  </div>
+                  {modalConfirmacion.accion === "aprobar" && (
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol:</label>
+                      <select value={modalConfirmacion.rolSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
+                        <option value="SUPERVISOR">👷 Supervisor</option>
+                        <option value="ADMINISTRATIVO">💼 Administrativo</option>
+                        <option value="VISOR">👁️ Visor</option>
+                      </select>
+                    </div>
+                  )}
 
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">🔗 Vincular a Empleado:</label>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">
+                      {modalConfirmacion.accion === "cambiar_vinculacion" ? "🔗 Nuevo Empleado a Vincular:" : "🔗 Vincular a Empleado:"}
+                    </label>
                     <div className="relative mb-2">
                       <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                       <input type="text" placeholder="Buscar por nombre, número o puesto..." value={modalConfirmacion.busquedaEmpleado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, busquedaEmpleado: e.target.value }))} className="w-full border border-slate-300 rounded-lg pl-9 p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm" />

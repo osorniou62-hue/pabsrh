@@ -1,66 +1,67 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import * as XLSX from "xlsx";
 import { supabase } from "../services/supabase";
-
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 export default function Vacaciones() {
   const [empleados, setEmpleados] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
-  const [vacacionesFiltradas, setVacacionesFiltradas] = useState([]);
-
-  // Reglas globales
   const [reglasGlobales, setReglasGlobales] = useState({});
-  const [anoReglaInput, setAnoReglaInput] = useState(1);
-  const [diasReglaInput, setDiasReglaInput] = useState("");
+  
+  // Estados para Importación y Mapeo
+  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
+  const [archivoVacaciones, setArchivoVacaciones] = useState(null);
+  const [datosImportados, setDatosImportados] = useState([]); // Datos crudos procesados
+  const [modoRevision, setModoRevision] = useState(false); // Modo administrador para editar antes de guardar
 
-  // Búsqueda Autocomplete
+  // Búsqueda y Filtros
   const [busquedaTexto, setBusquedaTexto] = useState("");
   const [empleadoSeleccionadoId, setEmpleadoSeleccionadoId] = useState("");
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [busquedaActiva, setBusquedaActiva] = useState(false);
+  const [deptoExpandido, setDeptoExpandido] = useState({}); // Para colapsar/expandir departamentos
 
   // Modal Kardex
   const [modalKardexEmpleado, setModalKardexEmpleado] = useState(null);
-
-  // Formulario dentro del Kardex
   const [formKardex, setFormKardex] = useState({
-    fecha_inicio: "",
-    fecha_fin: "",
-    dias_solicitados: "",
-    nomina_impactada: "",
-    tipo_vacaciones: "TOMADAS_Y_PAGADAS", // 'TOMADAS_Y_PAGADAS' | 'PAGADAS_NO_TOMADAS'
-    observaciones: "",
+    fecha_inicio: "", fecha_fin: "", dias_solicitados: "",
+    nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
 
   // Formulario Solicitud General
   const [form, setForm] = useState({
-    empleado_id: "",
-    fecha_inicio: "",
-    fecha_fin: "",
-    dias_solicitados: "",
-    nomina_impactada: "",
-    tipo_vacaciones: "TOMADAS_Y_PAGADAS",
-    observaciones: "",
+    empleado_id: "", fecha_inicio: "", fecha_fin: "", dias_solicitados: "",
+    nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
 
   useEffect(() => {
+    cargarConfiguracionMapeo();
     cargarReglasGlobales();
     cargarEmpleados();
     cargarVacaciones();
   }, []);
 
-  useEffect(() => {
-    aplicarFiltroEmpleado();
-  }, [empleadoSeleccionadoId, busquedaActiva, vacaciones]);
+  const cargarConfiguracionMapeo = async () => {
+    try {
+      const { data } = await supabase
+        .from("configuracion_tablas")
+        .select("configuracion")
+        .eq("clave", "config_mapeo_columnas_dinamico")
+        .maybeSingle();
+      if (data?.configuracion) setConfiguracionMapeo(data.configuracion);
+      else {
+        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+        if (local) setConfiguracionMapeo(JSON.parse(local));
+      }
+    } catch (err) { console.error("Error cargando mapeo:", err); }
+  };
 
   const cargarReglasGlobales = async () => {
     const { data, error } = await supabase.from("regla_vacaciones").select("*");
     if (!error && data) {
       const mapaReglas = {};
-      data.forEach((item) => {
-        mapaReglas[item.ano] = item.dias;
-      });
+      data.forEach((item) => { mapaReglas[item.ano] = item.dias; });
       setReglasGlobales(mapaReglas);
     }
   };
@@ -68,816 +69,525 @@ export default function Vacaciones() {
   const cargarEmpleados = async () => {
     const { data } = await supabase
       .from("empleados")
-      .select("*")
+      .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo")
       .eq("activo", true)
-      .order("nombre_completo");
-
+      .order("departamento")
+      .then(res => res.data)
+      .then(data => data.sort((a, b) => (a.departamento || "").localeCompare(b.departamento || "")));
     setEmpleados(data || []);
   };
 
   const cargarVacaciones = async () => {
     const { data } = await supabase
       .from("vacaciones")
-      .select(`
-        *,
-        empleados (
-          id,
-          nombre_completo,
-          numero_empleado,
-          fecha_ingreso
-        )
-      `)
+      .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)")
       .order("created_at", { ascending: false });
-
     setVacaciones(data || []);
-    setVacacionesFiltradas(data || []);
   };
 
-  const guardarReglaGlobal = async () => {
-    if (diasReglaInput === "" || Number(diasReglaInput) < 0) {
-      alert("Ingresa una cantidad válida de días.");
-      return;
-    }
+  // --- LÓGICA DE IMPORTACIÓN Y MAPEO ---
+  const procesarArchivoExcel = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setArchivoVacaciones(file);
 
-    const ano = Number(anoReglaInput);
-    const dias = Number(diasReglaInput);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        
+        if (!configuracionMapeo?.asignacion) {
+          alert("⚠️ No hay configuración de mapeo cargada. Ve a 'Configuración de Tablas' primero.");
+          return;
+        }
 
-    const { error } = await supabase
-      .from("regla_vacaciones")
-      .upsert({ ano, dias }, { onConflict: "ano" });
+        // Crear diccionario de mapeo: Header Excel -> Campo BD
+        const mapeo = {};
+        Object.entries(configuracionMapeo.asignacion).forEach(([colExcel, info]) => {
+          if (info.tablaDestino === "vacaciones" || info.tablaDestino === "empleados") {
+            mapeo[colExcel.trim().toUpperCase()] = info.esManual ? info.campoManual : info.campoDestino;
+          }
+        });
 
-    if (error) {
-      alert("Error al guardar regla: " + error.message);
-      return;
-    }
+        const datosProcesados = rows.map((fila, index) => {
+          // Buscar empleado por número o nombre
+          const numEmp = Object.keys(fila).find(k => k.toUpperCase().includes("NUMERO") || k.toUpperCase().includes("NO."));
+          const nombreEmp = Object.keys(fila).find(k => k.toUpperCase().includes("NOMBRE") || k.toUpperCase().includes("COLABORADOR"));
+          
+          const valorBusqueda = numEmp ? String(fila[numEmp]).trim() : (nombreEmp ? String(fila[nombreEmp]).trim() : "");
+          
+          const empleadoMatch = empleados.find(emp => 
+            String(emp.numero_empleado) === valorBusqueda || 
+            emp.nombre_completo.toLowerCase() === valorBusqueda.toLowerCase()
+          );
 
-    setReglasGlobales((prev) => ({ ...prev, [ano]: dias }));
-    setDiasReglaInput("");
-    alert(`Regla actualizada: Año ${ano} = ${dias} días de vacaciones.`);
-  };
+          const registro = {
+            id_fila: index,
+            empleado_id: empleadoMatch ? empleadoMatch.id : null,
+            nombre_encontrado: empleadoMatch ? empleadoMatch.nombre_completo : "No encontrado",
+            numero_encontrado: empleadoMatch ? empleadoMatch.numero_empleado : "N/A",
+            estatus_match: empleadoMatch ? "✅ Vinculado" : "❌ Sin vincular",
+            datos_vacaciones: {}
+          };
 
-  const calcularAntiguedad = (fechaIngresoStr) => {
-    if (!fechaIngresoStr) return { anosCumplidos: 0, diasTranscurridos: 0, texto: "Sin fecha de ingreso" };
+          // Mapear columnas restantes
+          Object.keys(fila).forEach(keyExcel => {
+            const campoBD = mapeo[keyExcel.trim().toUpperCase()];
+            if (campoBD && campoBD !== "numero_empleado" && campoBD !== "nombre_completo") {
+              registro.datos_vacaciones[campoBD] = fila[keyExcel];
+            }
+          });
 
-    const fechaIngreso = new Date(fechaIngresoStr);
-    const hoy = new Date();
-    const diferenciaMs = hoy - fechaIngreso;
+          // Valores por defecto si no vienen en el Excel
+          if (!registro.datos_vacaciones.tipo_vacaciones) registro.datos_vacaciones.tipo_vacaciones = "TOMADAS_Y_PAGADAS";
+          if (!registro.datos_vacaciones.estatus) registro.datos_vacaciones.estatus = "APROBADO"; // Asumimos aprobado en importación
 
-    if (diferenciaMs < 0) return { anosCumplidos: 0, diasTranscurridos: 0, texto: "0 Años (Ingreso Futuro)" };
+          return registro;
+        });
 
-    const diasTranscurridos = Math.floor(diferenciaMs / (1000 * 60 * 60 * 24));
-    const anosCumplidos = Math.floor(diasTranscurridos / 365);
-
-    return {
-      anosCumplidos,
-      diasTranscurridos,
-      texto: anosCumplidos === 0 ? "Año en curso (< 1 año)" : `${anosCumplidos} año(s) cumplido(s)`,
+        setDatosImportados(datosProcesados);
+        setModoRevision(true);
+        alert(`✅ Se procesaron ${datosProcesados.length} filas. Revisa la tabla de abajo antes de guardar.`);
+      } catch (error) {
+        console.error(error);
+        alert("Error al leer el archivo Excel.");
+      }
     };
+    reader.readAsBinaryString(file);
   };
 
-  const obtenerDiasCorrespondientes = (fechaIngresoStr) => {
-    const { anosCumplidos } = calcularAntiguedad(fechaIngresoStr);
-    return Number(reglasGlobales[anosCumplidos] || 0);
+  const guardarImportacionRevisada = async () => {
+    const datosValidos = datosImportados.filter(d => d.empleado_id);
+    if (datosValidos.length === 0) {
+      alert("⚠️ No hay datos vinculados a empleados para guardar.");
+      return;
+    }
+
+    const confirmar = window.confirm(`¿Guardar ${datosValidos.length} registros de vacaciones en la base de datos?`);
+    if (!confirmar) return;
+
+    let errores = 0;
+    for (const item of datosValidos) {
+      const { error } = await supabase.from("vacaciones").insert([{
+        empleado_id: item.empleado_id,
+        ...item.datos_vacaciones
+      }]);
+      if (error) errores++;
+    }
+
+    if (errores === 0) {
+      alert("✅ Importación guardada exitosamente.");
+      setModoRevision(false);
+      setDatosImportados([]);
+      setArchivoVacaciones(null);
+      await cargarVacaciones();
+    } else {
+      alert(`⚠️ Se guardaron algunos registros, pero hubo ${errores} errores.`);
+    }
+  };
+
+  // Actualizar un campo específico en la cuadrícula de revisión
+  const actualizarDatoImportado = (idFila, campo, valor) => {
+    setDatosImportados(prev => prev.map(item => {
+      if (item.id_fila === idFila) {
+        return { ...item, datos_vacaciones: { ...item.datos_vacaciones, [campo]: valor } };
+      }
+      return item;
+    }));
+  };
+
+  // --- LÓGICA DE AGRUPACIÓN Y CÁLCULO ---
+  const calcularAntiguedad = (fechaIngresoStr) => {
+    if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
+    const dias = Math.floor((new Date() - new Date(fechaIngresoStr)) / (1000 * 60 * 60 * 24));
+    const anos = Math.floor(dias / 365);
+    return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
   };
 
   const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
-    const diasCorrespondientes = obtenerDiasCorrespondientes(fechaIngresoStr);
-
-    const solicitudesAprobadas = vacaciones.filter(
-      (v) => String(v.empleado_id) === String(empleadoId) && v.estatus === "APROBADO"
-    );
-
-    // Ambas modalidades descuentan saldo
-    const diasTomados = solicitudesAprobadas.reduce(
-      (acc, curr) => acc + Number(curr.dias_solicitados || 0),
-      0
-    );
-
-    const diasRemanentes = diasCorrespondientes - diasTomados;
-
-    return {
-      diasCorrespondientes,
-      diasTomados,
-      diasRemanentes,
-      solicitudesAprobadas,
-    };
+    const anos = calcularAntiguedad(fechaIngresoStr).anosCumplidos;
+    const diasCorrespondientes = Number(reglasGlobales[anos] || 0);
+    const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(empleadoId) && v.estatus === "APROBADO");
+    const diasTomados = solicitudesAprobadas.reduce((acc, curr) => acc + Number(curr.dias_solicitados || 0), 0);
+    return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
   };
 
-  // Autocomplete
-  const sugerenciasEmpleados = empleados.filter((emp) => {
-    const query = busquedaTexto.toLowerCase();
-    const nombre = (emp.nombre_completo || "").toLowerCase();
-    const numero = (emp.numero_empleado || "").toString().toLowerCase();
-    return nombre.includes(query) || numero.includes(query);
-  });
-
-  const seleccionarEmpleadoBuscador = (empleado) => {
-    setBusquedaTexto(`[${empleado.numero_empleado}] ${empleado.nombre_completo}`);
-    setEmpleadoSeleccionadoId(empleado.id);
-    setMostrarSugerencias(false);
-  };
-
-  const aplicarFiltroEmpleado = () => {
-    if (!busquedaActiva || !empleadoSeleccionadoId) {
-      setVacacionesFiltradas(vacaciones);
-      return;
-    }
-    const filtrados = vacaciones.filter(
-      (v) => String(v.empleado_id) === String(empleadoSeleccionadoId)
+  // Agrupar empleados por Departamento -> Puesto
+  const empleadosAgrupados = useMemo(() => {
+    const filtrados = empleados.filter(e => 
+      !busquedaActiva || String(e.id) === String(empleadoSeleccionadoId)
     );
-    setVacacionesFiltradas(filtrados);
+    
+    const agrupado = {};
+    filtrados.forEach(emp => {
+      const depto = emp.departamento || "Sin Departamento";
+      const puesto = emp.puesto || "Sin Puesto";
+      if (!agrupado[depto]) agrupado[depto] = {};
+      if (!agrupado[depto][puesto]) agrupado[depto][puesto] = [];
+      agrupado[depto][puesto].push(emp);
+    });
+    return agrupado;
+  }, [empleados, busquedaActiva, empleadoSeleccionadoId]);
+
+  const toggleDepto = (depto) => {
+    setDeptoExpandido(prev => ({ ...prev, [depto]: !prev[depto] }));
   };
 
-  const ejecutarBusqueda = () => {
-    let idTarget = empleadoSeleccionadoId;
-
-    if (!idTarget && busquedaTexto.trim() !== "") {
-      const coincidencia = empleados.find((e) =>
-        e.nombre_completo.toLowerCase().includes(busquedaTexto.toLowerCase())
-      );
-      if (coincidencia) idTarget = coincidencia.id;
-    }
-
-    if (idTarget) {
-      setEmpleadoSeleccionadoId(idTarget);
-      setBusquedaActiva(true);
-    } else {
-      setBusquedaActiva(false);
+  // --- RESTO DE FUNCIONES (Reglas, Kardex, Forms) ---
+  const guardarReglaGlobal = async () => {
+    if (diasReglaInput === "" || Number(diasReglaInput) < 0) return alert("Cantidad inválida");
+    const { error } = await supabase.from("regla_vacaciones").upsert({ ano: Number(anoReglaInput), dias: Number(diasReglaInput) }, { onConflict: "ano" });
+    if (!error) {
+      setReglasGlobales(prev => ({ ...prev, [anoReglaInput]: Number(diasReglaInput) }));
+      setDiasReglaInput("");
+      alert("Regla actualizada");
     }
   };
 
-  const limpiarBusqueda = () => {
-    setBusquedaTexto("");
-    setEmpleadoSeleccionadoId("");
-    setBusquedaActiva(false);
-    setMostrarSugerencias(false);
-  };
-
-  // Agregar desde el Modal de Kardex
   const agregarDesdeKardex = async () => {
-    if (
-      !formKardex.fecha_inicio ||
-      !formKardex.fecha_fin ||
-      !formKardex.dias_solicitados ||
-      !formKardex.nomina_impactada
-    ) {
-      alert("Completa todos los campos obligatorios del registro.");
-      return;
+    if (!formKardex.fecha_inicio || !formKardex.dias_solicitados) return alert("Completa los campos obligatorios");
+    const { error } = await supabase.from("vacaciones").insert([{ empleado_id: modalKardexEmpleado.empleado.id, ...formKardex, estatus: "APROBADO" }]);
+    if (!error) {
+      setFormKardex({ fecha_inicio: "", fecha_fin: "", dias_solicitados: "", nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "" });
+      await cargarVacaciones();
+      const emp = modalKardexEmpleado.empleado;
+      setModalKardexEmpleado({ empleado: emp, antiguedad: calcularAntiguedad(emp.fecha_ingreso), resumen: obtenerResumenEmpleado(emp.id, emp.fecha_ingreso) });
     }
-
-    const emp = modalKardexEmpleado.empleado;
-
-    const { error } = await supabase.from("vacaciones").insert([
-      {
-        empleado_id: emp.id,
-        fecha_inicio: formKardex.fecha_inicio,
-        fecha_fin: formKardex.fecha_fin,
-        dias_solicitados: Number(formKardex.dias_solicitados),
-        nomina_impactada: formKardex.nomina_impactada,
-        tipo_vacaciones: formKardex.tipo_vacaciones,
-        observaciones: formKardex.observaciones,
-        estatus: "APROBADO",
-      },
-    ]);
-
-    if (error) {
-      alert("Error al registrar: " + error.message);
-      return;
-    }
-
-    setFormKardex({
-      fecha_inicio: "",
-      fecha_fin: "",
-      dias_solicitados: "",
-      nomina_impactada: "",
-      tipo_vacaciones: "TOMADAS_Y_PAGADAS",
-      observaciones: "",
-    });
-
-    await cargarVacaciones();
-
-    // Recargar datos en el modal
-    const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
-    const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
-    setModalKardexEmpleado({ empleado: emp, antiguedad, resumen });
   };
 
-  // Guardar solicitud general
   const guardarVacaciones = async () => {
-    if (
-      !form.empleado_id ||
-      !form.fecha_inicio ||
-      !form.fecha_fin ||
-      !form.dias_solicitados
-    ) {
-      alert("Completa todos los campos requeridos.");
-      return;
+    if (!form.empleado_id || !form.dias_solicitados) return alert("Completa los campos requeridos");
+    const { error } = await supabase.from("vacaciones").insert([{ ...form, estatus: "PENDIENTE" }]);
+    if (!error) {
+      setForm({ empleado_id: "", fecha_inicio: "", fecha_fin: "", dias_solicitados: "", nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "" });
+      await cargarVacaciones();
     }
-
-    const { error } = await supabase.from("vacaciones").insert([
-      {
-        empleado_id: Number(form.empleado_id),
-        fecha_inicio: form.fecha_inicio,
-        fecha_fin: form.fecha_fin,
-        dias_solicitados: Number(form.dias_solicitados),
-        nomina_impactada: form.nomina_impactada,
-        tipo_vacaciones: form.tipo_vacaciones,
-        observaciones: form.observaciones,
-        estatus: "PENDIENTE",
-      },
-    ]);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setForm({
-      empleado_id: "",
-      fecha_inicio: "",
-      fecha_fin: "",
-      dias_solicitados: "",
-      nomina_impactada: "",
-      tipo_vacaciones: "TOMADAS_Y_PAGADAS",
-      observaciones: "",
-    });
-
-    await cargarVacaciones();
   };
 
   const cambiarEstatusVacacion = async (vacacion, nuevoEstatus) => {
-    const confirmar = window.confirm(
-      `¿Deseas cambiar el estatus de la solicitud a ${nuevoEstatus}?`
-    );
-    if (!confirmar) return;
-
-    const { error } = await supabase
-      .from("vacaciones")
-      .update({ estatus: nuevoEstatus })
-      .eq("id", vacacion.id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
+    if (!window.confirm(`¿Cambiar a ${nuevoEstatus}?`)) return;
+    await supabase.from("vacaciones").update({ estatus: nuevoEstatus }).eq("id", vacacion.id);
     await cargarVacaciones();
   };
 
-  const pendientes = vacaciones.filter((v) => v.estatus === "PENDIENTE").length;
-  const aprobadas = vacaciones.filter((v) => v.estatus === "APROBADO").length;
-  const rechazadas = vacaciones.filter((v) => v.estatus === "RECHAZADO").length;
-  const totalDiasOtorgados = vacaciones
-    .filter((v) => v.estatus === "APROBADO")
-    .reduce((a, b) => a + Number(b.dias_solicitados || 0), 0);
+  const sugerenciasEmpleados = empleados.filter(emp => {
+    const q = busquedaTexto.toLowerCase();
+    return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
+  });
 
   return (
     <Layout>
-      <div>
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold">🏖️ Vacaciones</h1>
-          <p className="text-gray-500 mt-2">
-            Control global de prestaciones, kardex individual y clasificación de nómina
-          </p>
+      <div className="space-y-6">
+        <div className="mb-4">
+          <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
+          <p className="text-slate-500">Gestión global, importación masiva y kardex individual</p>
         </div>
 
         {/* KPIs */}
-        <div className="grid md:grid-cols-4 gap-6 mb-8">
-          <KpiCard titulo="Pendientes" valor={pendientes} icono="⏳" color="text-amber-600" />
-          <KpiCard titulo="Aprobadas" valor={aprobadas} icono="✅" color="text-green-600" />
-          <KpiCard titulo="Rechazadas" valor={rechazadas} icono="❌" color="text-red-600" />
-          <KpiCard titulo="Días Descontados Totales" valor={totalDiasOtorgados} icono="🗓️" color="text-blue-600" />
+        <div className="grid md:grid-cols-4 gap-4">
+          <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="⏳" color="text-amber-600" />
+          <KpiCard titulo="Aprobadas" valor={vacaciones.filter(v => v.estatus === "APROBADO").length} icono="✅" color="text-green-600" />
+          <KpiCard titulo="Rechazadas" valor={vacaciones.filter(v => v.estatus === "RECHAZADO").length} icono="❌" color="text-red-600" />
+          <KpiCard titulo="Días Totales Descontados" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* REGLAS GLOBALES DE VACACIONES */}
-        <div className="bg-slate-800 text-white rounded-2xl p-6 mb-6 shadow-xl">
-          <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-            ⚙️ Reglas Globales de Vacaciones por Antigüedad
-          </h2>
-          <p className="text-xs text-slate-300 mb-4">
-            Ajusta aquí cuántos días le corresponden automáticamente a los trabajadores según sus años cumplidos.
-          </p>
-
-          <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
+        {/* 1. REGLAS GLOBALES */}
+        <div className="bg-slate-800 text-white rounded-2xl p-6 shadow-xl">
+          <h2 className="text-lg font-bold mb-3">⚙️ Reglas Globales por Antigüedad</h2>
+          <div className="flex flex-wrap gap-3 items-end">
             <div>
-              <label className="block text-xs mb-1 text-slate-300">Año de Antigüedad</label>
-              <select
-                value={anoReglaInput}
-                onChange={(e) => {
-                  const a = Number(e.target.value);
-                  setAnoReglaInput(a);
-                  setDiasReglaInput(reglasGlobales[a] !== undefined ? reglasGlobales[a] : "");
-                }}
-                className="border rounded-xl p-2.5 bg-slate-700 text-white w-full md:w-48"
-              >
-                {Array.from({ length: 51 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {i === 0 ? "Año 0 (< 1 año)" : `Año ${i} cumplido`}
-                  </option>
-                ))}
+              <label className="text-xs text-slate-300 block mb-1">Año de Antigüedad</label>
+              <select value={anoReglaInput} onChange={(e) => { setAnoReglaInput(Number(e.target.value)); setDiasReglaInput(reglasGlobales[Number(e.target.value)] ?? ""); }} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-40">
+                {Array.from({ length: 51 }, (_, i) => <option key={i} value={i}>{i === 0 ? "Año 0 (< 1 año)" : `Año ${i}`}</option>)}
               </select>
             </div>
-
             <div>
-              <label className="block text-xs mb-1 text-slate-300">Días Correspondientes</label>
-              <input
-                type="number"
-                placeholder="Ej. 12"
-                value={diasReglaInput}
-                onChange={(e) => setDiasReglaInput(e.target.value)}
-                className="border rounded-xl p-2.5 bg-slate-700 text-white w-full md:w-40"
-              />
+              <label className="text-xs text-slate-300 block mb-1">Días Correspondientes</label>
+              <input type="number" value={diasReglaInput} onChange={(e) => setDiasReglaInput(e.target.value)} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-32" />
             </div>
-
-            <button
-              onClick={guardarReglaGlobal}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition"
-            >
-              Guardar Regla Global
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
-            <span className="text-xs text-slate-400 self-center mr-2">Reglas activas:</span>
-            {Object.keys(reglasGlobales).length === 0 ? (
-              <span className="text-xs text-slate-500">Sin reglas registradas aún.</span>
-            ) : (
-              Object.entries(reglasGlobales)
-                .sort(([a], [b]) => Number(a) - Number(b))
-                .map(([ano, dias]) => (
-                  <span key={ano} className="bg-slate-700 text-xs px-2.5 py-1 rounded-lg border border-slate-600">
-                    Año {ano}: <strong>{dias} días</strong>
-                  </span>
-                ))
-            )}
+            <button onClick={guardarReglaGlobal} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold">Guardar Regla</button>
+            <div className="flex-1 flex flex-wrap gap-2 pt-2 border-t border-slate-700 mt-2 w-full">
+              {Object.entries(reglasGlobales).sort(([a], [b]) => Number(a) - Number(b)).map(([ano, dias]) => (
+                <span key={ano} className="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600">Año {ano}: <strong>{dias} días</strong></span>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* BUSCADOR AUTOCOMPLETE */}
-        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-6">
-          <h2 className="text-lg font-bold mb-3 text-slate-700">
-            🔎 Buscar Empleado por Nombre o Número
-          </h2>
-          <div className="flex flex-col md:flex-row gap-3 relative">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                placeholder="Escribe el nombre o número de empleado..."
-                value={busquedaTexto}
-                onChange={(e) => {
-                  setBusquedaTexto(e.target.value);
-                  setEmpleadoSeleccionadoId("");
-                  setMostrarSugerencias(true);
-                }}
-                onFocus={() => setMostrarSugerencias(true)}
-                className="border rounded-xl p-3 bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-
-              {mostrarSugerencias && busquedaTexto.trim() !== "" && (
-                <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-56 overflow-y-auto">
-                  {sugerenciasEmpleados.length === 0 ? (
-                    <li className="p-3 text-gray-400 text-sm">No se encontraron empleados</li>
-                  ) : (
-                    sugerenciasEmpleados.map((emp) => (
-                      <li
-                        key={emp.id}
-                        onClick={() => seleccionarEmpleadoBuscador(emp)}
-                        className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b last:border-b-0 flex justify-between items-center"
-                      >
-                        <span className="font-medium">{emp.nombre_completo}</span>
-                        <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              )}
+        {/* 2. IMPORTACIÓN MASIVA CON MAPEO (NUEVO) */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones (Excel)</h2>
+          <p className="text-xs text-slate-500 mb-4">El sistema usará la "Configuración de Tablas" para mapear las columnas. Podrás revisar y corregir los datos antes de guardar.</p>
+          
+          {!modoRevision ? (
+            <div className="flex items-center gap-4">
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
             </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-amber-50 p-3 rounded-lg border border-amber-200">
+                <span className="text-sm text-amber-800 font-semibold">📝 Modo Revisión: {datosImportados.length} filas cargadas. Edita los campos si es necesario antes de guardar.</span>
+                <div className="flex gap-2">
+                  <button onClick={() => { setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null); }} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1">Cancelar</button>
+                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">💾 Confirmar y Guardar en BD</button>
+                </div>
+              </div>
 
-            <button
-              onClick={ejecutarBusqueda}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium"
-            >
-              Buscar
-            </button>
-
-            {(busquedaActiva || busquedaTexto !== "") && (
-              <button onClick={limpiarBusqueda} className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-xl">
-                Limpiar Filtro
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* TABLA DE BALANCE Y ACCESO AL KARDEX */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">👥 Balance e Historial de Vacaciones por Empleado</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100">
-                <tr>
-                  <th className="p-3 text-left">Empleado</th>
-                  <th className="p-3 text-center">F. Ingreso</th>
-                  <th className="p-3 text-center">Antigüedad</th>
-                  <th className="p-3 text-center">Días por Ley</th>
-                  <th className="p-3 text-center">Días Descontados</th>
-                  <th className="p-3 text-center">Días Remanentes</th>
-                  <th className="p-3 text-center">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {empleados
-                  .filter((e) => !empleadoSeleccionadoId || String(e.id) === String(empleadoSeleccionadoId))
-                  .map((emp) => {
-                    const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
-                    const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
-
-                    return (
-                      <tr key={emp.id} className="border-t hover:bg-slate-50">
-                        <td className="p-3 font-medium">
-                          {emp.nombre_completo} <span className="text-xs text-gray-400">(#{emp.numero_empleado})</span>
-                        </td>
-                        <td className="p-3 text-center">{emp.fecha_ingreso || "No registrada"}</td>
-                        <td className="p-3 text-center text-slate-600 font-medium">{antiguedad.texto}</td>
-                        <td className="p-3 text-center font-semibold text-blue-600">
-                          {resumen.diasCorrespondientes} días
-                        </td>
-                        <td className="p-3 text-center font-semibold text-amber-600">
-                          {resumen.diasTomados} días
-                        </td>
-                        <td className="p-3 text-center">
-                          <span
-                            className={`font-bold px-3 py-1 rounded-full ${
-                              resumen.diasRemanentes < 0
-                                ? "bg-red-100 text-red-700"
-                                : "bg-emerald-100 text-emerald-800"
-                            }`}
-                          >
-                            {resumen.diasRemanentes} días
+              <div className="overflow-x-auto max-h-96 border rounded-xl">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-100 sticky top-0 z-10">
+                    <tr>
+                      <th className="p-3 border-b">Estado</th>
+                      <th className="p-3 border-b">Empleado Detectado</th>
+                      {/* Columnas dinámicas basadas en los datos importados */}
+                      {datosImportados.length > 0 && Object.keys(datosImportados[0].datos_vacaciones).map(key => (
+                        <th key={key} className="p-3 border-b capitalize">{key.replace(/_/g, ' ')}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {datosImportados.map((fila) => (
+                      <tr key={fila.id_fila} className={`border-b hover:bg-slate-50 ${!fila.empleado_id ? 'bg-red-50' : ''}`}>
+                        <td className="p-3">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded ${fila.empleado_id ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {fila.estatus_match}
                           </span>
                         </td>
-                        <td className="p-3 text-center">
-                          <button
-                            onClick={() =>
-                              setModalKardexEmpleado({
-                                empleado: emp,
-                                antiguedad,
-                                resumen,
-                              })
-                            }
-                            className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-semibold"
-                          >
-                            📜 Ver / Capturar Kardex
-                          </button>
+                        <td className="p-3 font-medium">
+                          {fila.nombre_encontrado} <span className="text-gray-400">({fila.numero_encontrado})</span>
                         </td>
+                        {fila.empleado_id && Object.keys(fila.datos_vacaciones).map(key => (
+                          <td key={key} className="p-2">
+                            {/* Inputs editables para que el admin corrija antes de guardar */}
+                            {key.includes('fecha') ? (
+                              <input type="date" value={fila.datos_vacaciones[key] || ""} onChange={(e) => actualizarDatoImportado(fila.id_fila, key, e.target.value)} className="w-full border rounded px-2 py-1" />
+                            ) : key === 'tipo_vacaciones' ? (
+                              <select value={fila.datos_vacaciones[key] || "TOMADAS_Y_PAGADAS"} onChange={(e) => actualizarDatoImportado(fila.id_fila, key, e.target.value)} className="w-full border rounded px-2 py-1">
+                                <option value="TOMADAS_Y_PAGADAS">Tomadas y Pagadas</option>
+                                <option value="PAGADAS_NO_TOMADAS">Pagadas No Tomadas</option>
+                              </select>
+                            ) : (
+                              <input type="text" value={fila.datos_vacaciones[key] || ""} onChange={(e) => actualizarDatoImportado(fila.id_fila, key, e.target.value)} className="w-full border rounded px-2 py-1" />
+                            )}
+                          </td>
+                        ))}
+                        {!fila.empleado_id && <td colSpan="10" className="p-3 text-red-600 text-xs">⚠️ No se encontró el empleado por número o nombre en el sistema.</td>}
                       </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 3. BUSCADOR */}
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+          <div className="relative flex-1">
+            <input type="text" placeholder="🔎 Buscar empleado por nombre o número..." value={busquedaTexto} onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }} onFocus={() => setMostrarSugerencias(true)} className="w-full border rounded-xl p-3 bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
+            {mostrarSugerencias && busquedaTexto.trim() !== "" && (
+              <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-48 overflow-y-auto">
+                {sugerenciasEmpleados.map((emp) => (
+                  <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
+                    <span className="font-medium">{emp.nombre_completo}</span>
+                    <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {busquedaActiva && <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">Limpiar filtro</button>}
+        </div>
+
+        {/* 4. TABLA AGRUPADA POR DEPARTAMENTO Y PUESTO */}
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">👥 Balance de Vacaciones por Estructura Organizacional</h2>
+          <div className="space-y-4">
+            {Object.keys(empleadosAgrupados).length === 0 ? (
+              <p className="text-center text-gray-500 py-8">No se encontraron empleados.</p>
+            ) : (
+              Object.entries(empleadosAgrupados).map(([depto, puestos]) => (
+                <div key={depto} className="border border-slate-200 rounded-xl overflow-hidden">
+                  {/* Cabecera de Departamento */}
+                  <button onClick={() => toggleDepto(depto)} className="w-full bg-slate-100 hover:bg-slate-200 p-3 flex justify-between items-center transition">
+                    <span className="font-bold text-slate-800 flex items-center gap-2">
+                      {deptoExpandido[depto] ? "📂" : "📁"} {depto}
+                    </span>
+                    <span className="text-xs bg-slate-300 text-slate-700 px-2 py-1 rounded-full">{Object.values(puestos).flat().length} empleados</span>
+                  </button>
+
+                  {/* Contenido del Departamento */}
+                  {deptoExpandido[depto] && (
+                    <div className="divide-y divide-slate-100">
+                      {Object.entries(puestos).map(([puesto, emps]) => (
+                        <div key={puesto}>
+                          <div className="bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 uppercase tracking-wide">
+                            {puesto}
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-white text-slate-500">
+                              <tr>
+                                <th className="p-3 text-left">Empleado</th>
+                                <th className="p-3 text-center">Antigüedad</th>
+                                <th className="p-3 text-center">Días Ley</th>
+                                <th className="p-3 text-center">Descontados</th>
+                                <th className="p-3 text-center">Remanentes</th>
+                                <th className="p-3 text-center">Acción</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {emps.map((emp) => {
+                                const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
+                                const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
+                                return (
+                                  <tr key={emp.id} className="hover:bg-slate-50">
+                                    <td className="p-3 font-medium">{emp.nombre_completo} <span className="text-xs text-gray-400">(#{emp.numero_empleado})</span></td>
+                                    <td className="p-3 text-center text-slate-600">{antiguedad.texto}</td>
+                                    <td className="p-3 text-center font-semibold text-blue-600">{resumen.diasCorrespondientes}</td>
+                                    <td className="p-3 text-center font-semibold text-amber-600">{resumen.diasTomados}</td>
+                                    <td className="p-3 text-center">
+                                      <span className={`font-bold px-2 py-1 rounded-full text-xs ${resumen.diasRemanentes < 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-800"}`}>
+                                        {resumen.diasRemanentes}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-center">
+                                      <button onClick={() => setModalKardexEmpleado({ empleado: emp, antiguedad, resumen })} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">
+                                        📜 Kardex
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
 
-        {/* FORMULARIO NUEVA SOLICITUD DE VACACIONES */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4">Nueva Solicitud / Registro de Vacaciones</h2>
-
+        {/* 5. FORMULARIO DE SOLICITUD MANUAL */}
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">➕ Nueva Solicitud Manual</h2>
           <div className="grid md:grid-cols-3 gap-4">
-            <select
-              value={form.empleado_id}
-              onChange={(e) => setForm({ ...form, empleado_id: e.target.value })}
-              className="border rounded-xl p-3"
-            >
+            <select value={form.empleado_id} onChange={(e) => setForm({ ...form, empleado_id: e.target.value })} className="border rounded-xl p-3">
               <option value="">Seleccionar empleado</option>
-              {empleados.map((empleado) => (
-                <option key={empleado.id} value={empleado.id}>
-                  {empleado.nombre_completo}
-                </option>
-              ))}
+              {empleados.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre_completo}</option>)}
             </select>
-
-            <input
-              type="number"
-              placeholder="Días Solicitados"
-              value={form.dias_solicitados}
-              onChange={(e) => setForm({ ...form, dias_solicitados: e.target.value })}
-              className="border rounded-xl p-3"
-            />
-
-            <input
-              type="text"
-              placeholder="Nómina / Semana Impactada"
-              value={form.nomina_impactada}
-              onChange={(e) => setForm({ ...form, nomina_impactada: e.target.value })}
-              className="border rounded-xl p-3"
-            />
-
-            <select
-              value={form.tipo_vacaciones}
-              onChange={(e) => setForm({ ...form, tipo_vacaciones: e.target.value })}
-              className="border rounded-xl p-3 bg-slate-50 font-medium"
-            >
+            <input type="number" placeholder="Días Solicitados" value={form.dias_solicitados} onChange={(e) => setForm({ ...form, dias_solicitados: e.target.value })} className="border rounded-xl p-3" />
+            <input type="text" placeholder="Nómina Impactada" value={form.nomina_impactada} onChange={(e) => setForm({ ...form, nomina_impactada: e.target.value })} className="border rounded-xl p-3" />
+            <select value={form.tipo_vacaciones} onChange={(e) => setForm({ ...form, tipo_vacaciones: e.target.value })} className="border rounded-xl p-3">
               <option value="TOMADAS_Y_PAGADAS">✅ Pagadas y Tomadas</option>
               <option value="PAGADAS_NO_TOMADAS">💰 Pagadas no Tomadas</option>
             </select>
-
-            <div className="flex flex-col">
-              <label className="text-xs text-gray-500 mb-1">Fecha de Inicio</label>
-              <input
-                type="date"
-                value={form.fecha_inicio}
-                onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })}
-                className="border rounded-xl p-3"
-              />
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-xs text-gray-500 mb-1">Fecha de Fin</label>
-              <input
-                type="date"
-                value={form.fecha_fin}
-                onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })}
-                className="border rounded-xl p-3"
-              />
-            </div>
-
-            <input
-              type="text"
-              placeholder="Observaciones"
-              value={form.observaciones}
-              onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
-              className="border rounded-xl p-3 md:col-span-3"
-            />
+            <input type="date" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} className="border rounded-xl p-3" />
+            <input type="date" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} className="border rounded-xl p-3" />
+            <input type="text" placeholder="Observaciones" value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} className="border rounded-xl p-3 md:col-span-3" />
           </div>
-
-          <button
-            onClick={guardarVacaciones}
-            className="mt-4 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl font-medium"
-          >
-            Guardar Solicitud
-          </button>
+          <button onClick={guardarVacaciones} className="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-medium">Guardar Solicitud Pendiente</button>
         </div>
 
-        {/* TABLA DE SOLICITUDES RECIENTES */}
-        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto">
-          <table className="w-full">
+        {/* 6. TABLA DE SOLICITUDES RECIENTES */}
+        <div className="bg-white rounded-2xl shadow-lg overflow-x-auto p-6">
+          <h2 className="text-xl font-bold mb-4">📋 Historial de Solicitudes</h2>
+          <table className="w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                <th className="p-4 text-left">Empleado</th>
-                <th className="p-4 text-center">Periodo</th>
-                <th className="p-4 text-center">Días</th>
-                <th className="p-4 text-center">Modalidad</th>
-                <th className="p-4 text-center">Nómina Impactada</th>
-                <th className="p-4 text-center">Estado</th>
-                <th className="p-4 text-center">Acciones</th>
+                <th className="p-3 text-left">Empleado</th>
+                <th className="p-3 text-center">Periodo</th>
+                <th className="p-3 text-center">Días</th>
+                <th className="p-3 text-center">Modalidad</th>
+                <th className="p-3 text-center">Estado</th>
+                <th className="p-3 text-center">Acciones</th>
               </tr>
             </thead>
-
             <tbody>
-              {vacacionesFiltradas.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="p-6 text-center text-gray-500">
-                    No se encontraron registros de vacaciones.
+              {vacaciones.slice(0, 20).map((v) => (
+                <tr key={v.id} className="border-t hover:bg-slate-50">
+                  <td className="p-3 font-medium">{v.empleados?.nombre_completo}</td>
+                  <td className="p-3 text-center text-xs">{v.fecha_inicio} al {v.fecha_fin}</td>
+                  <td className="p-3 text-center font-bold">{v.dias_solicitados}</td>
+                  <td className="p-3 text-center text-xs">
+                    <span className={`px-2 py-1 rounded-full font-bold ${v.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                      {v.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas No Tomadas" : "✅ Tomadas"}
+                    </span>
+                  </td>
+                  <td className="p-3 text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${v.estatus === "APROBADO" ? "bg-green-100 text-green-700" : v.estatus === "RECHAZADO" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                      {v.estatus}
+                    </span>
+                  </td>
+                  <td className="p-3 text-center">
+                    {v.estatus === "PENDIENTE" && (
+                      <div className="flex justify-center gap-2">
+                        <button onClick={() => cambiarEstatusVacacion(v, "APROBADO")} className="text-green-600 hover:text-green-800 text-xs font-bold">Aprobar</button>
+                        <button onClick={() => cambiarEstatusVacacion(v, "RECHAZADO")} className="text-red-600 hover:text-red-800 text-xs font-bold">Rechazar</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ) : (
-                vacacionesFiltradas.map((vacacion) => (
-                  <tr key={vacacion.id} className="border-t hover:bg-slate-50">
-                    <td className="p-4 font-medium">{vacacion.empleados?.nombre_completo}</td>
-                    <td className="p-4 text-center text-sm text-gray-600">
-                      {vacacion.fecha_inicio} al {vacacion.fecha_fin}
-                    </td>
-                    <td className="p-4 text-center font-semibold">{vacacion.dias_solicitados}</td>
-                    <td className="p-4 text-center text-xs">
-                      {vacacion.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? (
-                        <span className="bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-full">
-                          💰 Pagadas No Tomadas
-                        </span>
-                      ) : (
-                        <span className="bg-blue-100 text-blue-700 font-bold px-2.5 py-1 rounded-full">
-                          ✅ Pagadas y Tomadas
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-4 text-center text-sm font-medium text-slate-700">
-                      {vacacion.nomina_impactada || "—"}
-                    </td>
-                    <td className="p-4 text-center">
-                      {vacacion.estatus === "PENDIENTE" && (
-                        <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-sm font-medium">
-                          PENDIENTE
-                        </span>
-                      )}
-                      {vacacion.estatus === "APROBADO" && (
-                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
-                          APROBADO
-                        </span>
-                      )}
-                      {vacacion.estatus === "RECHAZADO" && (
-                        <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium">
-                          RECHAZADO
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-4 text-center flex justify-center gap-2">
-                      {vacacion.estatus === "PENDIENTE" && (
-                        <>
-                          <button
-                            onClick={() => cambiarEstatusVacacion(vacacion, "APROBADO")}
-                            className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-sm font-medium"
-                          >
-                            Aprobar
-                          </button>
-                          <button
-                            onClick={() => cambiarEstatusVacacion(vacacion, "RECHAZADO")}
-                            className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl text-sm font-medium"
-                          >
-                            Rechazar
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
         </div>
 
-        {/* MODAL KARDEX CON REGISTRO RÁPIDO */}
+        {/* MODAL KARDEX */}
         {modalKardexEmpleado && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full p-6 my-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-slate-800">
-                  📜 Kardex de Vacaciones - {modalKardexEmpleado.empleado.nombre_completo}
-                </h3>
-                <button
-                  onClick={() => setModalKardexEmpleado(null)}
-                  className="text-gray-400 hover:text-gray-600 text-lg font-bold"
-                >
-                  ✕
-                </button>
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4 border-b pb-3">
+                <h3 className="text-xl font-bold">📜 Kardex: {modalKardexEmpleado.empleado.nombre_completo}</h3>
+                <button onClick={() => setModalKardexEmpleado(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200 text-sm">
+                <div><span className="text-gray-500 text-xs block">Antigüedad</span><strong>{modalKardexEmpleado.antiguedad.texto}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Días por Ley</span><strong className="text-blue-600">{modalKardexEmpleado.resumen.diasCorrespondientes}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Descontados</span><strong className="text-amber-600">{modalKardexEmpleado.resumen.diasTomados}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{modalKardexEmpleado.resumen.diasRemanentes}</strong></div>
               </div>
 
-              {/* SALDOS EN KARDEX */}
-              <div className="bg-slate-50 p-4 rounded-xl mb-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border border-slate-200">
-                <div>
-                  <span className="block text-xs text-gray-500">Antigüedad:</span>
-                  <strong>{modalKardexEmpleado.antiguedad.texto}</strong>
-                </div>
-                <div>
-                  <span className="block text-xs text-gray-500">Días por Ley:</span>
-                  <strong className="text-blue-600">{modalKardexEmpleado.resumen.diasCorrespondientes} días</strong>
-                </div>
-                <div>
-                  <span className="block text-xs text-gray-500">Días Descontados:</span>
-                  <strong className="text-amber-600">{modalKardexEmpleado.resumen.diasTomados} días</strong>
-                </div>
-                <div>
-                  <span className="block text-xs text-gray-500">Días Remanentes:</span>
-                  <strong className="text-emerald-600">{modalKardexEmpleado.resumen.diasRemanentes} días</strong>
-                </div>
-              </div>
-
-              {/* FORMULARIO AGREGAR DÍAS HISTÓRICOS AL KARDEX */}
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
-                <h4 className="font-bold text-blue-900 text-sm mb-3">➕ Registrar Período Tomado / Pagado a este Empleado</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <label className="block text-gray-600 mb-1">Fecha Inicio</label>
-                    <input
-                      type="date"
-                      value={formKardex.fecha_inicio}
-                      onChange={(e) => setFormKardex({ ...formKardex, fecha_inicio: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1">Fecha Fin</label>
-                    <input
-                      type="date"
-                      value={formKardex.fecha_fin}
-                      onChange={(e) => setFormKardex({ ...formKardex, fecha_fin: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1">Días a Registrar</label>
-                    <input
-                      type="number"
-                      placeholder="Ej. 6"
-                      value={formKardex.dias_solicitados}
-                      onChange={(e) => setFormKardex({ ...formKardex, dias_solicitados: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1">Nómina / Semana Impactada</label>
-                    <input
-                      type="text"
-                      placeholder="Ej. Sem 12 - 2026"
-                      value={formKardex.nomina_impactada}
-                      onChange={(e) => setFormKardex({ ...formKardex, nomina_impactada: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1">Modalidad de Vacaciones</label>
-                    <select
-                      value={formKardex.tipo_vacaciones}
-                      onChange={(e) => setFormKardex({ ...formKardex, tipo_vacaciones: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full font-semibold"
-                    >
-                      <option value="TOMADAS_Y_PAGADAS">✅ Pagadas y Tomadas</option>
-                      <option value="PAGADAS_NO_TOMADAS">💰 Pagadas no Tomadas</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-600 mb-1">Observaciones</label>
-                    <input
-                      type="text"
-                      placeholder="Opcional"
-                      value={formKardex.observaciones}
-                      onChange={(e) => setFormKardex({ ...formKardex, observaciones: e.target.value })}
-                      className="border rounded-lg p-2 bg-white w-full"
-                    />
-                  </div>
+                <h4 className="font-bold text-blue-900 text-sm mb-3">➕ Agregar Registro Histórico</h4>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                  <input type="date" value={formKardex.fecha_inicio} onChange={(e) => setFormKardex({...formKardex, fecha_inicio: e.target.value})} className="border rounded p-2 bg-white" placeholder="Inicio" />
+                  <input type="date" value={formKardex.fecha_fin} onChange={(e) => setFormKardex({...formKardex, fecha_fin: e.target.value})} className="border rounded p-2 bg-white" placeholder="Fin" />
+                  <input type="number" value={formKardex.dias_solicitados} onChange={(e) => setFormKardex({...formKardex, dias_solicitados: e.target.value})} className="border rounded p-2 bg-white" placeholder="Días" />
+                  <input type="text" value={formKardex.nomina_impactada} onChange={(e) => setFormKardex({...formKardex, nomina_impactada: e.target.value})} className="border rounded p-2 bg-white md:col-span-2" placeholder="Nómina Impactada" />
+                  <select value={formKardex.tipo_vacaciones} onChange={(e) => setFormKardex({...formKardex, tipo_vacaciones: e.target.value})} className="border rounded p-2 bg-white">
+                    <option value="TOMADAS_Y_PAGADAS">Tomadas y Pagadas</option>
+                    <option value="PAGADAS_NO_TOMADAS">Pagadas No Tomadas</option>
+                  </select>
+                  <input type="text" value={formKardex.observaciones} onChange={(e) => setFormKardex({...formKardex, observaciones: e.target.value})} className="border rounded p-2 bg-white md:col-span-3" placeholder="Observaciones" />
                 </div>
-
-                <div className="mt-3 text-right">
-                  <button
-                    onClick={agregarDesdeKardex}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg text-xs"
-                  >
-                    Guardar Registro en Kardex
-                  </button>
-                </div>
+                <button onClick={agregarDesdeKardex} className="mt-3 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold w-full md:w-auto">Guardar en Kardex</button>
               </div>
 
-              {/* HISTORIAL DETALLADO DE REGISTROS */}
-              <h4 className="font-bold mb-3 text-slate-700">Historial Detallado del Trabajador</h4>
-
-              <div className="max-h-60 overflow-y-auto border rounded-xl">
+              <h4 className="font-bold mb-2 text-sm">Historial Aprobado</h4>
+              <div className="max-h-48 overflow-y-auto border rounded-xl">
                 {modalKardexEmpleado.resumen.solicitudesAprobadas.length === 0 ? (
-                  <p className="p-6 text-center text-sm text-gray-500">
-                    No existen registros en el historial de este empleado.
-                  </p>
+                  <p className="p-4 text-center text-sm text-gray-500">Sin registros.</p>
                 ) : (
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-100">
-                      <tr>
-                        <th className="p-3 text-left">Fechas</th>
-                        <th className="p-3 text-center">Días</th>
-                        <th className="p-3 text-center">Modalidad</th>
-                        <th className="p-3 text-center">Nómina Impactada</th>
-                        <th className="p-3 text-left">Observaciones</th>
-                      </tr>
-                    </thead>
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">Fechas</th><th className="p-2">Días</th><th className="p-2">Modalidad</th><th className="p-2">Nómina</th></tr></thead>
                     <tbody>
-                      {modalKardexEmpleado.resumen.solicitudesAprobadas.map((item) => (
-                        <tr key={item.id} className="border-t hover:bg-slate-50">
-                          <td className="p-3 font-medium text-slate-800">
-                            {item.fecha_inicio} al {item.fecha_fin}
-                          </td>
-                          <td className="p-3 text-center font-bold text-amber-600">
-                            {item.dias_solicitados}
-                          </td>
-                          <td className="p-3 text-center text-xs">
-                            {item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? (
-                              <span className="bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-md">
-                                💰 Pagadas No Tomadas
-                              </span>
-                            ) : (
-                              <span className="bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">
-                                ✅ Pagadas y Tomadas
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center font-medium text-slate-700">
-                            {item.nomina_impactada || "—"}
-                          </td>
-                          <td className="p-3 text-xs text-slate-500">
-                            {item.observaciones || "—"}
-                          </td>
+                      {modalKardexEmpleado.resumen.solicitudesAprobadas.map(item => (
+                        <tr key={item.id} className="border-t">
+                          <td className="p-2">{item.fecha_inicio} al {item.fecha_fin}</td>
+                          <td className="p-2 text-center font-bold">{item.dias_solicitados}</td>
+                          <td className="p-2 text-center">{item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas No Tomadas" : "✅ Tomadas"}</td>
+                          <td className="p-2 text-center">{item.nomina_impactada || "—"}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 )}
-              </div>
-
-              <div className="mt-6 text-right">
-                <button
-                  onClick={() => setModalKardexEmpleado(null)}
-                  className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-2 rounded-xl text-sm font-medium"
-                >
-                  Cerrar Kardex
-                </button>
               </div>
             </div>
           </div>

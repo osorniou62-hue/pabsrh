@@ -7,6 +7,7 @@ export default function SolicitudesUsuario() {
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState("PENDIENTES");
   const [empleados, setEmpleados] = useState([]);
+  const [campoVinculacion, setCampoVinculacion] = useState(null); // 🔥 NUEVO
   
   const [modalConfirmacion, setModalConfirmacion] = useState({ 
     abierto: false, 
@@ -14,7 +15,7 @@ export default function SolicitudesUsuario() {
     accion: "", 
     rolSeleccionado: "SUPERVISOR",
     empleadoSeleccionado: "",
-    busquedaEmpleado: "", // 🔥 NUEVO: Para el buscador dinámico
+    busquedaEmpleado: "",
     titulo: "",
     descripcion: "",
     colorIcono: "",
@@ -23,9 +24,18 @@ export default function SolicitudesUsuario() {
     textoBoton: ""
   });
 
+  const [modalPasswordAdmin, setModalPasswordAdmin] = useState({
+    abierto: false,
+    password: "",
+    solicitud: null,
+    rolSeleccionado: "",
+    empleadoSeleccionado: ""
+  });
+
   useEffect(() => { 
     cargarSolicitudes();
     cargarEmpleados();
+    detectarCampoVinculacion(); // 🔥 NUEVO
   }, []);
 
   const cargarSolicitudes = async () => {
@@ -49,7 +59,6 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 CONSULTA AUTÓNOMA Y ROBUSTA: Sin joins complejos que puedan fallar
   const cargarEmpleados = async () => {
     try {
       console.log("🔄 Cargando lista de empleados para vinculación...");
@@ -83,6 +92,62 @@ export default function SolicitudesUsuario() {
     }
   };
 
+  // 🔥 NUEVO: Detectar y crear automáticamente el campo de vinculación
+  const detectarCampoVinculacion = async () => {
+    try {
+      console.log("🔍 Detectando campo de vinculación en tabla empleados...");
+      
+      // Obtener un empleado para ver qué columnas tiene
+      const { data, error } = await supabase
+        .from("empleados")
+        .select("*")
+        .limit(1);
+      
+      if (error || !data || data.length === 0) {
+        console.warn("⚠️ No se pudo detectar columnas de empleados");
+        return;
+      }
+      
+      const columnasExistentes = Object.keys(data[0]);
+      console.log("📋 Columnas existentes en empleados:", columnasExistentes);
+      
+      // Buscar si ya existe un campo de vinculación
+      const camposPosibles = ["id_usuario", "user_id", "auth_id"];
+      let campoEncontrado = null;
+      
+      for (const campo of camposPosibles) {
+        if (columnasExistentes.includes(campo)) {
+          campoEncontrado = campo;
+          console.log(`✅ Campo de vinculación encontrado: ${campo}`);
+          break;
+        }
+      }
+      
+      // Si no existe, crearlo automáticamente
+      if (!campoEncontrado) {
+        console.log("🔨 Creando campo 'id_usuario' automáticamente...");
+        
+        const { error: createError } = await supabase.rpc("agregar_columna_dinamica", {
+          p_tabla: "empleados",
+          p_columna: "id_usuario",
+          p_tipo: "UUID"
+        });
+        
+        if (createError) {
+          console.error("❌ No se pudo crear el campo 'id_usuario':", createError.message);
+          alert("⚠️ No se pudo crear automáticamente el campo de vinculación.\n\nPor favor, ejecuta este SQL en Supabase:\nALTER TABLE empleados ADD COLUMN id_usuario UUID;");
+        } else {
+          console.log("✅ Campo 'id_usuario' creado exitosamente");
+          campoEncontrado = "id_usuario";
+        }
+      }
+      
+      setCampoVinculacion(campoEncontrado);
+    } catch (err) {
+      console.error("Error detectando campo de vinculación:", err);
+    }
+  };
+
   const solicitudesFiltradas = solicitudes.filter(s => {
     if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
     if (filtro === "APROBADAS") return s.estatus === "APROBADA";
@@ -94,10 +159,50 @@ export default function SolicitudesUsuario() {
   const aprobadas = solicitudes.filter(s => s.estatus === "APROBADA").length;
   const rechazadas = solicitudes.filter(s => s.estatus === "RECHAZADA").length;
 
-  // 🔥 APROBAR SOLICITUD
-  const ejecutarAprobacion = async (solicitud, rol, empleadoId) => {
+  const solicitarAprobacion = (solicitud) => {
+    setModalConfirmacion(prev => ({
+      ...prev,
+      abierto: true,
+      solicitud,
+      accion: "aprobar",
+      rolSeleccionado: "SUPERVISOR",
+      empleadoSeleccionado: "",
+      busquedaEmpleado: "",
+      titulo: "Aprobar Solicitud",
+      descripcion: "Se creará una cuenta con el rol y vinculación seleccionados.",
+      colorIcono: "bg-emerald-100",
+      icono: "✅",
+      colorBoton: "bg-emerald-600 hover:bg-emerald-700",
+      textoBoton: "✅ Continuar"
+    }));
+  };
+
+  const confirmarAprobacionInicial = () => {
+    const { solicitud, rolSeleccionado, empleadoSeleccionado } = modalConfirmacion;
+    
+    setModalPasswordAdmin({
+      abierto: true,
+      password: "",
+      solicitud,
+      rolSeleccionado,
+      empleadoSeleccionado
+    });
+    
+    setModalConfirmacion(prev => ({ ...prev, abierto: false }));
+  };
+
+  // 🔥 CORREGIDO: Vinculación usando el campo detectado
+  const ejecutarAprobacion = async (solicitud, rol, empleadoId, passwordAdmin) => {
     try {
       setLoading(true);
+      
+      const { data: { user: adminUser } } = await supabase.auth.getUser();
+      const emailAdmin = adminUser?.email;
+      
+      if (!emailAdmin || !passwordAdmin) {
+        throw new Error("No se pudo obtener las credenciales del administrador");
+      }
+
       const correoRaw = solicitud.correo || solicitud.email || "";
       const passwordRaw = solicitud.password || "";
       const correoLimpio = String(correoRaw).trim().toLowerCase();
@@ -124,7 +229,6 @@ export default function SolicitudesUsuario() {
         if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
           alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.\n\nVe al módulo de Usuarios y asegúrate de que su Rol sea " + rol + ".\n\nLuego elimina esta solicitud con 🗑️.");
           setLoading(false);
-          setModalConfirmacion(prev => ({ ...prev, abierto: false }));
           return;
         }
         throw new Error("Error de autenticación: " + authError.message);
@@ -138,40 +242,89 @@ export default function SolicitudesUsuario() {
         );
         if (profileError) throw profileError;
 
+        let vinculadoCorrectamente = false;
+        let empleadoInfo = null;
+        let campoUsado = "";
+
         if (empleadoId) {
-          console.log("🔗 Vinculando usuario con empleado:", empleadoId);
+          console.log("🔗 Intentando vincular usuario con empleado ID:", empleadoId);
           
-          // Actualizamos el campo id_usuario (o el campo que uses para vincular)
-          const { error: updateEmpleadoError } = await supabase
-            .from("empleados")
-            .update({ id_usuario: nuevoUserId }) 
-            .eq("id", empleadoId);
-
-          if (updateEmpleadoError) {
-            console.warn("⚠️ No se pudo actualizar la vinculación del empleado:", updateEmpleadoError.message);
-          } else {
-            console.log("✅ Empleado vinculado correctamente");
-
-            const { error: updateSupervisorError } = await supabase
-              .from("empleados")
-              .update({ supervisor_id: nuevoUserId })
-              .eq("supervisor_id", empleadoId);
-
-            if (updateSupervisorError) {
-              console.warn("⚠️ No se pudieron actualizar las referencias de supervisor:", updateSupervisorError.message);
+          empleadoInfo = empleados.find(e => String(e.id) === String(empleadoId));
+          
+          if (empleadoInfo) {
+            console.log("✅ Empleado encontrado localmente:", empleadoInfo.nombre_completo);
+            
+            // 🔥 USAR EL CAMPO DETECTADO O CREADO AUTOMÁTICAMENTE
+            if (campoVinculacion) {
+              console.log(`🔗 Usando campo de vinculación: ${campoVinculacion}`);
+              
+              const { error: updateError } = await supabase
+                .from("empleados")
+                .update({ [campoVinculacion]: nuevoUserId })
+                .eq("id", empleadoId);
+              
+              if (!updateError) {
+                console.log(`✅ Vinculación exitosa usando el campo: ${campoVinculacion}`);
+                vinculadoCorrectamente = true;
+                campoUsado = campoVinculacion;
+              } else {
+                console.error(`❌ Error al vincular usando ${campoVinculacion}:`, updateError.message);
+              }
+            } else {
+              console.error("❌ No se detectó ni pudo crear un campo de vinculación");
             }
+          } else {
+            console.warn("⚠️ No se encontró el empleado en la lista local con ID:", empleadoId);
           }
         }
 
         setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "APROBADA" } : s));
         await supabase.from("solicitudes_usuario").update({ estatus: "APROBADA" }).eq("id", solicitud.id);
 
-        const empleadoInfo = empleados.find(e => e.id === empleadoId);
-        const mensajeEmpleado = empleadoInfo 
-          ? "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo + " (#" + empleadoInfo.numero_empleado + ")"
-          : "\n\n⚠️ No se vinculó a ningún empleado existente.";
+        console.log("🔄 Restaurando sesión del administrador...");
+        await supabase.auth.signOut();
+        
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: emailAdmin,
+          password: passwordAdmin
+        });
 
-        alert("✅ Usuario creado exitosamente con rol: " + rol + ".\n\nCorreo: " + correoLimpio + "\nContraseña: " + passwordLimpio + mensajeEmpleado + "\n\n💡 Para probar, abre una ventana de incógnito e inicia sesión.");
+        if (signInError) {
+          console.error("❌ No se pudo restaurar la sesión del admin:", signInError.message);
+          alert(
+            "✅ Usuario creado exitosamente con rol: " + rol + 
+            ".\n\n⚠️ IMPORTANTE: Tu sesión fue cerrada por seguridad.\n" +
+            "Por favor, inicia sesión nuevamente con tus credenciales de administrador.\n\n" +
+            "Correo del nuevo usuario: " + correoLimpio + 
+            "\nContraseña del nuevo usuario: " + passwordLimpio
+          );
+        } else {
+          console.log("✅ Sesión del administrador restaurada correctamente");
+          
+          let mensajeEmpleado = "";
+          if (empleadoInfo && vinculadoCorrectamente) {
+            mensajeEmpleado = 
+              "\n\n🔗 Vinculado exitosamente a: " + empleadoInfo.nombre_completo + 
+              " (#" + empleadoInfo.numero_empleado + ")" +
+              "\n📋 Campo usado: " + campoUsado;
+          } else if (empleadoInfo && !vinculadoCorrectamente) {
+            mensajeEmpleado = 
+              "\n\n⚠️ Se encontró al empleado " + empleadoInfo.nombre_completo + 
+              " (#" + empleadoInfo.numero_empleado + "), pero NO se pudo vincular." +
+              "\n💡 Verifica la consola (F12) para más detalles.";
+          } else {
+            mensajeEmpleado = "\n\n⚠️ No se vinculó a ningún empleado existente.";
+          }
+
+          alert(
+            "✅ Usuario creado exitosamente con rol: " + rol + 
+            ".\n\nCorreo: " + correoLimpio + 
+            "\nContraseña: " + passwordLimpio + 
+            mensajeEmpleado + 
+            "\n\n💡 Tu sesión se mantuvo activa. Puedes continuar trabajando normalmente."
+          );
+        }
+        
         await cargarSolicitudes();
       }
     } catch (error) {
@@ -181,10 +334,10 @@ export default function SolicitudesUsuario() {
     } finally {
       setLoading(false);
       setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }));
+      setModalPasswordAdmin({ abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: "" });
     }
   };
 
-  // 🔥 RECHAZAR SOLICITUD
   const ejecutarRechazo = async (solicitud) => {
     try {
       setLoading(true);
@@ -206,7 +359,6 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 DAR DE BAJA (DESHABILITAR TEMPORALMENTE)
   const darDeBajaUsuario = async (solicitud) => {
     try {
       setLoading(true);
@@ -257,7 +409,6 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 ELIMINACIÓN PERMANENTE
   const eliminarDefinitivamente = async (solicitud) => {
     try {
       setLoading(true);
@@ -304,8 +455,12 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 MODAL DE CONFIRMACIÓN DINÁMICO
   const confirmarAccion = (solicitud, accion) => {
+    if (accion === "aprobar") {
+      solicitarAprobacion(solicitud);
+      return;
+    }
+
     let titulo = "";
     let descripcion = "";
     let colorIcono = "";
@@ -314,14 +469,6 @@ export default function SolicitudesUsuario() {
     let textoBoton = "";
 
     switch (accion) {
-      case "aprobar":
-        titulo = "Aprobar Solicitud";
-        descripcion = "Se creará una cuenta con el rol y vinculación seleccionados.";
-        colorIcono = "bg-emerald-100";
-        icono = "✅";
-        colorBoton = "bg-emerald-600 hover:bg-emerald-700";
-        textoBoton = "✅ Confirmar Aprobación";
-        break;
       case "rechazar":
         titulo = "Rechazar Solicitud";
         descripcion = "La solicitud se marcará como rechazada. El usuario NO tendrá acceso.";
@@ -356,7 +503,7 @@ export default function SolicitudesUsuario() {
       accion,
       rolSeleccionado: "SUPERVISOR",
       empleadoSeleccionado: "",
-      busquedaEmpleado: "", // 🔥 Limpiar búsqueda al abrir el modal
+      busquedaEmpleado: "",
       titulo,
       descripcion,
       colorIcono,
@@ -371,7 +518,7 @@ export default function SolicitudesUsuario() {
     
     switch (accion) {
       case "aprobar":
-        ejecutarAprobacion(solicitud, rolSeleccionado, empleadoSeleccionado);
+        confirmarAprobacionInicial();
         break;
       case "rechazar":
         ejecutarRechazo(solicitud);
@@ -385,14 +532,14 @@ export default function SolicitudesUsuario() {
     }
   };
 
-  // 🔥 FILTRO DINÁMICO DE EMPLEADOS PARA EL MODAL
   const empleadosFiltrados = useMemo(() => {
     if (!modalConfirmacion.busquedaEmpleado) return empleados;
     const texto = modalConfirmacion.busquedaEmpleado.toLowerCase();
     return empleados.filter(emp => 
       (emp.nombre_completo || "").toLowerCase().includes(texto) ||
       (emp.numero_empleado || "").toLowerCase().includes(texto) ||
-      (emp.puesto || "").toLowerCase().includes(texto)
+      (emp.puesto || "").toLowerCase().includes(texto) ||
+      (emp.departamento || "").toLowerCase().includes(texto)
     );
   }, [empleados, modalConfirmacion.busquedaEmpleado]);
 
@@ -476,145 +623,4 @@ export default function SolicitudesUsuario() {
                           <button 
                             onClick={() => confirmarAccion(solicitud, "eliminar")} 
                             disabled={loading}
-                            className="bg-red-700 hover:bg-red-800 disabled:bg-red-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm flex items-center gap-1"
-                          >
-                            🗑️ Eliminar
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* 🔥 MODAL DE CONFIRMACIÓN DINÁMICO */}
-      {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="text-center mb-4">
-              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.colorIcono || "bg-slate-100")}>
-                {modalConfirmacion.icono || "❓"}
-              </div>
-              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.titulo}</h3>
-              <p className="text-sm text-slate-600 mt-2">{modalConfirmacion.descripcion}</p>
-              
-              {/* 🔥 SELECTORES SOLO PARA APROBACIÓN */}
-              {modalConfirmacion.accion === "aprobar" && (
-                <div className="mt-4 text-left space-y-3">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol de Acceso:</label>
-                    <select 
-                      value={modalConfirmacion.rolSeleccionado}
-                      onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))}
-                      className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
-                    >
-                      <option value="SUPERVISOR">👷 Supervisor</option>
-                      <option value="ADMINISTRATIVO">💼 Administrativo</option>
-                      <option value="VISOR">👁️ Visor (Solo lectura)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">
-                      🔗 Vincular a Empleado Existente:
-                    </label>
-                    
-                    {/* 🔥 INPUT DE BÚSQUEDA DINÁMICA */}
-                    <div className="relative mb-2">
-                      <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                      <input 
-                        type="text"
-                        placeholder="Buscar por nombre, número o puesto..."
-                        value={modalConfirmacion.busquedaEmpleado}
-                        onChange={(e) => setModalConfirmacion(prev => ({ ...prev, busquedaEmpleado: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-lg pl-9 p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm"
-                      />
-                    </div>
-
-                    <select 
-                      value={modalConfirmacion.empleadoSeleccionado}
-                      onChange={(e) => setModalConfirmacion(prev => ({ ...prev, empleadoSeleccionado: e.target.value }))}
-                      className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
-                      size={empleadosFiltrados.length > 0 ? Math.min(empleadosFiltrados.length, 6) : 1}
-                    >
-                      <option value="">-- Sin vincular (crear solo usuario) --</option>
-                      
-                      {empleadosFiltrados.length === 0 && modalConfirmacion.busquedaEmpleado !== "" && (
-                        <option disabled className="text-red-500">No se encontraron empleados con ese criterio</option>
-                      )}
-                      
-                      {empleadosFiltrados.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                          #{emp.numero_empleado || "S/N"} - {emp.nombre_completo || "Sin nombre"} 
-                          {emp.puesto ? ` (${emp.puesto})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-slate-500 mt-1">
-                      💡 Mostrando {empleadosFiltrados.length} de {empleados.length} empleados.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* 🔥 ALERTA ESPECIAL PARA ELIMINACIÓN */}
-              {modalConfirmacion.accion === "eliminar" && (
-                <div className="mt-4 bg-red-50 border-2 border-red-300 rounded-lg p-3 text-left">
-                  <p className="text-sm text-red-800 font-semibold">⚠️ ADVERTENCIA</p>
-                  <p className="text-xs text-red-700 mt-1">
-                    Esta acción es <strong>IRREVERSIBLE</strong>. Se eliminarán:
-                  </p>
-                  <ul className="text-xs text-red-700 mt-2 list-disc list-inside space-y-1">
-                    <li>El perfil del usuario en la base de datos</li>
-                    <li>La solicitud de esta lista</li>
-                    <li>Todos los datos asociados</li>
-                  </ul>
-                  <p className="text-xs text-red-700 mt-2">
-                    💡 Si solo quieres bloquear el acceso temporalmente, usa "Dar de Baja" en su lugar.
-                  </p>
-                </div>
-              )}
-
-              {/* 🔥 ALERTA ESPECIAL PARA BAJA */}
-              {modalConfirmacion.accion === "baja" && (
-                <div className="mt-4 bg-orange-50 border-2 border-orange-300 rounded-lg p-3 text-left">
-                  <p className="text-sm text-orange-800 font-semibold">ℹ️ ¿Qué sucede al dar de baja?</p>
-                  <ul className="text-xs text-orange-700 mt-2 list-disc list-inside space-y-1">
-                    <li>El usuario NO podrá iniciar sesión</li>
-                    <li>Sus datos se CONSERVAN en el sistema</li>
-                    <li>Puede ser reactivado desde el módulo de Usuarios</li>
-                    <li>Se registra la fecha de baja</li>
-                  </ul>
-                </div>
-              )}
-
-              <div className="bg-slate-50 rounded-lg p-3 mt-3 text-left">
-                <div className="font-bold text-slate-800">{modalConfirmacion.solicitud.nombre}</div>
-                <div className="text-xs text-slate-600 font-mono">{modalConfirmacion.solicitud.correo || modalConfirmacion.solicitud.email}</div>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button 
-                onClick={() => setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }))} 
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={ejecutarAccion}
-                disabled={loading}
-                className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.colorBoton || "bg-blue-600")}
-              >
-                {loading ? "Procesando..." : modalConfirmacion.textoBoton}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                            className="bg-red-700 hover:bg-red-80

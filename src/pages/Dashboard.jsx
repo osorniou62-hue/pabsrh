@@ -44,31 +44,35 @@ export default function Dashboard() {
         return;
       }
 
-      // 🔥 NORMALIZAR EL ROL para evitar problemas de mayúsculas/minúsculas
+      // 🔥 NORMALIZAR EL ROL
       const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
       setRolUsuario(rolNormalizado);
 
-      // 🔥 BÚSQUEDA SOLO POR id_usuario (vinculación oficial)
-      const { data: empleadoVinculado } = await supabase
-        .from("empleados")
-        .select("id")
-        .eq("id_usuario", user.id)
-        .maybeSingle();
-
-      if (!empleadoVinculado) {
-        console.warn("⚠️ No hay empleado vinculado a este usuario (id_usuario):", user.id);
-        alert(MENSAJE_SIN_PERFIL);
-        await supabase.auth.signOut();
-        navigate("/login", { replace: true });
-        return;
-      }
-
-      // 🔥 REDIRECCIÓN AUTOMÁTICA DE SEGURIDAD (por si acaso llega aquí siendo supervisor)
+      // 🔥 LÓGICA DE VINCULACIÓN DIFERENCIADA POR ROL
       if (rolNormalizado === "SUPERVISOR" || rolNormalizado === "VISOR") {
-        console.log("👷 Usuario es supervisor/visor, redirigiendo al portal...");
+        // Supervisores y Visores SÍ deben estar vinculados a un empleado
+        const { data: empleadoVinculado } = await supabase
+          .from("empleados")
+          .select("id")
+          .eq("id_usuario", user.id)
+          .maybeSingle();
+
+        if (!empleadoVinculado) {
+          console.warn("⚠️ No hay empleado vinculado a este supervisor (id_usuario):", user.id);
+          alert(MENSAJE_SIN_PERFIL);
+          await supabase.auth.signOut();
+          navigate("/login", { replace: true });
+          return;
+        }
+        
+        // Si es supervisor, redirigirlo directamente a su portal
         navigate("/incidencias/supervisor", { replace: true });
         return;
       }
+
+      // 🔥 Para ADMIN y otros roles de gestión, NO se exige vinculación con la tabla empleados
+      // Pueden acceder al Dashboard libremente.
+      console.log("✅ Acceso concedido al Dashboard para rol:", rolNormalizado);
 
     } catch (err) {
       console.error("Error:", err);

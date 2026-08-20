@@ -28,8 +28,7 @@ export default function IncidenciasSupervisor() {
   const [supervisorActual, setSupervisorActual] = useState(null);
   const [empleadosSupervisados, setEmpleadosSupervisados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
-  const [periodos, setPeriodos] = useState([]);
-  const [periodoId, setPeriodoId] = useState("");
+  const [periodoActivo, setPeriodoActivo] = useState(null); // 🔥 Cambiado a un solo objeto
   const [columnasSupervisor, setColumnasSupervisor] = useState([]);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -62,26 +61,19 @@ export default function IncidenciasSupervisor() {
         }
 
         // 2. 🔍 BÚSQUEDA ESTRICTA POR id_usuario (SIN JOINS AMBIGUOS)
-        console.log("🔍 Buscando supervisor por id_usuario:", user.id);
         const { data: supervisorData, error: errSup } = await supabase
           .from("empleados")
-          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo") // 🔥 Consulta plana, sin relaciones anidadas
+          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo")
           .eq("id_usuario", user.id)
           .maybeSingle();
 
-        if (errSup) {
-          console.error("❌ Error buscando supervisor:", errSup.message);
-        }
-
         if (!supervisorData) {
-          console.warn("⚠️ No hay empleado vinculado a este usuario (id_usuario):", user.id);
           alert(MENSAJE_SIN_PERFIL);
           await supabase.auth.signOut();
           navigate("/login");
           return;
         }
 
-        console.log("✅ Supervisor encontrado:", supervisorData.nombre_completo);
         setSupervisorActual(supervisorData);
 
         // 3. Cargar períodos y configuración
@@ -90,8 +82,24 @@ export default function IncidenciasSupervisor() {
           supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle(),
         ]);
 
-        setPeriodos(resPeriodos.data || []);
-        if (resPeriodos.data?.length > 0) setPeriodoId(resPeriodos.data[0].id);
+        // 🔥 FILTRAR PARA OBTENER SOLO EL PERÍODO ACTIVO
+        const todosLosPeriodos = resPeriodos.data || [];
+        const hoy = new Date();
+        
+        const periodoEncontrado = todosLosPeriodos.find(p => {
+          const inicio = new Date(p.fecha_inicio);
+          const fin = new Date(p.fecha_fin);
+          // Ajustamos la hora para evitar problemas de zona horaria al comparar fechas
+          return hoy >= new Date(inicio.setHours(0,0,0,0)) && hoy <= new Date(fin.setHours(23,59,59,999));
+        }) || todosLosPeriodos[0]; // Fallback al más reciente si no hay coincidencia exacta de fechas
+
+        if (periodoEncontrado) {
+          setPeriodoActivo(periodoEncontrado);
+        } else {
+          alert("⚠️ No hay períodos de nómina configurados en el sistema.");
+          navigate("/dashboard");
+          return;
+        }
 
         // 4. Cargar columnas permitidas para supervisor
         let config = resConfig.data?.configuracion;
@@ -114,14 +122,13 @@ export default function IncidenciasSupervisor() {
         }
 
         // 5. Cargar empleados a cargo (SIN JOINS AMBIGUOS)
-        const { data: empleadosData, error: errEmps } = await supabase
+        const { data: empleadosData } = await supabase
           .from("empleados")
-          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo") // 🔥 Consulta plana
+          .select("id, nombre_completo, numero_empleado, puesto, departamento, activo")
           .eq("supervisor_id", supervisorData.id)
           .eq("activo", true)
           .order("nombre_completo");
         
-        if (errEmps) console.error("Error cargando empleados:", errEmps.message);
         setEmpleadosSupervisados(empleadosData || []);
 
       } catch (err) {
@@ -133,9 +140,9 @@ export default function IncidenciasSupervisor() {
     cargarInicial();
   }, [navigate]);
 
-  // Cargar incidencias del período
+  // Cargar incidencias del período activo
   useEffect(() => {
-    if (!periodoId || !supervisorActual) return;
+    if (!periodoActivo || !supervisorActual) return;
     const cargarIncidencias = async () => {
       const idsEmpleados = empleadosSupervisados.map(e => e.id);
       if (idsEmpleados.length === 0) {
@@ -145,12 +152,12 @@ export default function IncidenciasSupervisor() {
       const { data, error } = await supabase
         .from("incidencias")
         .select("*")
-        .eq("periodo_id", periodoId)
+        .eq("periodo_id", periodoActivo.id)
         .in("empleado_id", idsEmpleados);
       if (!error) setIncidencias(data || []);
     };
     cargarIncidencias();
-  }, [periodoId, empleadosSupervisados, supervisorActual]);
+  }, [periodoActivo, empleadosSupervisados, supervisorActual]);
 
   // Guardar captura
   const guardarCaptura = async (empleadoId, valores) => {
@@ -158,7 +165,7 @@ export default function IncidenciasSupervisor() {
     try {
       const payload = limpiarPayload({
         empleado_id: empleadoId,
-        periodo_id: Number(periodoId),
+        periodo_id: periodoActivo.id, // 🔥 Forzamos el uso del período activo
         estado: "pendiente",
         ...valores,
       });
@@ -167,7 +174,7 @@ export default function IncidenciasSupervisor() {
         .from("incidencias")
         .select("id")
         .eq("empleado_id", empleadoId)
-        .eq("periodo_id", periodoId)
+        .eq("periodo_id", periodoActivo.id)
         .maybeSingle();
 
       let error;
@@ -183,7 +190,7 @@ export default function IncidenciasSupervisor() {
       setModalCaptura({ abierto: false, empleado: null });
       
       const idsEmpleados = empleadosSupervisados.map(e => e.id);
-      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId).in("empleado_id", idsEmpleados);
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoActivo.id).in("empleado_id", idsEmpleados);
       setIncidencias(data || []);
     } catch (err) {
       alert("Error al guardar: " + err.message);
@@ -215,7 +222,6 @@ export default function IncidenciasSupervisor() {
     return { total, conCaptura, pendientes, sinCaptura: total - conCaptura };
   }, [empleadosSupervisados, incidencias]);
 
-  const periodoActual = periodos.find(p => p.id === periodoId);
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
     navigate("/login");
@@ -279,26 +285,30 @@ export default function IncidenciasSupervisor() {
           </div>
         </div>
 
-        {supervisorActual && (
+        {supervisorActual && periodoActivo && (
           <>
-            {/* SELECTOR DE PERÍODO */}
+            {/* 🔥 VISUALIZACIÓN DE PERÍODO ACTIVO (SOLO LECTURA) */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
               <div className="flex flex-col md:flex-row items-center gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-xl">📅</div>
                   <div>
-                    <div className="text-xs text-slate-500 font-semibold uppercase">Período</div>
-                    <div className="text-sm font-bold text-slate-800">Selecciona el período activo</div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Período Activo</div>
+                    <div className="text-sm font-bold text-slate-800">Solo puedes capturar incidencias en el período actual</div>
                   </div>
                 </div>
-                <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-slate-200 rounded-xl p-3 bg-slate-50 font-semibold focus:ring-2 focus:ring-blue-500 outline-none">
-                  {periodos.map(p => <option key={p.id} value={p.id}>{p.descripcion}</option>)}
-                </select>
-                {periodoActual && (
-                  <div className="text-xs bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-medium">
-                    📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}
-                  </div>
-                )}
+                
+                {/* Campo de solo lectura que muestra el período activo */}
+                <div className="flex-1 w-full bg-slate-50 border-2 border-slate-200 rounded-xl p-3 font-semibold text-slate-700 flex items-center justify-between">
+                  <span>{periodoActivo.descripcion || "Período sin nombre"}</span>
+                  <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-bold flex items-center gap-1">
+                    🔒 Bloqueado
+                  </span>
+                </div>
+
+                <div className="text-xs bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-medium whitespace-nowrap">
+                  📆 {new Date(periodoActivo.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActivo.fecha_fin).toLocaleDateString('es-MX')}
+                </div>
               </div>
             </div>
 
@@ -408,6 +418,7 @@ export default function IncidenciasSupervisor() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <ModalCapturaSupervisor
             empleado={modalCaptura.empleado}
+            periodo={periodoActivo}
             columnas={columnasSupervisor}
             guardando={guardando}
             onGuardar={guardarCaptura}
@@ -420,7 +431,7 @@ export default function IncidenciasSupervisor() {
 }
 
 // COMPONENTE MODAL DE CAPTURA
-function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCerrar }) {
+function ModalCapturaSupervisor({ empleado, periodo, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
     columnas.forEach(col => { init[col.campo] = empleado.incidencia?.[col.campo] ?? 0; });
@@ -434,7 +445,12 @@ function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCe
           <div>
             <h3 className="text-lg font-bold flex items-center gap-2"><span>📝</span> Captura de Incidencia</h3>
             <p className="text-sm text-white/90 mt-1"><strong>{empleado.nombre_completo}</strong></p>
-            <p className="text-xs text-white/70 mt-0.5">{empleado.puesto || "Sin puesto"} · {empleado.departamento || "Sin departamento"}</p>
+            <p className="text-xs text-white/70 mt-0.5">
+              {empleado.puesto || "Sin puesto"} · {empleado.departamento || "Sin departamento"}
+            </p>
+            <p className="text-xs text-blue-100 mt-1 font-semibold">
+              📅 Período: {periodo?.descripcion}
+            </p>
           </div>
           <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl leading-none">✕</button>
         </div>

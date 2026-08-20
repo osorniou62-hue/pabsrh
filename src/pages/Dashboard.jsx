@@ -5,9 +5,8 @@ import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
 const MENSAJE_SIN_PERFIL = 
-  "No hemos podido asociar tu cuenta con un perfil activo.\n\n" +
-  "Esto puede deberse a que tu registro aún está en proceso de validación.\n\n" +
-  "Por favor, contacta a soporte técnico indicando tu correo electrónico registrado.";
+  "No hemos podido asociar tu cuenta con un perfil de empleado activo.\n\n" +
+  "Por favor, contacta a Recursos Humanos indicando tu correo electrónico registrado.";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -18,33 +17,21 @@ export default function Dashboard() {
   const [rolUsuario, setRolUsuario] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    verificarAcceso();
-  }, [navigate]);
-
-  useEffect(() => {
-    if (rolUsuario) {
-      cargarIndicadores();
-    }
-  }, [rolUsuario]);
+  useEffect(() => { verificarAcceso(); }, [navigate]);
+  useEffect(() => { if (rolUsuario) cargarIndicadores(); }, [rolUsuario]);
 
   const verificarAcceso = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        navigate("/login", { replace: true });
-        return;
-      }
+      if (!user) { navigate("/login", { replace: true }); return; }
 
-      const { data: perfil, error } = await supabase
+      const { data: perfil } = await supabase
         .from("profiles")
         .select("rol, nombre, activo")
         .eq("id", user.id)
         .maybeSingle();
 
-      if (error || !perfil) {
-        console.warn("⚠️ No se encontró perfil para el usuario:", user.id);
+      if (!perfil) {
         await supabase.auth.signOut();
         navigate("/login", { replace: true });
         return;
@@ -57,15 +44,29 @@ export default function Dashboard() {
         return;
       }
 
+      // 🔥 BÚSQUEDA SOLO POR id_usuario (vinculación oficial)
+      const { data: empleadoVinculado } = await supabase
+        .from("empleados")
+        .select("id")
+        .eq("id_usuario", user.id)
+        .maybeSingle();
+
+      if (!empleadoVinculado) {
+        console.warn("⚠️ No hay empleado vinculado a este usuario (id_usuario):", user.id);
+        alert(MENSAJE_SIN_PERFIL);
+        await supabase.auth.signOut();
+        navigate("/login", { replace: true });
+        return;
+      }
+
       setRolUsuario(perfil.rol);
 
       if (perfil.rol === "SUPERVISOR" || perfil.rol === "VISOR") {
         navigate("/incidencias/supervisor", { replace: true });
         return;
       }
-
     } catch (err) {
-      console.error("Error verificando acceso:", err);
+      console.error("Error:", err);
       navigate("/login", { replace: true });
     } finally {
       setLoading(false);
@@ -80,7 +81,6 @@ export default function Dashboard() {
         supabase.from("departamentos").select("*", { count: "exact", head: true }),
         supabase.from("puestos").select("*", { count: "exact", head: true })
       ]);
-
       setActivos(resActivos.count || 0);
       setBajas(resBajas.count || 0);
       setDepartamentos(resDepts.count || 0);
@@ -107,10 +107,7 @@ export default function Dashboard() {
     return (
       <Layout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin text-6xl mb-4">⏳</div>
-            <p className="text-slate-600 font-semibold">Verificando acceso...</p>
-          </div>
+          <div className="text-center"><div className="animate-spin text-6xl mb-4">⏳</div><p className="text-slate-600 font-semibold">Verificando acceso...</p></div>
         </div>
       </Layout>
     );
@@ -123,18 +120,10 @@ export default function Dashboard() {
           <h1 className="text-4xl font-bold text-slate-800">Dashboard</h1>
           <p className="text-gray-500 mt-2">Bienvenido al Sistema RH y Nómina</p>
           <div className="mt-3">
-            <span className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide">
-              🔐 Rol: {rolUsuario}
-            </span>
+            <span className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide">🔐 Rol: {rolUsuario}</span>
           </div>
         </div>
-
-        <button
-          onClick={cerrarSesion}
-          className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl transition font-semibold shadow-sm flex items-center gap-2"
-        >
-          🚪 Cerrar Sesión
-        </button>
+        <button onClick={cerrarSesion} className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl transition font-semibold shadow-sm flex items-center gap-2">🚪 Cerrar Sesión</button>
       </div>
 
       <div className="grid md:grid-cols-4 gap-6 mb-10">

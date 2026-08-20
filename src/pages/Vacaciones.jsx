@@ -12,15 +12,15 @@ export default function Vacaciones() {
   // Estados para Importación y Mapeo
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [archivoVacaciones, setArchivoVacaciones] = useState(null);
-  const [datosImportados, setDatosImportados] = useState([]); // Datos crudos procesados
-  const [modoRevision, setModoRevision] = useState(false); // Modo administrador para editar antes de guardar
+  const [datosImportados, setDatosImportados] = useState([]);
+  const [modoRevision, setModoRevision] = useState(false);
 
   // Búsqueda y Filtros
   const [busquedaTexto, setBusquedaTexto] = useState("");
   const [empleadoSeleccionadoId, setEmpleadoSeleccionadoId] = useState("");
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [busquedaActiva, setBusquedaActiva] = useState(false);
-  const [deptoExpandido, setDeptoExpandido] = useState({}); // Para colapsar/expandir departamentos
+  const [deptoExpandido, setDeptoExpandido] = useState({});
 
   // Modal Kardex
   const [modalKardexEmpleado, setModalKardexEmpleado] = useState(null);
@@ -66,23 +66,49 @@ export default function Vacaciones() {
     }
   };
 
+  // 🔥 CORREGIDO: Consulta segura y ordenamiento local
   const cargarEmpleados = async () => {
-    const { data } = await supabase
-      .from("empleados")
-      .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo")
-      .eq("activo", true)
-      .order("departamento")
-      .then(res => res.data)
-      .then(data => data.sort((a, b) => (a.departamento || "").localeCompare(b.departamento || "")));
-    setEmpleados(data || []);
+    try {
+      const { data, error } = await supabase
+        .from("empleados")
+        .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo")
+        .eq("activo", true);
+
+      if (error) {
+        console.error("Error cargando empleados:", error);
+        setEmpleados([]);
+        return;
+      }
+
+      // Ordenar localmente por Departamento y luego por Puesto
+      const datosOrdenados = (data || []).sort((a, b) => {
+        const deptoA = (a.departamento || "Sin Departamento").toLowerCase();
+        const deptoB = (b.departamento || "Sin Departamento").toLowerCase();
+        if (deptoA !== deptoB) return deptoA.localeCompare(deptoB);
+        
+        const puestoA = (a.puesto || "Sin Puesto").toLowerCase();
+        const puestoB = (b.puesto || "Sin Puesto").toLowerCase();
+        return puestoA.localeCompare(puestoB);
+      });
+
+      setEmpleados(datosOrdenados);
+    } catch (err) {
+      console.error("Excepción en cargarEmpleados:", err);
+      setEmpleados([]);
+    }
   };
 
   const cargarVacaciones = async () => {
-    const { data } = await supabase
-      .from("vacaciones")
-      .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)")
-      .order("created_at", { ascending: false });
-    setVacaciones(data || []);
+    try {
+      const { data, error } = await supabase
+        .from("vacaciones")
+        .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)")
+        .order("created_at", { ascending: false });
+      
+      if (!error) setVacaciones(data || []);
+    } catch (err) {
+      console.error("Error cargando vacaciones:", err);
+    }
   };
 
   // --- LÓGICA DE IMPORTACIÓN Y MAPEO ---
@@ -103,7 +129,6 @@ export default function Vacaciones() {
           return;
         }
 
-        // Crear diccionario de mapeo: Header Excel -> Campo BD
         const mapeo = {};
         Object.entries(configuracionMapeo.asignacion).forEach(([colExcel, info]) => {
           if (info.tablaDestino === "vacaciones" || info.tablaDestino === "empleados") {
@@ -112,11 +137,10 @@ export default function Vacaciones() {
         });
 
         const datosProcesados = rows.map((fila, index) => {
-          // Buscar empleado por número o nombre
-          const numEmp = Object.keys(fila).find(k => k.toUpperCase().includes("NUMERO") || k.toUpperCase().includes("NO."));
-          const nombreEmp = Object.keys(fila).find(k => k.toUpperCase().includes("NOMBRE") || k.toUpperCase().includes("COLABORADOR"));
+          const numEmpKey = Object.keys(fila).find(k => k.toUpperCase().includes("NUMERO") || k.toUpperCase().includes("NO."));
+          const nombreEmpKey = Object.keys(fila).find(k => k.toUpperCase().includes("NOMBRE") || k.toUpperCase().includes("COLABORADOR"));
           
-          const valorBusqueda = numEmp ? String(fila[numEmp]).trim() : (nombreEmp ? String(fila[nombreEmp]).trim() : "");
+          const valorBusqueda = numEmpKey ? String(fila[numEmpKey]).trim() : (nombreEmpKey ? String(fila[nombreEmpKey]).trim() : "");
           
           const empleadoMatch = empleados.find(emp => 
             String(emp.numero_empleado) === valorBusqueda || 
@@ -132,7 +156,6 @@ export default function Vacaciones() {
             datos_vacaciones: {}
           };
 
-          // Mapear columnas restantes
           Object.keys(fila).forEach(keyExcel => {
             const campoBD = mapeo[keyExcel.trim().toUpperCase()];
             if (campoBD && campoBD !== "numero_empleado" && campoBD !== "nombre_completo") {
@@ -140,16 +163,15 @@ export default function Vacaciones() {
             }
           });
 
-          // Valores por defecto si no vienen en el Excel
           if (!registro.datos_vacaciones.tipo_vacaciones) registro.datos_vacaciones.tipo_vacaciones = "TOMADAS_Y_PAGADAS";
-          if (!registro.datos_vacaciones.estatus) registro.datos_vacaciones.estatus = "APROBADO"; // Asumimos aprobado en importación
+          if (!registro.datos_vacaciones.estatus) registro.datos_vacaciones.estatus = "APROBADO";
 
           return registro;
         });
 
         setDatosImportados(datosProcesados);
         setModoRevision(true);
-        alert(`✅ Se procesaron ${datosProcesados.length} filas. Revisa la tabla de abajo antes de guardar.`);
+        alert(`✅ Se procesaron ${datosProcesados.length} filas. Revisa la tabla antes de guardar.`);
       } catch (error) {
         console.error(error);
         alert("Error al leer el archivo Excel.");
@@ -188,7 +210,6 @@ export default function Vacaciones() {
     }
   };
 
-  // Actualizar un campo específico en la cuadrícula de revisión
   const actualizarDatoImportado = (idFila, campo, valor) => {
     setDatosImportados(prev => prev.map(item => {
       if (item.id_fila === idFila) {
@@ -214,8 +235,9 @@ export default function Vacaciones() {
     return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
   };
 
-  // Agrupar empleados por Departamento -> Puesto
   const empleadosAgrupados = useMemo(() => {
+    if (!Array.isArray(empleados)) return {};
+    
     const filtrados = empleados.filter(e => 
       !busquedaActiva || String(e.id) === String(empleadoSeleccionadoId)
     );
@@ -235,7 +257,7 @@ export default function Vacaciones() {
     setDeptoExpandido(prev => ({ ...prev, [depto]: !prev[depto] }));
   };
 
-  // --- RESTO DE FUNCIONES (Reglas, Kardex, Forms) ---
+  // --- RESTO DE FUNCIONES ---
   const guardarReglaGlobal = async () => {
     if (diasReglaInput === "" || Number(diasReglaInput) < 0) return alert("Cantidad inválida");
     const { error } = await supabase.from("regla_vacaciones").upsert({ ano: Number(anoReglaInput), dias: Number(diasReglaInput) }, { onConflict: "ano" });
@@ -316,7 +338,7 @@ export default function Vacaciones() {
           </div>
         </div>
 
-        {/* 2. IMPORTACIÓN MASIVA CON MAPEO (NUEVO) */}
+        {/* 2. IMPORTACIÓN MASIVA CON MAPEO */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones (Excel)</h2>
           <p className="text-xs text-slate-500 mb-4">El sistema usará la "Configuración de Tablas" para mapear las columnas. Podrás revisar y corregir los datos antes de guardar.</p>
@@ -341,7 +363,6 @@ export default function Vacaciones() {
                     <tr>
                       <th className="p-3 border-b">Estado</th>
                       <th className="p-3 border-b">Empleado Detectado</th>
-                      {/* Columnas dinámicas basadas en los datos importados */}
                       {datosImportados.length > 0 && Object.keys(datosImportados[0].datos_vacaciones).map(key => (
                         <th key={key} className="p-3 border-b capitalize">{key.replace(/_/g, ' ')}</th>
                       ))}
@@ -360,7 +381,6 @@ export default function Vacaciones() {
                         </td>
                         {fila.empleado_id && Object.keys(fila.datos_vacaciones).map(key => (
                           <td key={key} className="p-2">
-                            {/* Inputs editables para que el admin corrija antes de guardar */}
                             {key.includes('fecha') ? (
                               <input type="date" value={fila.datos_vacaciones[key] || ""} onChange={(e) => actualizarDatoImportado(fila.id_fila, key, e.target.value)} className="w-full border rounded px-2 py-1" />
                             ) : key === 'tipo_vacaciones' ? (
@@ -410,7 +430,6 @@ export default function Vacaciones() {
             ) : (
               Object.entries(empleadosAgrupados).map(([depto, puestos]) => (
                 <div key={depto} className="border border-slate-200 rounded-xl overflow-hidden">
-                  {/* Cabecera de Departamento */}
                   <button onClick={() => toggleDepto(depto)} className="w-full bg-slate-100 hover:bg-slate-200 p-3 flex justify-between items-center transition">
                     <span className="font-bold text-slate-800 flex items-center gap-2">
                       {deptoExpandido[depto] ? "📂" : "📁"} {depto}
@@ -418,7 +437,6 @@ export default function Vacaciones() {
                     <span className="text-xs bg-slate-300 text-slate-700 px-2 py-1 rounded-full">{Object.values(puestos).flat().length} empleados</span>
                   </button>
 
-                  {/* Contenido del Departamento */}
                   {deptoExpandido[depto] && (
                     <div className="divide-y divide-slate-100">
                       {Object.entries(puestos).map(([puesto, emps]) => (

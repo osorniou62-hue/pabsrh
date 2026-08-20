@@ -21,7 +21,6 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
 
-    // 1. Autenticar con Supabase Auth
     const { data, error } = await supabase.auth.signInWithPassword({
       email: correo,
       password,
@@ -40,14 +39,11 @@ export default function Login() {
       return;
     }
 
-    // 2. Buscar el perfil del usuario en la base de datos
-    // ⚠️ IMPORTANTE: Si tu tabla de usuarios se llama "empleados" en lugar de "profiles", 
-    // cambia "profiles" por "empleados" en la siguiente línea.
     const { data: perfil, error: perfilError } = await supabase
       .from("profiles") 
-      .select("*")
+      .select("rol, activo")
       .eq("id", usuario.id)
-      .single();
+      .maybeSingle();
 
     if (perfilError || !perfil) {
       setLoading(false);
@@ -56,21 +52,22 @@ export default function Login() {
       return;
     }
 
-    // 3. Verificar que el usuario esté activo
-    if (!perfil.activo) {
+    if (perfil.activo === false) {
       setLoading(false);
       alert("Tu cuenta está inactiva o pendiente de aprobación.");
       await supabase.auth.signOut();
       return;
     }
 
-    // 4. 🔥 REDIRECCIÓN INTELIGENTE SEGÚN EL ROL 🔥
-    if (perfil.rol === "supervisor") {
-      // Si es supervisor, va directo a su portal simplificado
-      navigate("/incidencias/supervisor");
+    // 🔥 NORMALIZAR EL ROL: Convierte a mayúsculas y quita espacios para comparar sin errores
+    const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
+    console.log("🔐 Rol detectado en Login:", rolNormalizado);
+
+    // 🔥 REDIRECCIÓN INTELIGENTE SEGÚN EL ROL NORMALIZADO
+    if (rolNormalizado === "SUPERVISOR" || rolNormalizado === "VISOR") {
+      navigate("/incidencias/supervisor", { replace: true });
     } else {
-      // Si es admin, rh, o cualquier otro rol, va al dashboard principal
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
     }
     
     setLoading(false);
@@ -163,7 +160,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Modal de Solicitud de Registro */}
       {mostrarRegistro && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-200">

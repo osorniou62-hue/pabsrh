@@ -44,6 +44,10 @@ export default function Dashboard() {
         return;
       }
 
+      // 🔥 NORMALIZAR EL ROL para evitar problemas de mayúsculas/minúsculas
+      const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
+      setRolUsuario(rolNormalizado);
+
       // 🔥 BÚSQUEDA SOLO POR id_usuario (vinculación oficial)
       const { data: empleadoVinculado } = await supabase
         .from("empleados")
@@ -59,12 +63,13 @@ export default function Dashboard() {
         return;
       }
 
-      setRolUsuario(perfil.rol);
-
-      if (perfil.rol === "SUPERVISOR" || perfil.rol === "VISOR") {
+      // 🔥 REDIRECCIÓN AUTOMÁTICA DE SEGURIDAD (por si acaso llega aquí siendo supervisor)
+      if (rolNormalizado === "SUPERVISOR" || rolNormalizado === "VISOR") {
+        console.log("👷 Usuario es supervisor/visor, redirigiendo al portal...");
         navigate("/incidencias/supervisor", { replace: true });
         return;
       }
+
     } catch (err) {
       console.error("Error:", err);
       navigate("/login", { replace: true });

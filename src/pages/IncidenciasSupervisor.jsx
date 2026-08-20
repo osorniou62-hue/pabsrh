@@ -1,603 +1,482 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 
-export default function SolicitudesUsuario() {
-  const [solicitudes, setSolicitudes] = useState([]);
+const formatearNombreColumna = (texto) => String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+const esCampoMonetario = (campo) => {
+  const n = String(campo || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total', 'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss', 'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
+};
+
+const limpiarPayload = (payload) => {
+  const limpio = { ...payload };
+  ['id', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete limpio[k]);
+  Object.keys(limpio).forEach(k => {
+    if (limpio[k] === "" || limpio[k] === null || limpio[k] === undefined) delete limpio[k];
+  });
+  return limpio;
+};
+
+const MENSAJE_SIN_PERFIL = 
+  "No hemos podido asociar tu cuenta con un perfil de empleado activo.\n\n" +
+  "Por favor, contacta a Recursos Humanos indicando tu correo electrónico registrado.";
+
+export default function IncidenciasSupervisor() {
+  const navigate = useNavigate();
+  
+  const [supervisorActual, setSupervisorActual] = useState(null);
+  const [empleadosSupervisados, setEmpleadosSupervisados] = useState([]);
+  const [incidencias, setIncidencias] = useState([]);
+  const [periodos, setPeriodos] = useState([]);
+  const [periodoId, setPeriodoId] = useState("");
+  const [columnasSupervisor, setColumnasSupervisor] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState("PENDIENTES");
-  const [empleados, setEmpleados] = useState([]);
+  const [guardando, setGuardando] = useState(false);
 
-  const [modalConfirmacion, setModalConfirmacion] = useState({
-    abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR",
-    empleadoSeleccionado: "", busquedaEmpleado: "", titulo: "", descripcion: "",
-    colorIcono: "", icono: "", colorBoton: "", textoBoton: ""
-  });
-
-  const [modalPasswordAdmin, setModalPasswordAdmin] = useState({
-    abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: ""
-  });
+  const [busqueda, setBusqueda] = useState("");
+  const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
 
   useEffect(() => {
-    cargarSolicitudes();
-    cargarEmpleados();
-  }, []);
-
-  const cargarSolicitudes = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("solicitudes_usuario")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) console.error("Error cargando solicitudes:", error);
-      else setSolicitudes(data || []);
-    } catch (err) {
-      console.error("Excepción:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const cargarEmpleados = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("empleados")
-        .select("id, nombre_completo, numero_empleado, puesto, departamento, activo")
-        .eq("activo", true)
-        .order("nombre_completo");
-
-      if (error) {
-        const { data: dataFallback } = await supabase
-          .from("empleados")
-          .select("id, nombre_completo, numero_empleado, puesto")
-          .order("nombre_completo");
-        if (dataFallback) setEmpleados(dataFallback);
-      } else {
-        setEmpleados(data || []);
-      }
-    } catch (err) {
-      console.error("Excepción en cargarEmpleados:", err);
-    }
-  };
-
-  const solicitudesFiltradas = solicitudes.filter(s => {
-    if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
-    if (filtro === "APROBADAS") return s.estatus === "APROBADA";
-    if (filtro === "RECHAZADAS") return s.estatus === "RECHAZADA";
-    return true;
-  });
-
-  const pendientes = solicitudes.filter(s => s.estatus === "PENDIENTE").length;
-  const aprobadas = solicitudes.filter(s => s.estatus === "APROBADA").length;
-  const rechazadas = solicitudes.filter(s => s.estatus === "RECHAZADA").length;
-
-  const solicitarAprobacion = (solicitud) => {
-    setModalConfirmacion({
-      abierto: true, solicitud, accion: "aprobar",
-      rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "", busquedaEmpleado: "",
-      titulo: "Aprobar Solicitud",
-      descripcion: "Se creará una cuenta con el rol y vinculación seleccionados.",
-      colorIcono: "bg-emerald-100", icono: "✅",
-      colorBoton: "bg-emerald-600 hover:bg-emerald-700",
-      textoBoton: "✅ Continuar"
-    });
-  };
-
-  const confirmarAprobacionInicial = () => {
-    const { solicitud, rolSeleccionado, empleadoSeleccionado } = modalConfirmacion;
-    setModalPasswordAdmin({
-      abierto: true, password: "", solicitud, rolSeleccionado, empleadoSeleccionado
-    });
-    setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-  };
-
-  // 🔥 APROBACIÓN: Vinculación SOLO por empleado seleccionado
-  const ejecutarAprobacion = async (solicitud, rol, empleadoId, passwordAdmin) => {
-    try {
+    const cargarInicial = async () => {
       setLoading(true);
-
-      const { data: { user: adminUser } } = await supabase.auth.getUser();
-      const emailAdmin = adminUser?.email;
-
-      if (!emailAdmin || !passwordAdmin) {
-        throw new Error("No se pudo obtener las credenciales del administrador");
-      }
-
-      const correoRaw = solicitud.correo || solicitud.email || "";
-      const passwordRaw = solicitud.password || "";
-      const correoLimpio = String(correoRaw).trim().toLowerCase();
-      const passwordLimpio = String(passwordRaw).trim();
-
-      if (!correoLimpio || !correoLimpio.includes('@')) {
-        alert("⚠️ El correo electrónico es inválido.");
-        setLoading(false);
-        return;
-      }
-      if (passwordLimpio.length < 6) {
-        alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
-        setLoading(false);
-        return;
-      }
-
-      // 🔥 VALIDACIÓN: Si se seleccionó un empleado, verificar que exista
-      let empleadoInfo = null;
-      if (empleadoId) {
-        empleadoInfo = empleados.find(e => String(e.id) === String(empleadoId));
-        if (!empleadoInfo) {
-          alert("⚠️ El empleado seleccionado no existe. Selecciona un empleado válido.");
-          setLoading(false);
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          navigate("/login");
           return;
         }
-      }
 
-      // 1. Crear usuario en Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: correoLimpio,
-        password: passwordLimpio,
-        options: { data: { nombre: solicitud.nombre, rol: rol } },
-      });
+        // 1. Verificar rol
+        const { data: perfil } = await supabase
+          .from("profiles")
+          .select("rol")
+          .eq("id", user.id)
+          .maybeSingle();
 
-      if (authError) {
-        if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
-          alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.");
-          setLoading(false);
+        const rolNormalizado = String(perfil?.rol || "").trim().toUpperCase();
+        if (rolNormalizado !== "SUPERVISOR" && rolNormalizado !== "VISOR") {
+          alert("⛔ Acceso denegado. Esta sección es exclusiva para Supervisores.");
+          navigate("/dashboard");
           return;
         }
-        throw new Error("Error de autenticación: " + authError.message);
-      }
 
-      const nuevoUserId = authData.user?.id;
-      if (!nuevoUserId) throw new Error("No se pudo crear el usuario");
-
-      // 2. Crear perfil
-      const { error: profileError } = await supabase.from("profiles").upsert(
-        { id: nuevoUserId, nombre: solicitud.nombre, rol: rol, activo: true },
-        { onConflict: "id" }
-      );
-      if (profileError) throw profileError;
-
-      // 3. 🔥 VINCULACIÓN: SOLO por el empleado seleccionado (id_usuario)
-      let vinculadoCorrectamente = false;
-      if (empleadoId && empleadoInfo) {
-        console.log("🔗 Vinculando usuario", nuevoUserId, "con empleado", empleadoInfo.nombre_completo);
-
-        const { error: updateError } = await supabase
+        // 2. 🔍 BÚSQUEDA ESTRICTA POR id_usuario (Vinculación oficial)
+        console.log("🔍 Buscando supervisor por id_usuario:", user.id);
+        const { data: supervisorData, error: errSup } = await supabase
           .from("empleados")
-          .update({ id_usuario: nuevoUserId })
-          .eq("id", empleadoId);
+          .select("*, puestos(nombre), departamentos(nombre)")
+          .eq("id_usuario", user.id)
+          .maybeSingle();
 
-        if (!updateError) {
-          vinculadoCorrectamente = true;
-          console.log("✅ Vinculación exitosa por id_usuario");
-        } else {
-          console.error("❌ Error vinculando:", updateError.message);
-          // Si falla por falta de columna, intentar crearla
-          if (updateError.message.includes("id_usuario")) {
-            try {
-              await supabase.rpc("agregar_columna_dinamica", {
-                p_tabla: "empleados",
-                p_columna: "id_usuario",
-                p_tipo: "UUID"
-              });
-              // Reintentar vinculación
-              const { error: retryError } = await supabase
-                .from("empleados")
-                .update({ id_usuario: nuevoUserId })
-                .eq("id", empleadoId);
-              if (!retryError) vinculadoCorrectamente = true;
-            } catch (e) {
-              console.error("No se pudo crear la columna id_usuario:", e);
+        if (errSup) console.warn("Error buscando supervisor:", errSup.message);
+
+        if (!supervisorData) {
+          console.warn("⚠️ No hay empleado vinculado a este usuario (id_usuario):", user.id);
+          alert(MENSAJE_SIN_PERFIL);
+          await supabase.auth.signOut();
+          navigate("/login");
+          return;
+        }
+
+        console.log("✅ Supervisor encontrado:", supervisorData.nombre_completo);
+        setSupervisorActual(supervisorData);
+
+        // 3. Cargar períodos y configuración
+        const [resPeriodos, resConfig] = await Promise.all([
+          supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false }),
+          supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle(),
+        ]);
+
+        setPeriodos(resPeriodos.data || []);
+        if (resPeriodos.data?.length > 0) setPeriodoId(resPeriodos.data[0].id);
+
+        // 4. Cargar columnas permitidas para supervisor
+        let config = resConfig.data?.configuracion;
+        if (!config) {
+          const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+          if (local) config = JSON.parse(local);
+        }
+
+        if (config?.asignacion) {
+          const columnas = [];
+          Object.entries(config.asignacion).forEach(([colOriginal, info]) => {
+            if (info.tablaDestino === 'incidencias' && info.permite_supervisor) {
+              const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+              if (campoFinal) {
+                columnas.push({ original: colOriginal, campo: campoFinal, etiqueta: formatearNombreColumna(campoFinal) });
+              }
             }
-          }
+          });
+          setColumnasSupervisor(columnas);
         }
+
+        // 5. Cargar empleados a cargo
+        const { data: empleadosData } = await supabase
+          .from("empleados")
+          .select("*, puestos(nombre), departamentos(nombre)")
+          .eq("supervisor_id", supervisorData.id)
+          .eq("activo", true)
+          .order("nombre_completo");
+        
+        setEmpleadosSupervisados(empleadosData || []);
+
+      } catch (err) {
+        console.error("Error en cargarInicial:", err);
+      } finally {
+        setLoading(false);
       }
+    };
+    cargarInicial();
+  }, [navigate]);
 
-      // 4. 🔥 ACTUALIZAR LA SOLICITUD con datos del usuario creado (para mostrar en "Aprobadas")
-      const { error: updateSolError } = await supabase
-        .from("solicitudes_usuario")
-        .update({
-          estatus: "APROBADA",
-          usuario_creado_id: nuevoUserId,
-          correo_creado: correoLimpio,
-          password_creada: passwordLimpio,
-          empleado_vinculado_id: empleadoId || null,
-          empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
-          rol_asignado: rol
-        })
-        .eq("id", solicitud.id);
+  // Cargar incidencias del período
+  useEffect(() => {
+    if (!periodoId || !supervisorActual) return;
+    const cargarIncidencias = async () => {
+      const idsEmpleados = empleadosSupervisados.map(e => e.id);
+      if (idsEmpleados.length === 0) {
+        setIncidencias([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("incidencias")
+        .select("*")
+        .eq("periodo_id", periodoId)
+        .in("empleado_id", idsEmpleados);
+      if (!error) setIncidencias(data || []);
+    };
+    cargarIncidencias();
+  }, [periodoId, empleadosSupervisados, supervisorActual]);
 
-      if (updateSolError) console.warn("No se pudo actualizar solicitud:", updateSolError.message);
-
-      // 5. Actualizar estado local
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? {
-        ...s,
-        estatus: "APROBADA",
-        usuario_creado_id: nuevoUserId,
-        correo_creado: correoLimpio,
-        password_creada: passwordLimpio,
-        empleado_vinculado_id: empleadoId || null,
-        empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
-        rol_asignado: rol
-      } : s));
-
-      // 6. Restaurar sesión del admin
-      await supabase.auth.signOut();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: emailAdmin,
-        password: passwordAdmin
+  // Guardar captura
+  const guardarCaptura = async (empleadoId, valores) => {
+    setGuardando(true);
+    try {
+      const payload = limpiarPayload({
+        empleado_id: empleadoId,
+        periodo_id: Number(periodoId),
+        estado: "pendiente",
+        ...valores,
       });
 
-      if (signInError) {
-        alert(
-          "✅ Usuario creado.\n\n⚠️ Tu sesión fue cerrada. Inicia sesión nuevamente.\n\n" +
-          "Correo: " + correoLimpio + "\nContraseña: " + passwordLimpio
-        );
+      const { data: existente } = await supabase
+        .from("incidencias")
+        .select("id")
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", periodoId)
+        .maybeSingle();
+
+      let error;
+      if (existente) {
+        const { error: e } = await supabase.from("incidencias").update(payload).eq("id", existente.id);
+        error = e;
       } else {
-        let mensajeEmpleado = "";
-        if (empleadoInfo && vinculadoCorrectamente) {
-          mensajeEmpleado = "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo +
-            " (#" + empleadoInfo.numero_empleado + ")";
-        } else if (empleadoInfo) {
-          mensajeEmpleado = "\n\n⚠️ No se pudo vincular al empleado. Revisa la consola.";
-        } else {
-          mensajeEmpleado = "\n\nℹ️ No se vinculó a ningún empleado (usuario independiente).";
-        }
-
-        alert(
-          "✅ Usuario creado exitosamente.\n\n" +
-          "📧 Correo: " + correoLimpio +
-          "\n🔑 Contraseña: " + passwordLimpio +
-          mensajeEmpleado +
-          "\n\n💡 Estos datos quedarán visibles en 'Aprobadas'."
-        );
+        const { error: e } = await supabase.from("incidencias").insert([payload]);
+        error = e;
       }
+      if (error) throw error;
 
-      await cargarSolicitudes();
-    } catch (error) {
-      console.error("Error al aprobar:", error);
-      alert("Error: " + error.message);
-      await cargarSolicitudes();
+      setModalCaptura({ abierto: false, empleado: null });
+      
+      const idsEmpleados = empleadosSupervisados.map(e => e.id);
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId).in("empleado_id", idsEmpleados);
+      setIncidencias(data || []);
+    } catch (err) {
+      alert("Error al guardar: " + err.message);
     } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-      setModalPasswordAdmin({ abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: "" });
+      setGuardando(false);
     }
   };
 
-  const ejecutarRechazo = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { error } = await supabase
-        .from("solicitudes_usuario")
-        .update({ estatus: "RECHAZADA" })
-        .eq("id", solicitud.id);
-      if (error) throw new Error(error.message);
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    } catch (error) {
-      alert("Error: " + error.message);
-      await cargarSolicitudes();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const darDeBajaUsuario = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
-      if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles")
-          .update({ activo: false, fecha_baja: new Date().toISOString() })
-          .in("id", perfiles.map(p => p.id));
-      }
-      await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id);
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      alert("✅ Usuario dado de baja correctamente.");
-    } catch (error) {
-      alert("Error: " + error.message);
-    } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    }
-  };
-
-  const eliminarDefinitivamente = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
-      if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles").delete().in("id", perfiles.map(p => p.id));
-      }
-      await supabase.from("solicitudes_usuario").delete().eq("id", solicitud.id);
-      setSolicitudes(prev => prev.filter(s => s.id !== solicitud.id));
-      alert("✅ Usuario eliminado permanentemente.");
-    } catch (error) {
-      alert("Error: " + error.message);
-    } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    }
-  };
-
-  const confirmarAccion = (solicitud, accion) => {
-    if (accion === "aprobar") { solicitarAprobacion(solicitud); return; }
-
-    const config = {
-      rechazar: { titulo: "Rechazar Solicitud", descripcion: "La solicitud se marcará como rechazada.", colorIcono: "bg-red-100", icono: "❌", colorBoton: "bg-red-600 hover:bg-red-700", textoBoton: "❌ Confirmar Rechazo" },
-      baja: { titulo: "Dar de Baja al Usuario", descripcion: "El usuario NO podrá iniciar sesión hasta ser reactivado.", colorIcono: "bg-orange-100", icono: "🚫", colorBoton: "bg-orange-600 hover:bg-orange-700", textoBoton: "🚫 Confirmar Baja" },
-      eliminar: { titulo: "⚠️ ELIMINACIÓN PERMANENTE", descripcion: "Esta acción NO se puede deshacer.", colorIcono: "bg-red-100", icono: "🗑️", colorBoton: "bg-red-700 hover:bg-red-800", textoBoton: "🗑️ Sí, Eliminar" }
-    };
-
-    const cfg = config[accion];
-    if (!cfg) return;
-
-    setModalConfirmacion({
-      abierto: true, solicitud, accion,
-      rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "", busquedaEmpleado: "",
-      ...cfg
-    });
-  };
-
-  const ejecutarAccion = () => {
-    const { accion, solicitud } = modalConfirmacion;
-    switch (accion) {
-      case "aprobar": confirmarAprobacionInicial(); break;
-      case "rechazar": ejecutarRechazo(solicitud); break;
-      case "baja": darDeBajaUsuario(solicitud); break;
-      case "eliminar": eliminarDefinitivamente(solicitud); break;
-    }
-  };
+  const empleadosConIncidencias = useMemo(() => {
+    return empleadosSupervisados.map(emp => ({
+      empleado: emp,
+      incidencia: incidencias.find(i => i.empleado_id === emp.id) || null,
+    }));
+  }, [empleadosSupervisados, incidencias]);
 
   const empleadosFiltrados = useMemo(() => {
-    if (!modalConfirmacion.busquedaEmpleado) return empleados;
-    const texto = modalConfirmacion.busquedaEmpleado.toLowerCase();
-    return empleados.filter(emp =>
-      (emp.nombre_completo || "").toLowerCase().includes(texto) ||
-      (emp.numero_empleado || "").toLowerCase().includes(texto) ||
-      (emp.puesto || "").toLowerCase().includes(texto) ||
-      (emp.departamento || "").toLowerCase().includes(texto)
+    if (!busqueda.trim()) return empleadosConIncidencias;
+    const texto = busqueda.toLowerCase().trim();
+    return empleadosConIncidencias.filter(({ empleado }) =>
+      [empleado.nombre_completo, empleado.numero_empleado, empleado.puestos?.nombre]
+        .some(c => String(c || "").toLowerCase().includes(texto))
     );
-  }, [empleados, modalConfirmacion.busquedaEmpleado]);
+  }, [empleadosConIncidencias, busqueda]);
+
+  const kpis = useMemo(() => {
+    const total = empleadosSupervisados.length;
+    const conCaptura = incidencias.length;
+    const pendientes = incidencias.filter(i => i.estado === "pendiente").length;
+    return { total, conCaptura, pendientes, sinCaptura: total - conCaptura };
+  }, [empleadosSupervisados, incidencias]);
+
+  const periodoActual = periodos.find(p => p.id === periodoId);
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin text-6xl mb-4">⏳</div>
+          <p className="text-slate-600 font-semibold">Cargando tu portal...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">📨 Solicitudes de Usuario</h1>
-          <p className="text-slate-500 mt-1">Aprueba solicitudes, asigna roles y gestiona usuarios</p>
-        </div>
-        <Link to="/dashboard" className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-sm">← Volver al Dashboard</Link>
-      </div>
-
-      <div className="grid md:grid-cols-4 gap-3">
-        <button onClick={() => setFiltro("PENDIENTES")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "PENDIENTES" ? "bg-amber-50 border-amber-400 shadow-md" : "bg-white border-slate-200 hover:border-amber-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Pendientes</div>
-          <div className="text-3xl font-black text-amber-600">{pendientes}</div>
-        </button>
-        <button onClick={() => setFiltro("APROBADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "APROBADAS" ? "bg-emerald-50 border-emerald-400 shadow-md" : "bg-white border-slate-200 hover:border-emerald-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Aprobadas</div>
-          <div className="text-3xl font-black text-emerald-600">{aprobadas}</div>
-        </button>
-        <button onClick={() => setFiltro("RECHAZADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "RECHAZADAS" ? "bg-red-50 border-red-400 shadow-md" : "bg-white border-slate-200 hover:border-red-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Rechazadas</div>
-          <div className="text-3xl font-black text-red-600">{rechazadas}</div>
-        </button>
-        <button onClick={() => setFiltro("TODAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "TODAS" ? "bg-blue-50 border-blue-400 shadow-md" : "bg-white border-slate-200 hover:border-blue-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Todas</div>
-          <div className="text-3xl font-black text-blue-600">{solicitudes.length}</div>
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        {loading && solicitudes.length === 0 ? (
-          <div className="p-12 text-center text-slate-500"><div className="animate-spin text-4xl mb-2">⏳</div>Cargando...</div>
-        ) : solicitudesFiltradas.length === 0 ? (
-          <div className="p-12 text-center text-slate-500"><div className="text-6xl mb-3">📭</div><p className="font-semibold">No hay solicitudes</p></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="p-4 font-bold text-slate-700">Nombre</th>
-                  <th className="p-4 font-bold text-slate-700">Correo</th>
-                  <th className="p-4 font-bold text-slate-700">Teléfono</th>
-                  <th className="p-4 font-bold text-slate-700 text-center">Estatus</th>
-                  <th className="p-4 font-bold text-slate-700 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {solicitudesFiltradas.map((solicitud) => (
-                  <tr key={solicitud.id} className="hover:bg-slate-50 transition">
-                    <td className="p-4 font-semibold text-slate-800">{solicitud.nombre}</td>
-                    <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo || solicitud.email || "N/A"}</td>
-                    <td className="p-4 text-slate-600">{solicitud.telefono || "-"}</td>
-                    <td className="p-4 text-center">
-                      {solicitud.estatus === "PENDIENTE" && <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-bold">🟡 Pendiente</span>}
-                      {solicitud.estatus === "APROBADA" && <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-xs font-bold">✅ Aprobada</span>}
-                      {solicitud.estatus === "RECHAZADA" && <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-xs font-bold">❌ Rechazada</span>}
-                    </td>
-                    <td className="p-4 text-center">
-                      {solicitud.estatus === "PENDIENTE" ? (
-                        <div className="flex gap-2 justify-center flex-wrap">
-                          <button onClick={() => confirmarAccion(solicitud, "aprobar")} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">✅ Aprobar</button>
-                          <button onClick={() => confirmarAccion(solicitud, "rechazar")} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">❌ Rechazar</button>
-                        </div>
-                      ) : (
-                        <div className="flex gap-2 justify-center flex-wrap">
-                          {solicitud.estatus === "APROBADA" && (
-                            <button onClick={() => confirmarAccion(solicitud, "baja")} disabled={loading} className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🚫 Dar de Baja</button>
-                          )}
-                          <button onClick={() => confirmarAccion(solicitud, "eliminar")} disabled={loading} className="bg-red-700 hover:bg-red-800 disabled:bg-red-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🗑️ Eliminar</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <div className="min-h-screen bg-slate-50">
+      {/* BARRA SUPERIOR MINIMALISTA */}
+      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-black">👷</div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-800">Portal del Supervisor</h1>
+              <p className="text-xs text-slate-500">Captura de incidencias</p>
+            </div>
           </div>
-        )}
-      </div>
-
-      {/* 🔥 TABLA DETALLADA DE APROBADAS (con datos del usuario creado) */}
-      {filtro === "APROBADAS" && solicitudesFiltradas.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-emerald-200 overflow-hidden">
-          <div className="bg-emerald-50 border-b border-emerald-200 p-4">
-            <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
-              <span>🔐</span> Credenciales de Usuarios Creados
-            </h3>
-            <p className="text-xs text-emerald-700 mt-1">
-              Información de acceso de los usuarios aprobados. Comparte estas credenciales con cada usuario.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="p-4 font-bold text-slate-700">Nombre Registro</th>
-                  <th className="p-4 font-bold text-slate-700">Correo de Acceso</th>
-                  <th className="p-4 font-bold text-slate-700">Contraseña</th>
-                  <th className="p-4 font-bold text-slate-700">Rol</th>
-                  <th className="p-4 font-bold text-slate-700">Empleado Vinculado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {solicitudesFiltradas.filter(s => s.estatus === "APROBADA").map((sol) => (
-                  <tr key={sol.id} className="hover:bg-slate-50">
-                    <td className="p-4 font-semibold text-slate-800">{sol.nombre}</td>
-                    <td className="p-4 font-mono text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded">
-                      {sol.correo_creado || sol.correo || sol.email || "N/A"}
-                    </td>
-                    <td className="p-4">
-                      {sol.password_creada ? (
-                        <span className="font-mono text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded border border-amber-200">
-                          🔑 {sol.password_creada}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-xs italic">No disponible</span>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-bold">
-                        {sol.rol_asignado || "N/A"}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      {sol.empleado_vinculado_nombre ? (
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-semibold">
-                          ✅ {sol.empleado_vinculado_nombre}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-xs italic">Sin vincular</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL CONFIRMACIÓN */}
-      {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="text-center mb-4">
-              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.colorIcono || "bg-slate-100")}>
-                {modalConfirmacion.icono || "❓"}
+          <div className="flex items-center gap-4">
+            {supervisorActual && (
+              <div className="hidden md:flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                  {supervisorActual.nombre_completo?.charAt(0).toUpperCase()}
+                </div>
+                <div className="text-xs">
+                  <div className="font-semibold text-slate-800">{supervisorActual.nombre_completo}</div>
+                  <div className="text-slate-500">{supervisorActual.puestos?.nombre}</div>
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.titulo}</h3>
-              <p className="text-sm text-slate-600 mt-2">{modalConfirmacion.descripcion}</p>
+            )}
+            <button onClick={cerrarSesion} className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+              🚪 <span className="hidden sm:inline">Cerrar Sesión</span>
+            </button>
+          </div>
+        </div>
+      </header>
 
-              {modalConfirmacion.accion === "aprobar" && (
-                <div className="mt-4 text-left space-y-3">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol:</label>
-                    <select value={modalConfirmacion.rolSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
-                      <option value="SUPERVISOR">👷 Supervisor</option>
-                      <option value="ADMINISTRATIVO">💼 Administrativo</option>
-                      <option value="VISOR">👁️ Visor</option>
-                    </select>
-                  </div>
+      {/* CONTENIDO PRINCIPAL */}
+      <main className="max-w-7xl mx-auto p-6 space-y-5">
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-xl">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-3xl font-black">
+              {supervisorActual?.nombre_completo?.charAt(0).toUpperCase() || "S"}
+            </div>
+            <div>
+              <h2 className="text-2xl font-black">¡Hola, {supervisorActual?.nombre_completo?.split(' ')[0]}!</h2>
+              <p className="text-white/80 text-sm mt-0.5">
+                {supervisorActual?.puestos?.nombre} · {supervisorActual?.departamentos?.nombre}
+              </p>
+            </div>
+          </div>
+        </div>
 
+        {supervisorActual && (
+          <>
+            {/* SELECTOR DE PERÍODO */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+              <div className="flex flex-col md:flex-row items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-xl">📅</div>
                   <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">🔗 Vincular a Empleado:</label>
-                    <div className="relative mb-2">
-                      <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                      <input type="text" placeholder="Buscar por nombre, número o puesto..." value={modalConfirmacion.busquedaEmpleado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, busquedaEmpleado: e.target.value }))} className="w-full border border-slate-300 rounded-lg pl-9 p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm" />
-                    </div>
-                    <select value={modalConfirmacion.empleadoSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, empleadoSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white" size={Math.min(empleadosFiltrados.length, 6)}>
-                      <option value="">-- Sin vincular --</option>
-                      {empleadosFiltrados.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                          #{emp.numero_empleado || "S/N"} - {emp.nombre_completo} {emp.puesto ? `(${emp.puesto})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-slate-500 mt-1">Mostrando {empleadosFiltrados.length} de {empleados.length}</p>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Período</div>
+                    <div className="text-sm font-bold text-slate-800">Selecciona el período activo</div>
                   </div>
                 </div>
-              )}
+                <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-slate-200 rounded-xl p-3 bg-slate-50 font-semibold focus:ring-2 focus:ring-blue-500 outline-none">
+                  {periodos.map(p => <option key={p.id} value={p.id}>{p.descripcion}</option>)}
+                </select>
+                {periodoActual && (
+                  <div className="text-xs bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-medium">
+                    📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}
+                  </div>
+                )}
+              </div>
+            </div>
 
-              <div className="bg-slate-50 rounded-lg p-3 mt-3 text-left">
-                <div className="font-bold text-slate-800">{modalConfirmacion.solicitud.nombre}</div>
-                <div className="text-xs text-slate-600 font-mono">{modalConfirmacion.solicitud.correo || modalConfirmacion.solicitud.email}</div>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-white rounded-xl p-3 border border-slate-200">
+                <div className="text-xs text-slate-500 font-medium">Mi Equipo</div>
+                <div className="text-2xl font-black text-blue-600">{kpis.total}</div>
+              </div>
+              <div className="bg-white rounded-xl p-3 border border-slate-200">
+                <div className="text-xs text-slate-500 font-medium">Capturados</div>
+                <div className="text-2xl font-black text-emerald-600">{kpis.conCaptura}</div>
+              </div>
+              <div className="bg-amber-50 rounded-xl p-3 border border-amber-200">
+                <div className="text-xs text-amber-700 font-medium">⚠️ Sin Captura</div>
+                <div className="text-2xl font-black text-amber-700">{kpis.sinCaptura}</div>
+              </div>
+              <div className="bg-white rounded-xl p-3 border border-slate-200">
+                <div className="text-xs text-slate-500 font-medium">Pendientes RH</div>
+                <div className="text-2xl font-black text-indigo-600">{kpis.pendientes}</div>
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setModalConfirmacion(prev => ({ ...prev, abierto: false }))} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
-              <button onClick={ejecutarAccion} disabled={loading} className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.colorBoton || "bg-blue-600")}>
-                {loading ? "Procesando..." : modalConfirmacion.textoBoton}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* MODAL PASSWORD ADMIN */}
-      {modalPasswordAdmin.abierto && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <div className="text-center mb-4">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 bg-blue-100">🔐</div>
-              <h3 className="text-xl font-bold text-slate-800">Verificación de Seguridad</h3>
-              <p className="text-sm text-slate-600 mt-2">Ingresa tu contraseña de administrador.</p>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Tu Contraseña:</label>
-                <input type="password" value={modalPasswordAdmin.password} onChange={(e) => setModalPasswordAdmin(prev => ({ ...prev, password: e.target.value }))} placeholder="Ingresa tu contraseña" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-white" autoFocus />
+            {/* LISTA DE EMPLEADOS */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-slate-50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                    <span className="text-xl">👥</span> Mi Equipo ({empleadosFiltrados.length})
+                  </h3>
+                  <div className="text-xs text-slate-500">{columnasSupervisor.length} campos disponibles</div>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Buscar empleado por nombre o número..."
+                    value={busqueda}
+                    onChange={e => setBusqueda(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
               </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
-                <p className="text-xs text-blue-800">
-                  <strong>📋 Resumen:</strong><br />
-                  Usuario: {modalPasswordAdmin.solicitud?.nombre}<br />
-                  Correo: {modalPasswordAdmin.solicitud?.correo || modalPasswordAdmin.solicitud?.email}<br />
-                  Rol: {modalPasswordAdmin.rolSeleccionado}<br />
-                  {modalPasswordAdmin.empleadoSeleccionado && (
-                    <>Empleado: {empleados.find(e => String(e.id) === String(modalPasswordAdmin.empleadoSeleccionado))?.nombre_completo || "N/A"}</>
-                  )}
-                </p>
+
+              <div className="max-h-[600px] overflow-y-auto">
+                {empleadosFiltrados.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <div className="text-6xl mb-3">📭</div>
+                    <div className="text-slate-500 font-semibold">
+                      {busqueda ? "No se encontraron empleados" : "No tienes empleados a cargo"}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {empleadosFiltrados.map(({ empleado, incidencia }) => {
+                      const estado = incidencia?.estado || "sin_captura";
+                      const estadoConfig = {
+                        sin_captura: { color: "bg-slate-100 text-slate-600", icono: "⚠️", label: "Sin captura", bgRow: "" },
+                        pendiente: { color: "bg-amber-100 text-amber-800", icono: "⏳", label: "Pendiente", bgRow: "bg-amber-50/30" },
+                        aprobado: { color: "bg-emerald-100 text-emerald-800", icono: "✅", label: "Aprobado", bgRow: "" },
+                        rechazado: { color: "bg-red-100 text-red-800", icono: "❌", label: "Rechazado", bgRow: "bg-red-50/30" },
+                      }[estado];
+
+                      return (
+                        <div key={empleado.id} className={`p-4 hover:bg-slate-50 transition ${estadoConfig.bgRow}`}>
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-gradient-to-br from-slate-400 to-slate-600 rounded-xl flex items-center justify-center text-white font-bold flex-shrink-0">
+                              {empleado.nombre_completo?.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono text-xs text-slate-500">#{empleado.numero_empleado}</span>
+                                <h4 className="font-bold text-slate-800 truncate">{empleado.nombre_completo}</h4>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 flex-wrap">
+                                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium">
+                                  {empleado.puestos?.nombre || "Sin puesto"}
+                                </span>
+                                <span className={`${estadoConfig.color} px-2 py-0.5 rounded-full font-bold`}>
+                                  {estadoConfig.icono} {estadoConfig.label}
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })}
+                              disabled={columnasSupervisor.length === 0}
+                              className={`px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm transition flex-shrink-0 ${
+                                incidencia ? "bg-blue-500 hover:bg-blue-600 text-white" : "bg-emerald-500 hover:bg-emerald-600 text-white"
+                              } disabled:bg-slate-300 disabled:cursor-not-allowed`}
+                            >
+                              {incidencia ? "✏️ Editar" : "📝 Capturar"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setModalPasswordAdmin({ abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: "" })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
-              <button onClick={() => {
-                if (!modalPasswordAdmin.password || modalPasswordAdmin.password.length < 6) {
-                  alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
-                  return;
-                }
-                ejecutarAprobacion(modalPasswordAdmin.solicitud, modalPasswordAdmin.rolSeleccionado, modalPasswordAdmin.empleadoSeleccionado, modalPasswordAdmin.password);
-              }} disabled={loading || !modalPasswordAdmin.password} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-2.5 rounded-lg font-semibold transition">
-                {loading ? "Creando..." : "✅ Crear Usuario"}
-              </button>
-            </div>
-          </div>
+          </>
+        )}
+      </main>
+
+      {/* MODAL DE CAPTURA */}
+      {modalCaptura.abierto && modalCaptura.empleado && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <ModalCapturaSupervisor
+            empleado={modalCaptura.empleado}
+            columnas={columnasSupervisor}
+            guardando={guardando}
+            onGuardar={guardarCaptura}
+            onCerrar={() => setModalCaptura({ abierto: false, empleado: null })}
+          />
         </div>
       )}
     </div>
+  );
+}
+
+// COMPONENTE MODAL DE CAPTURA
+function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCerrar }) {
+  const [valores, setValores] = useState(() => {
+    const init = {};
+    columnas.forEach(col => { init[col.campo] = empleado.incidencia?.[col.campo] ?? 0; });
+    return init;
+  });
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col">
+      <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-6 py-4 rounded-t-2xl">
+        <div className="flex justify-between items-start">
+          <div>
+            <h3 className="text-lg font-bold flex items-center gap-2"><span>📝</span> Captura de Incidencia</h3>
+            <p className="text-sm text-white/90 mt-1"><strong>{empleado.nombre_completo}</strong></p>
+            <p className="text-xs text-white/70 mt-0.5">{empleado.puestos?.nombre} · {empleado.departamentos?.nombre}</p>
+          </div>
+          <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl leading-none">✕</button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-6">
+        {columnas.length > 0 ? (
+          <div className="space-y-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+              💡 Llena los campos con la información del día. Los datos quedarán pendientes de validación por RH.
+            </div>
+            {columnas.map(col => {
+              const esMonet = esCampoMonetario(col.campo);
+              return (
+                <div key={col.campo} className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    {col.etiqueta}
+                    {esMonet && <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">💰</span>}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={valores[col.campo] ?? 0}
+                    onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))}
+                    className="w-full border-2 border-slate-200 p-3 rounded-lg text-base font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="0"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center">
+            <div className="text-4xl mb-2">⚠️</div>
+            <p className="text-amber-800 font-semibold">No hay campos habilitados</p>
+            <p className="text-amber-700 text-sm mt-1">Contacta a Recursos Humanos para que habilite los campos de captura.</p>
+          </div>
+        )}
+      </div>
+      <div className="border-t border-slate-200 px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
+        <button type="button" onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50">Cancelar</button>
+        <button type="submit" disabled={guardando || columnas.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300 shadow-sm">
+          {guardando ? "⏳ Guardando..." : "📝 Enviar a RH"}
+        </button>
+      </div>
+    </form>
   );
 }

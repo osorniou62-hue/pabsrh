@@ -9,6 +9,10 @@ export default function Vacaciones() {
   const [vacaciones, setVacaciones] = useState([]);
   const [reglasGlobales, setReglasGlobales] = useState({});
   
+  // 🔥 CORREGIDO: Variables de estado para reglas globales (faltaban en la versión anterior)
+  const [anoReglaInput, setAnoReglaInput] = useState(1);
+  const [diasReglaInput, setDiasReglaInput] = useState("");
+
   // Estados para Importación y Mapeo
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [archivoVacaciones, setArchivoVacaciones] = useState(null);
@@ -66,7 +70,6 @@ export default function Vacaciones() {
     }
   };
 
-  // 🔥 CORREGIDO: Consulta segura y ordenamiento local
   const cargarEmpleados = async () => {
     try {
       const { data, error } = await supabase
@@ -80,7 +83,6 @@ export default function Vacaciones() {
         return;
       }
 
-      // Ordenar localmente por Departamento y luego por Puesto
       const datosOrdenados = (data || []).sort((a, b) => {
         const deptoA = (a.departamento || "Sin Departamento").toLowerCase();
         const deptoB = (b.departamento || "Sin Departamento").toLowerCase();

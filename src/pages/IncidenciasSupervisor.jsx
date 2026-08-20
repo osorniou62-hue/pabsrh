@@ -3,10 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../services/supabase";
 
 const formatearNombreColumna = (texto) => String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-const normalizar = (texto) => String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 
 const esCampoMonetario = (campo) => {
-  const n = normalizar(campo);
+  const n = String(campo || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total', 'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss', 'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
 };
 
@@ -18,6 +17,12 @@ const limpiarPayload = (payload) => {
   });
   return limpio;
 };
+
+// 🔥 MENSAJE PROFESIONAL Y GENÉRICO
+const MENSAJE_SIN_PERFIL = 
+  "No hemos podido asociar tu cuenta con un perfil de empleado activo.\n\n" +
+  "Esto puede deberse a que tu registro aún está en proceso de validación.\n\n" +
+  "Por favor, contacta a Recursos Humanos o soporte técnico indicando tu correo electrónico registrado.";
 
 export default function IncidenciasSupervisor() {
   const navigate = useNavigate();
@@ -35,7 +40,6 @@ export default function IncidenciasSupervisor() {
   const [busqueda, setBusqueda] = useState("");
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
 
-  // 🔥 VERIFICAR AUTENTICACIÓN Y ROL AL CARGAR
   useEffect(() => {
     const cargarInicial = async () => {
       setLoading(true);
@@ -50,42 +54,81 @@ export default function IncidenciasSupervisor() {
           .from("profiles")
           .select("rol, nombre")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         setRolUsuario(perfil?.rol || null);
 
-        // 🔒 Solo SUPERVISOR puede estar aquí
         if (perfil?.rol !== "SUPERVISOR") {
           alert("⛔ Acceso denegado. Esta sección es exclusiva para Supervisores.");
           navigate("/dashboard");
           return;
         }
 
-        // 🔍 BUSQUEDA INTELIGENTE DEL SUPERVISOR EN LA TABLA EMPLEADOS
-        
-        // Intento 1: Buscar por ID de autenticación (si se creó desde Solicitudes y se vinculó)
-        let { data: supervisorData } = await supabase
+        // 🔍 BÚSQUEDA INTELIGENTE Y FLEXIBLE DEL SUPERVISOR
+        let supervisorData = null;
+        const nombreUsuario = perfil?.nombre || user.email?.split("@")[0] || "";
+
+        // 1. Buscar por vinculación directa (id_usuario)
+        const { data: porIdUsuario } = await supabase
           .from("empleados")
           .select("*, puestos(nombre), departamentos(nombre)")
-          .eq("id", user.id)
+          .eq("id_usuario", user.id)
           .maybeSingle();
+        
+        if (porIdUsuario) {
+          supervisorData = porIdUsuario;
+          console.log("✅ Supervisor encontrado por id_usuario");
+        }
 
-        // Intento 2: Si no se encuentra, buscar por nombre completo (si ya existía en Empleados antes de tener usuario)
-        if (!supervisorData && perfil?.nombre) {
-          console.log("🔄 No encontrado por ID, intentando búsqueda por nombre...");
-          const { data: dataPorNombre } = await supabase
+        // 2. Buscar por correo electrónico
+        if (!supervisorData && user.email) {
+          const { data: porCorreo } = await supabase
             .from("empleados")
             .select("*, puestos(nombre), departamentos(nombre)")
-            .ilike("nombre_completo", perfil.nombre) // ilike ignora mayúsculas/minúsculas
+            .ilike("correo", user.email)
+            .maybeSingle();
+          if (porCorreo) {
+            supervisorData = porCorreo;
+            console.log("✅ Supervisor encontrado por correo");
+          }
+        }
+
+        // 3. Buscar por nombre (búsqueda flexible con comodines)
+        if (!supervisorData && nombreUsuario) {
+          const nombreLimpio = String(nombreUsuario).trim();
+          
+          // Intento A: Coincidencia parcial
+          const { data: porNombreParcial } = await supabase
+            .from("empleados")
+            .select("*, puestos(nombre), departamentos(nombre)")
+            .ilike("nombre_completo", `%${nombreLimpio}%`)
             .maybeSingle();
           
-          supervisorData = dataPorNombre;
+          if (porNombreParcial) {
+            supervisorData = porNombreParcial;
+            console.log("✅ Supervisor encontrado por nombre parcial");
+          } else {
+            // Intento B: Coincidencia por primera palabra del nombre
+            const primeraPalabra = nombreLimpio.split(" ")[0];
+            if (primeraPalabra.length > 2) {
+              const { data: porPrimeraPalabra } = await supabase
+                .from("empleados")
+                .select("*, puestos(nombre), departamentos(nombre)")
+                .ilike("nombre_completo", `%${primeraPalabra}%`)
+                .maybeSingle();
+              
+              if (porPrimeraPalabra) {
+                supervisorData = porPrimeraPalabra;
+                console.log("✅ Supervisor encontrado por primera palabra del nombre");
+              }
+            }
+          }
         }
 
         console.log("📡 Datos del supervisor encontrados:", supervisorData);
 
         if (!supervisorData) {
-          alert(`⚠️ No se encontró tu perfil de empleado en el sistema.\n\nPor favor, contacta a RH para que te registren primero en el módulo de 'Empleados' con tu nombre exacto: '${perfil.nombre}'`);
+          alert(MENSAJE_SIN_PERFIL);
           await supabase.auth.signOut();
           navigate("/login");
           return;
@@ -231,7 +274,6 @@ export default function IncidenciasSupervisor() {
     navigate("/login");
   };
 
-  // 🔥 PANTALLA DE CARGA
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -243,10 +285,8 @@ export default function IncidenciasSupervisor() {
     );
   }
 
-  // 🔥 LAYOUT PROPIO DEL SUPERVISOR (sin sidebar administrativo)
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* 🔥 BARRA SUPERIOR MINIMALISTA */}
       <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -281,9 +321,7 @@ export default function IncidenciasSupervisor() {
         </div>
       </header>
 
-      {/* 🔥 CONTENIDO PRINCIPAL */}
       <main className="max-w-7xl mx-auto p-6 space-y-5">
-        {/* HEADER DEL SUPERVISOR */}
         <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-xl">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-3xl font-black">
@@ -300,7 +338,6 @@ export default function IncidenciasSupervisor() {
 
         {supervisorActual && (
           <>
-            {/* SELECTOR DE PERÍODO */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
               <div className="flex flex-col md:flex-row items-center gap-4">
                 <div className="flex items-center gap-3">
@@ -321,7 +358,6 @@ export default function IncidenciasSupervisor() {
               </div>
             </div>
 
-            {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-white rounded-xl p-3 border border-slate-200">
                 <div className="text-xs text-slate-500 font-medium">Mi Equipo</div>
@@ -341,7 +377,6 @@ export default function IncidenciasSupervisor() {
               </div>
             </div>
 
-            {/* LISTA DE EMPLEADOS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-4 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center justify-between mb-3">
@@ -422,7 +457,6 @@ export default function IncidenciasSupervisor() {
         )}
       </main>
 
-      {/* MODAL DE CAPTURA */}
       {modalCaptura.abierto && modalCaptura.empleado && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <ModalCapturaSupervisor
@@ -438,7 +472,6 @@ export default function IncidenciasSupervisor() {
   );
 }
 
-// MODAL DE CAPTURA
 function ModalCapturaSupervisor({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};

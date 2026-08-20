@@ -60,10 +60,11 @@ export default function Login() {
       return;
     }
 
-    // 2. 🔥 BÚSQUEDA FLEXIBLE DEL EMPLEADO VINCULADO
+    // 2. 🔥 BÚSQUEDA DE VINCULACIÓN EN ORDEN ESPECÍFICO
     let empleadoVinculado = null;
 
-    // Intento 1: Buscar por id_usuario (vinculación oficial)
+    // 🔍 INTENTO 1: Buscar por id_usuario (vinculación oficial)
+    console.log("🔍 Intento 1: Buscando por id_usuario...");
     const { data: porIdUsuario } = await supabase
       .from("empleados")
       .select("id, nombre_completo")
@@ -72,48 +73,37 @@ export default function Login() {
 
     if (porIdUsuario) {
       empleadoVinculado = porIdUsuario;
-      console.log("✅ Empleado encontrado por id_usuario");
+      console.log("✅ Empleado encontrado por id_usuario:", porIdUsuario.nombre_completo);
     }
 
-    // Intento 2: Si no se encuentra, buscar por nombre del perfil
+    // 🔍 INTENTO 2: Si no se encuentra, buscar por nombre (Colaborador)
     if (!empleadoVinculado && perfil.nombre) {
-      const { data: porNombre } = await supabase
+      console.log("🔍 Intento 2: Buscando por nombre (Colaborador):", perfil.nombre);
+      
+      const { data: porNombre, error: errorNombre } = await supabase
         .from("empleados")
         .select("id, nombre_completo")
-        .ilike("nombre_completo", `%${perfil.nombre}%`)
+        .ilike("nombre_completo", perfil.nombre)
         .maybeSingle();
 
-      if (porNombre) {
+      if (!errorNombre && porNombre) {
         empleadoVinculado = porNombre;
-        console.log("✅ Empleado encontrado por nombre del perfil");
+        console.log("✅ Empleado encontrado por nombre:", porNombre.nombre_completo);
         
-        // 🔥 VINCULAR AUTOMÁTICAMENTE para futuras sesiones
-        await supabase
+        // 🔥 VINCULACIÓN AUTOMÁTICA: Actualizar id_usuario para futuras sesiones
+        console.log("🔗 Creando vinculación automática...");
+        const { error: updateError } = await supabase
           .from("empleados")
           .update({ id_usuario: usuario.id })
           .eq("id", porNombre.id);
-        console.log("✅ Vinculación automática creada");
-      }
-    }
 
-    // Intento 3: Buscar por correo electrónico
-    if (!empleadoVinculado && usuario.email) {
-      const { data: porCorreo } = await supabase
-        .from("empleados")
-        .select("id, nombre_completo")
-        .ilike("correo", usuario.email)
-        .maybeSingle();
-
-      if (porCorreo) {
-        empleadoVinculado = porCorreo;
-        console.log("✅ Empleado encontrado por correo");
-        
-        // 🔥 VINCULAR AUTOMÁTICAMENTE
-        await supabase
-          .from("empleados")
-          .update({ id_usuario: usuario.id })
-          .eq("id", porCorreo.id);
-        console.log("✅ Vinculación automática creada");
+        if (!updateError) {
+          console.log("✅ Vinculación creada exitosamente");
+        } else {
+          console.warn("⚠️ No se pudo crear la vinculación automática:", updateError.message);
+        }
+      } else {
+        console.log("❌ No se encontró empleado con nombre:", perfil.nombre);
       }
     }
 
@@ -121,9 +111,9 @@ export default function Login() {
     const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
     console.log("🔐 Rol detectado:", rolNormalizado);
 
-    // 4. 🔥 REDIRECCIÓN INTELIGENTE
+    // 4. 🔥 REDIRECCIÓN SEGÚN EL ROL
     if (rolNormalizado === "SUPERVISOR" || rolNormalizado === "VISOR") {
-      // Supervisores necesitan estar vinculados a un empleado
+      // Supervisores DEBEN estar vinculados a un empleado
       if (!empleadoVinculado) {
         setLoading(false);
         alert(
@@ -133,9 +123,11 @@ export default function Login() {
         await supabase.auth.signOut();
         return;
       }
+      console.log("👷 Redirigiendo al Portal del Supervisor...");
       navigate("/incidencias/supervisor", { replace: true });
     } else {
       // Administradores y otros roles pueden entrar sin vinculación estricta
+      console.log("🔓 Redirigiendo al Dashboard...");
       navigate("/dashboard", { replace: true });
     }
     

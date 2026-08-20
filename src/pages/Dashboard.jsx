@@ -4,7 +4,6 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// 🔥 MENSAJE PROFESIONAL (no revela información interna del sistema)
 const MENSAJE_SIN_PERFIL = 
   "No hemos podido asociar tu cuenta con un perfil activo.\n\n" +
   "Esto puede deberse a que tu registro aún está en proceso de validación.\n\n" +
@@ -60,10 +59,9 @@ export default function Dashboard() {
 
       setRolUsuario(perfil.rol);
 
-      // 🔒 Redirección automática para roles específicos
       if (perfil.rol === "SUPERVISOR" || perfil.rol === "VISOR") {
         navigate("/incidencias/supervisor", { replace: true });
-        return; // Salir para no seguir cargando el dashboard de administrador
+        return;
       }
 
     } catch (err) {
@@ -94,7 +92,7 @@ export default function Dashboard() {
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
-    navigate("/login", { replace: true }); // 🔥 Forma correcta en React Router (evita recarga completa)
+    navigate("/login", { replace: true });
   };
 
   const Modulo = ({ titulo, descripcion, ruta, icono }) => (
@@ -153,4 +151,21 @@ export default function Dashboard() {
         <Modulo icono="🏢" titulo="Departamentos" descripcion="Administración de departamentos." ruta="/departamentos" />
         <Modulo icono="💼" titulo="Puestos" descripcion="Administración de puestos." ruta="/puestos" />
         <Modulo icono="📅" titulo="Periodos" descripcion="Periodos de nómina." ruta="/periodos" />
-       
+        <Modulo icono="📝" titulo="Incidencias" descripcion="Horas extra, faltas y novedades." ruta="/incidencias" />
+        <Modulo icono="👤" titulo="Usuarios" descripcion="Administración de accesos." ruta="/usuarios" />
+        <Modulo icono="📨" titulo="Solicitudes" descripcion="Solicitudes de usuarios." ruta="/solicitudes" />
+        <Modulo icono="🏖" titulo="Vacaciones" descripcion="Control de vacaciones." ruta="/vacaciones" />
+        <Modulo icono="💳" titulo="Préstamos" descripcion="Administración de préstamos." ruta="/prestamos" />
+        <Modulo icono="🧮" titulo="Nómina" descripcion="Generación de nómina." ruta="/nomina" />
+        <Modulo icono="📦" titulo="Recibos Masivos" descripcion="PDF y ZIP de recibos." ruta="/recibos-masivos" />
+        <Modulo icono="📊" titulo="Reportes" descripcion="Exportación a Excel." ruta="/reportes" />
+        <Modulo icono="📈" titulo="Dashboard Ejecutivo" descripcion="KPIs y gráficas." ruta="/dashboard-ejecutivo" />
+        <Modulo icono="🔔" titulo="Notificaciones" descripcion="Centro de alertas." ruta="/notificaciones" />
+        <Modulo icono="📋" titulo="Auditoría" descripcion="Bitácora del sistema." ruta="/auditoria" />
+        <Modulo icono="📊" titulo="Configuración de Tablas" descripcion="Administra y mapea columnas." ruta="/configuracion-tablas" />
+        <Modulo icono="⚙️" titulo="Configuración" descripcion="Datos corporativos." ruta="/configuracion" />
+        <Modulo icono="👷" titulo="Portal Supervisor" descripcion="Captura de incidencias del equipo." ruta="/incidencias/supervisor" />
+      </div>
+    </Layout>
+  );
+}

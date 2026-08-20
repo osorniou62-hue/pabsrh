@@ -1,603 +1,849 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../services/supabase";
+import Layout from "../components/Layout";
 
-export default function SolicitudesUsuario() {
-  const [solicitudes, setSolicitudes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState("PENDIENTES");
+const formatearNombreColumna = (texto) =>
+  String(texto || "").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+const normalizar = (texto) =>
+  String(texto || "").toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+const esCampoMonetario = (campo) => {
+  const n = normalizar(campo);
+  return ['valor', 'monto', 'bono', 'descuento', 'sueldo', 'pago', 'total',
+    'neto', 'apoyo', 'gratificacion', 'aguinaldo', 'ptu', 'infonavit', 'imss',
+    'saldo', 'deduccion', 'percepcion', 'prima', 'comision'].some(p => n.includes(p));
+};
+
+const limpiarPayload = (payload) => {
+  const limpio = { ...payload };
+  ['id', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete limpio[k]);
+  Object.keys(limpio).forEach(k => {
+    if (limpio[k] === "" || limpio[k] === null || limpio[k] === undefined) delete limpio[k];
+  });
+  return limpio;
+};
+
+const ITEMS_POR_PAGINA = 50;
+
+export default function Incidencias() {
   const [empleados, setEmpleados] = useState([]);
+  const [incidencias, setIncidencias] = useState([]);
+  const [periodos, setPeriodos] = useState([]);
+  const [puestosLista, setPuestosLista] = useState([]);
+  const [departamentosLista, setDepartamentosLista] = useState([]);
+  const [loadingEmpleados, setLoadingEmpleados] = useState(true);
+  const [loadingIncidencias, setLoadingIncidencias] = useState(false);
 
-  const [modalConfirmacion, setModalConfirmacion] = useState({
-    abierto: false, solicitud: null, accion: "", rolSeleccionado: "SUPERVISOR",
-    empleadoSeleccionado: "", busquedaEmpleado: "", titulo: "", descripcion: "",
-    colorIcono: "", icono: "", colorBoton: "", textoBoton: ""
+  const [vistaActual, setVistaActual] = useState("supervisor");
+  const [periodoId, setPeriodoId] = useState("");
+  const [departamentoFiltro, setDepartamentoFiltro] = useState("TODOS");
+  const [estadoFiltro, setEstadoFiltro] = useState("TODOS");
+  const [busqueda, setBusqueda] = useState("");
+  const [paginaActual, setPaginaActual] = useState(1);
+
+  const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
+  const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
+  const [modalPermisos, setModalPermisos] = useState(false);
+  const [modalConfigColumnas, setModalConfigColumnas] = useState(false);
+  const [permisosSupervisor, setPermisosSupervisor] = useState({});
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+
+  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
+  const [ordenColumnas, setOrdenColumnas] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("incidencias_orden_columnas")) || []; } catch { return []; }
+  });
+  const [columnasVisibles, setColumnasVisibles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("incidencias_columnas_visibles")) || {}; } catch { return {}; }
   });
 
-  const [modalPasswordAdmin, setModalPasswordAdmin] = useState({
-    abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: ""
-  });
+  const columnasDelMapeo = useMemo(() => {
+    if (!configuracionMapeo?.asignacion) return [];
+    const validas = [];
+    Object.entries(configuracionMapeo.asignacion).forEach(([colOriginal, info]) => {
+      if (info.tablaDestino === 'incidencias' && (info.campoDestino || info.campoManual)) {
+        const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
+        if (campoFinal) {
+          validas.push({
+            original: colOriginal,
+            campo: campoFinal,
+            etiqueta: formatearNombreColumna(campoFinal),
+            permite_supervisor: permisosSupervisor[campoFinal] || false,
+          });
+        }
+      }
+    });
+    const unicas = new Map();
+    validas.forEach(item => { if (!unicas.has(item.campo)) unicas.set(item.campo, item); });
+    return Array.from(unicas.values());
+  }, [configuracionMapeo, permisosSupervisor]);
 
+  const columnasActivas = useMemo(() => {
+    const visibles = columnasDelMapeo.filter(c => columnasVisibles[c.campo] !== false);
+    return visibles.sort((a, b) => {
+      const idxA = ordenColumnas.indexOf(a.campo);
+      const idxB = ordenColumnas.indexOf(b.campo);
+      return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+    });
+  }, [columnasDelMapeo, columnasVisibles, ordenColumnas]);
+
+  const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
+
+  // 🔥 CARGA EN PARALELO
   useEffect(() => {
-    cargarSolicitudes();
-    cargarEmpleados();
+    const cargarTodo = async () => {
+      setLoadingEmpleados(true);
+      try {
+        const [resPeriodos, resPuestos, resDepts, resEmpleados, resConfig, resPermisos] = await Promise.all([
+          supabase.from("periodos_nomina").select("*").order("fecha_inicio", { ascending: false }),
+          supabase.from("puestos").select("*").order("nombre"),
+          supabase.from("departamentos").select("*").order("nombre"),
+          supabase.from("empleados").select("*").order("nombre_completo"),
+          supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle(),
+          supabase.from("configuracion_tablas").select("configuracion").eq("clave", "permisos_incidencias").maybeSingle(),
+        ]);
+
+        setPeriodos(resPeriodos.data || []);
+        if (resPeriodos.data?.length > 0) setPeriodoId(resPeriodos.data[0].id);
+
+        const puestosUnicos = new Map();
+        (resPuestos.data || []).forEach(p => {
+          const nombre = String(p.nombre || "").trim();
+          if (nombre && !puestosUnicos.has(nombre.toLowerCase())) {
+            puestosUnicos.set(nombre.toLowerCase(), { ...p, nombre });
+          }
+        });
+        setPuestosLista(Array.from(puestosUnicos.values()));
+        setDepartamentosLista(resDepts.data || []);
+
+        const empleadosProcesados = (resEmpleados.data || []).map(emp => {
+          let deptoObj = null;
+          if (emp.departamento_id) deptoObj = (resDepts.data || []).find(d => d.id === emp.departamento_id);
+          if (!deptoObj && emp.departamento) deptoObj = { nombre: emp.departamento };
+
+          let puestoObj = null;
+          if (emp.puesto_id) puestoObj = Array.from(puestosUnicos.values()).find(p => p.id === emp.puesto_id);
+          if (!puestoObj && emp.puesto) puestoObj = { nombre: emp.puesto };
+
+          return { ...emp, departamentos: deptoObj, puestos: puestoObj };
+        });
+        setEmpleados(empleadosProcesados);
+
+        if (resConfig.data?.configuracion) setConfiguracionMapeo(resConfig.data.configuracion);
+        else {
+          const local = localStorage.getItem("config_mapeo_columnas_dinamico");
+          if (local) setConfiguracionMapeo(JSON.parse(local));
+        }
+
+        if (resPermisos.data?.configuracion) setPermisosSupervisor(resPermisos.data.configuracion);
+        else {
+          const local = localStorage.getItem("permisos_incidencias");
+          if (local) setPermisosSupervisor(JSON.parse(local));
+        }
+      } catch (err) {
+        console.error("❌ Error cargando datos:", err);
+      } finally {
+        setLoadingEmpleados(false);
+      }
+    };
+    cargarTodo();
   }, []);
 
-  const cargarSolicitudes = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("solicitudes_usuario")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) console.error("Error cargando solicitudes:", error);
-      else setSolicitudes(data || []);
-    } catch (err) {
-      console.error("Excepción:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const cargarEmpleados = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("empleados")
-        .select("id, nombre_completo, numero_empleado, puesto, departamento, activo")
-        .eq("activo", true)
-        .order("nombre_completo");
-
-      if (error) {
-        const { data: dataFallback } = await supabase
-          .from("empleados")
-          .select("id, nombre_completo, numero_empleado, puesto")
-          .order("nombre_completo");
-        if (dataFallback) setEmpleados(dataFallback);
-      } else {
-        setEmpleados(data || []);
+  // 🔥 Carga de incidencias solo cuando cambia el período
+  useEffect(() => {
+    if (!periodoId) return;
+    const cargarIncidencias = async () => {
+      setLoadingIncidencias(true);
+      try {
+        const { data, error } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+        if (error) throw error;
+        setIncidencias(data || []);
+      } catch (err) {
+        console.error("Error:", err);
+        setIncidencias([]);
+      } finally {
+        setLoadingIncidencias(false);
       }
-    } catch (err) {
-      console.error("Excepción en cargarEmpleados:", err);
-    }
-  };
-
-  const solicitudesFiltradas = solicitudes.filter(s => {
-    if (filtro === "PENDIENTES") return s.estatus === "PENDIENTE";
-    if (filtro === "APROBADAS") return s.estatus === "APROBADA";
-    if (filtro === "RECHAZADAS") return s.estatus === "RECHAZADA";
-    return true;
-  });
-
-  const pendientes = solicitudes.filter(s => s.estatus === "PENDIENTE").length;
-  const aprobadas = solicitudes.filter(s => s.estatus === "APROBADA").length;
-  const rechazadas = solicitudes.filter(s => s.estatus === "RECHAZADA").length;
-
-  const solicitarAprobacion = (solicitud) => {
-    setModalConfirmacion({
-      abierto: true, solicitud, accion: "aprobar",
-      rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "", busquedaEmpleado: "",
-      titulo: "Aprobar Solicitud",
-      descripcion: "Se creará una cuenta con el rol y vinculación seleccionados.",
-      colorIcono: "bg-emerald-100", icono: "✅",
-      colorBoton: "bg-emerald-600 hover:bg-emerald-700",
-      textoBoton: "✅ Continuar"
-    });
-  };
-
-  const confirmarAprobacionInicial = () => {
-    const { solicitud, rolSeleccionado, empleadoSeleccionado } = modalConfirmacion;
-    setModalPasswordAdmin({
-      abierto: true, password: "", solicitud, rolSeleccionado, empleadoSeleccionado
-    });
-    setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-  };
-
-  // 🔥 APROBACIÓN: Vinculación SOLO por empleado seleccionado
-  const ejecutarAprobacion = async (solicitud, rol, empleadoId, passwordAdmin) => {
-    try {
-      setLoading(true);
-
-      const { data: { user: adminUser } } = await supabase.auth.getUser();
-      const emailAdmin = adminUser?.email;
-
-      if (!emailAdmin || !passwordAdmin) {
-        throw new Error("No se pudo obtener las credenciales del administrador");
-      }
-
-      const correoRaw = solicitud.correo || solicitud.email || "";
-      const passwordRaw = solicitud.password || "";
-      const correoLimpio = String(correoRaw).trim().toLowerCase();
-      const passwordLimpio = String(passwordRaw).trim();
-
-      if (!correoLimpio || !correoLimpio.includes('@')) {
-        alert("⚠️ El correo electrónico es inválido.");
-        setLoading(false);
-        return;
-      }
-      if (passwordLimpio.length < 6) {
-        alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
-        setLoading(false);
-        return;
-      }
-
-      // 🔥 VALIDACIÓN: Si se seleccionó un empleado, verificar que exista
-      let empleadoInfo = null;
-      if (empleadoId) {
-        empleadoInfo = empleados.find(e => String(e.id) === String(empleadoId));
-        if (!empleadoInfo) {
-          alert("⚠️ El empleado seleccionado no existe. Selecciona un empleado válido.");
-          setLoading(false);
-          return;
-        }
-      }
-
-      // 1. Crear usuario en Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: correoLimpio,
-        password: passwordLimpio,
-        options: { data: { nombre: solicitud.nombre, rol: rol } },
-      });
-
-      if (authError) {
-        if (authError.message.includes("already registered") || authError.message.includes("already in use")) {
-          alert("⚠️ El correo \"" + correoLimpio + "\" ya tiene una cuenta.");
-          setLoading(false);
-          return;
-        }
-        throw new Error("Error de autenticación: " + authError.message);
-      }
-
-      const nuevoUserId = authData.user?.id;
-      if (!nuevoUserId) throw new Error("No se pudo crear el usuario");
-
-      // 2. Crear perfil
-      const { error: profileError } = await supabase.from("profiles").upsert(
-        { id: nuevoUserId, nombre: solicitud.nombre, rol: rol, activo: true },
-        { onConflict: "id" }
-      );
-      if (profileError) throw profileError;
-
-      // 3. 🔥 VINCULACIÓN: SOLO por el empleado seleccionado (id_usuario)
-      let vinculadoCorrectamente = false;
-      if (empleadoId && empleadoInfo) {
-        console.log("🔗 Vinculando usuario", nuevoUserId, "con empleado", empleadoInfo.nombre_completo);
-
-        const { error: updateError } = await supabase
-          .from("empleados")
-          .update({ id_usuario: nuevoUserId })
-          .eq("id", empleadoId);
-
-        if (!updateError) {
-          vinculadoCorrectamente = true;
-          console.log("✅ Vinculación exitosa por id_usuario");
-        } else {
-          console.error("❌ Error vinculando:", updateError.message);
-          // Si falla por falta de columna, intentar crearla
-          if (updateError.message.includes("id_usuario")) {
-            try {
-              await supabase.rpc("agregar_columna_dinamica", {
-                p_tabla: "empleados",
-                p_columna: "id_usuario",
-                p_tipo: "UUID"
-              });
-              // Reintentar vinculación
-              const { error: retryError } = await supabase
-                .from("empleados")
-                .update({ id_usuario: nuevoUserId })
-                .eq("id", empleadoId);
-              if (!retryError) vinculadoCorrectamente = true;
-            } catch (e) {
-              console.error("No se pudo crear la columna id_usuario:", e);
-            }
-          }
-        }
-      }
-
-      // 4. 🔥 ACTUALIZAR LA SOLICITUD con datos del usuario creado (para mostrar en "Aprobadas")
-      const { error: updateSolError } = await supabase
-        .from("solicitudes_usuario")
-        .update({
-          estatus: "APROBADA",
-          usuario_creado_id: nuevoUserId,
-          correo_creado: correoLimpio,
-          password_creada: passwordLimpio,
-          empleado_vinculado_id: empleadoId || null,
-          empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
-          rol_asignado: rol
-        })
-        .eq("id", solicitud.id);
-
-      if (updateSolError) console.warn("No se pudo actualizar solicitud:", updateSolError.message);
-
-      // 5. Actualizar estado local
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? {
-        ...s,
-        estatus: "APROBADA",
-        usuario_creado_id: nuevoUserId,
-        correo_creado: correoLimpio,
-        password_creada: passwordLimpio,
-        empleado_vinculado_id: empleadoId || null,
-        empleado_vinculado_nombre: empleadoInfo?.nombre_completo || null,
-        rol_asignado: rol
-      } : s));
-
-      // 6. Restaurar sesión del admin
-      await supabase.auth.signOut();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: emailAdmin,
-        password: passwordAdmin
-      });
-
-      if (signInError) {
-        alert(
-          "✅ Usuario creado.\n\n⚠️ Tu sesión fue cerrada. Inicia sesión nuevamente.\n\n" +
-          "Correo: " + correoLimpio + "\nContraseña: " + passwordLimpio
-        );
-      } else {
-        let mensajeEmpleado = "";
-        if (empleadoInfo && vinculadoCorrectamente) {
-          mensajeEmpleado = "\n\n🔗 Vinculado a: " + empleadoInfo.nombre_completo +
-            " (#" + empleadoInfo.numero_empleado + ")";
-        } else if (empleadoInfo) {
-          mensajeEmpleado = "\n\n⚠️ No se pudo vincular al empleado. Revisa la consola.";
-        } else {
-          mensajeEmpleado = "\n\nℹ️ No se vinculó a ningún empleado (usuario independiente).";
-        }
-
-        alert(
-          "✅ Usuario creado exitosamente.\n\n" +
-          "📧 Correo: " + correoLimpio +
-          "\n🔑 Contraseña: " + passwordLimpio +
-          mensajeEmpleado +
-          "\n\n💡 Estos datos quedarán visibles en 'Aprobadas'."
-        );
-      }
-
-      await cargarSolicitudes();
-    } catch (error) {
-      console.error("Error al aprobar:", error);
-      alert("Error: " + error.message);
-      await cargarSolicitudes();
-    } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-      setModalPasswordAdmin({ abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: "" });
-    }
-  };
-
-  const ejecutarRechazo = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { error } = await supabase
-        .from("solicitudes_usuario")
-        .update({ estatus: "RECHAZADA" })
-        .eq("id", solicitud.id);
-      if (error) throw new Error(error.message);
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    } catch (error) {
-      alert("Error: " + error.message);
-      await cargarSolicitudes();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const darDeBajaUsuario = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
-      if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles")
-          .update({ activo: false, fecha_baja: new Date().toISOString() })
-          .in("id", perfiles.map(p => p.id));
-      }
-      await supabase.from("solicitudes_usuario").update({ estatus: "RECHAZADA" }).eq("id", solicitud.id);
-      setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      alert("✅ Usuario dado de baja correctamente.");
-    } catch (error) {
-      alert("Error: " + error.message);
-    } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    }
-  };
-
-  const eliminarDefinitivamente = async (solicitud) => {
-    try {
-      setLoading(true);
-      const { data: perfiles } = await supabase.from("profiles").select("id").eq("nombre", solicitud.nombre);
-      if (perfiles && perfiles.length > 0) {
-        await supabase.from("profiles").delete().in("id", perfiles.map(p => p.id));
-      }
-      await supabase.from("solicitudes_usuario").delete().eq("id", solicitud.id);
-      setSolicitudes(prev => prev.filter(s => s.id !== solicitud.id));
-      alert("✅ Usuario eliminado permanentemente.");
-    } catch (error) {
-      alert("Error: " + error.message);
-    } finally {
-      setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false }));
-    }
-  };
-
-  const confirmarAccion = (solicitud, accion) => {
-    if (accion === "aprobar") { solicitarAprobacion(solicitud); return; }
-
-    const config = {
-      rechazar: { titulo: "Rechazar Solicitud", descripcion: "La solicitud se marcará como rechazada.", colorIcono: "bg-red-100", icono: "❌", colorBoton: "bg-red-600 hover:bg-red-700", textoBoton: "❌ Confirmar Rechazo" },
-      baja: { titulo: "Dar de Baja al Usuario", descripcion: "El usuario NO podrá iniciar sesión hasta ser reactivado.", colorIcono: "bg-orange-100", icono: "🚫", colorBoton: "bg-orange-600 hover:bg-orange-700", textoBoton: "🚫 Confirmar Baja" },
-      eliminar: { titulo: "⚠️ ELIMINACIÓN PERMANENTE", descripcion: "Esta acción NO se puede deshacer.", colorIcono: "bg-red-100", icono: "🗑️", colorBoton: "bg-red-700 hover:bg-red-800", textoBoton: "🗑️ Sí, Eliminar" }
     };
+    cargarIncidencias();
+  }, [periodoId]);
 
-    const cfg = config[accion];
-    if (!cfg) return;
+  useEffect(() => {
+    if (columnasDelMapeo.length > 0) {
+      setColumnasVisibles(prev => {
+        const nuevo = { ...prev };
+        columnasDelMapeo.forEach(col => { if (nuevo[col.campo] === undefined) nuevo[col.campo] = true; });
+        return nuevo;
+      });
+      setOrdenColumnas(prev => {
+        const nuevo = [...prev];
+        columnasDelMapeo.forEach(col => { if (!nuevo.includes(col.campo)) nuevo.push(col.campo); });
+        return nuevo;
+      });
+    }
+  }, [columnasDelMapeo]);
 
-    setModalConfirmacion({
-      abierto: true, solicitud, accion,
-      rolSeleccionado: "SUPERVISOR", empleadoSeleccionado: "", busquedaEmpleado: "",
-      ...cfg
+  useEffect(() => { localStorage.setItem("incidencias_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
+  useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
+  useEffect(() => { setPaginaActual(1); }, [busqueda, departamentoFiltro, estadoFiltro, periodoId]);
+
+  const guardarPermisos = async () => {
+    setGuardandoPermisos(true);
+    try {
+      await supabase.from("configuracion_tablas").upsert({
+        clave: "permisos_incidencias",
+        configuracion: permisosSupervisor,
+      }, { onConflict: "clave" });
+      localStorage.setItem("permisos_incidencias", JSON.stringify(permisosSupervisor));
+      setModalPermisos(false);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardandoPermisos(false); }
+  };
+
+  const guardarCapturaRapida = async (empleadoId, valores) => {
+    setGuardando(true);
+    try {
+      const payload = limpiarPayload({
+        empleado_id: empleadoId,
+        periodo_id: Number(periodoId),
+        estado: "pendiente",
+        ...valores
+      });
+
+      const { data: existente } = await supabase
+        .from("incidencias")
+        .select("id")
+        .eq("empleado_id", empleadoId)
+        .eq("periodo_id", periodoId)
+        .maybeSingle();
+
+      let error;
+      if (existente) {
+        const { error: e } = await supabase.from("incidencias").update(payload).eq("id", existente.id);
+        error = e;
+      } else {
+        const { error: e } = await supabase.from("incidencias").insert([payload]);
+        error = e;
+      }
+      if (error) throw error;
+      setModalCaptura({ abierto: false, empleado: null });
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+      setIncidencias(data || []);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardando(false); }
+  };
+
+  const guardarRevision = async (incidenciaId, valores, estado, comentario) => {
+    setGuardando(true);
+    try {
+      const payload = limpiarPayload({
+        ...valores,
+        estado,
+        comentarios_rrhh: comentario || null,
+        fecha_revision: new Date().toISOString()
+      });
+      const { error } = await supabase.from("incidencias").update(payload).eq("id", incidenciaId);
+      if (error) throw error;
+      setModalRevision({ abierto: false, registro: null });
+      const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
+      setIncidencias(data || []);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setGuardando(false); }
+  };
+
+  const cambiarVisibilidadColumna = (campo) => setColumnasVisibles(prev => ({ ...prev, [campo]: !prev[campo] }));
+  const moverColumna = (campo, direccion) => {
+    setOrdenColumnas(prev => {
+      const idx = prev.indexOf(campo);
+      if (idx === -1) return prev;
+      const nuevo = [...prev];
+      if (direccion === 'arriba' && idx > 0) [nuevo[idx - 1], nuevo[idx]] = [nuevo[idx], nuevo[idx - 1]];
+      else if (direccion === 'abajo' && idx < prev.length - 1) [nuevo[idx], nuevo[idx + 1]] = [nuevo[idx + 1], nuevo[idx]];
+      return nuevo;
     });
   };
 
-  const ejecutarAccion = () => {
-    const { accion, solicitud } = modalConfirmacion;
-    switch (accion) {
-      case "aprobar": confirmarAprobacionInicial(); break;
-      case "rechazar": ejecutarRechazo(solicitud); break;
-      case "baja": darDeBajaUsuario(solicitud); break;
-      case "eliminar": eliminarDefinitivamente(solicitud); break;
-    }
-  };
+  const registros = useMemo(() => {
+    return empleados.map(emp => ({
+      empleado: emp,
+      incidencia: incidencias.find(i => i.empleado_id === emp.id) || null
+    }));
+  }, [empleados, incidencias]);
 
-  const empleadosFiltrados = useMemo(() => {
-    if (!modalConfirmacion.busquedaEmpleado) return empleados;
-    const texto = modalConfirmacion.busquedaEmpleado.toLowerCase();
-    return empleados.filter(emp =>
-      (emp.nombre_completo || "").toLowerCase().includes(texto) ||
-      (emp.numero_empleado || "").toLowerCase().includes(texto) ||
-      (emp.puesto || "").toLowerCase().includes(texto) ||
-      (emp.departamento || "").toLowerCase().includes(texto)
-    );
-  }, [empleados, modalConfirmacion.busquedaEmpleado]);
+  const registrosFiltrados = useMemo(() => {
+    const texto = busqueda.toLowerCase().trim();
+    return registros.filter(r => {
+      const emp = r.empleado;
+      const coincide = [emp.nombre_completo, emp.numero_empleado, emp.departamentos?.nombre, emp.puestos?.nombre]
+        .some(c => String(c || "").toLowerCase().includes(texto));
+      const coincideDepto = departamentoFiltro === "TODOS" || emp.departamentos?.nombre === departamentoFiltro;
+      const estado = r.incidencia?.estado || "sin_captura";
+      const coincideEstado = estadoFiltro === "TODOS" || estado === estadoFiltro;
+      return coincide && coincideDepto && coincideEstado;
+    });
+  }, [registros, busqueda, departamentoFiltro, estadoFiltro]);
+
+  const totalPaginas = Math.ceil(registrosFiltrados.length / ITEMS_POR_PAGINA);
+  const registrosPaginados = useMemo(() => {
+    const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
+    return registrosFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
+  }, [registrosFiltrados, paginaActual]);
+
+  const kpis = useMemo(() => {
+    const total = empleados.length;
+    const conCaptura = incidencias.length;
+    const pendientes = incidencias.filter(i => i.estado === "pendiente").length;
+    const aprobados = incidencias.filter(i => i.estado === "aprobado").length;
+    const rechazados = incidencias.filter(i => i.estado === "rechazado").length;
+    return { total, conCaptura, pendientes, aprobados, rechazados, sinCaptura: total - conCaptura };
+  }, [empleados, incidencias]);
+
+  const departamentos = ["TODOS", ...new Set(empleados.map(e => e?.departamentos?.nombre).filter(Boolean))].sort();
+  const periodoActual = periodos.find(p => p.id === periodoId);
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">📨 Solicitudes de Usuario</h1>
-          <p className="text-slate-500 mt-1">Aprueba solicitudes, asigna roles y gestiona usuarios</p>
-        </div>
-        <Link to="/dashboard" className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition shadow-sm">← Volver al Dashboard</Link>
-      </div>
-
-      <div className="grid md:grid-cols-4 gap-3">
-        <button onClick={() => setFiltro("PENDIENTES")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "PENDIENTES" ? "bg-amber-50 border-amber-400 shadow-md" : "bg-white border-slate-200 hover:border-amber-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Pendientes</div>
-          <div className="text-3xl font-black text-amber-600">{pendientes}</div>
-        </button>
-        <button onClick={() => setFiltro("APROBADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "APROBADAS" ? "bg-emerald-50 border-emerald-400 shadow-md" : "bg-white border-slate-200 hover:border-emerald-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Aprobadas</div>
-          <div className="text-3xl font-black text-emerald-600">{aprobadas}</div>
-        </button>
-        <button onClick={() => setFiltro("RECHAZADAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "RECHAZADAS" ? "bg-red-50 border-red-400 shadow-md" : "bg-white border-slate-200 hover:border-red-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Rechazadas</div>
-          <div className="text-3xl font-black text-red-600">{rechazadas}</div>
-        </button>
-        <button onClick={() => setFiltro("TODAS")} className={"rounded-xl p-4 border-2 text-left transition " + (filtro === "TODAS" ? "bg-blue-50 border-blue-400 shadow-md" : "bg-white border-slate-200 hover:border-blue-200")}>
-          <div className="text-xs text-slate-500 font-semibold uppercase">Todas</div>
-          <div className="text-3xl font-black text-blue-600">{solicitudes.length}</div>
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        {loading && solicitudes.length === 0 ? (
-          <div className="p-12 text-center text-slate-500"><div className="animate-spin text-4xl mb-2">⏳</div>Cargando...</div>
-        ) : solicitudesFiltradas.length === 0 ? (
-          <div className="p-12 text-center text-slate-500"><div className="text-6xl mb-3">📭</div><p className="font-semibold">No hay solicitudes</p></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="p-4 font-bold text-slate-700">Nombre</th>
-                  <th className="p-4 font-bold text-slate-700">Correo</th>
-                  <th className="p-4 font-bold text-slate-700">Teléfono</th>
-                  <th className="p-4 font-bold text-slate-700 text-center">Estatus</th>
-                  <th className="p-4 font-bold text-slate-700 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {solicitudesFiltradas.map((solicitud) => (
-                  <tr key={solicitud.id} className="hover:bg-slate-50 transition">
-                    <td className="p-4 font-semibold text-slate-800">{solicitud.nombre}</td>
-                    <td className="p-4 text-slate-600 font-mono text-xs">{solicitud.correo || solicitud.email || "N/A"}</td>
-                    <td className="p-4 text-slate-600">{solicitud.telefono || "-"}</td>
-                    <td className="p-4 text-center">
-                      {solicitud.estatus === "PENDIENTE" && <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-bold">🟡 Pendiente</span>}
-                      {solicitud.estatus === "APROBADA" && <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-xs font-bold">✅ Aprobada</span>}
-                      {solicitud.estatus === "RECHAZADA" && <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-xs font-bold">❌ Rechazada</span>}
-                    </td>
-                    <td className="p-4 text-center">
-                      {solicitud.estatus === "PENDIENTE" ? (
-                        <div className="flex gap-2 justify-center flex-wrap">
-                          <button onClick={() => confirmarAccion(solicitud, "aprobar")} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">✅ Aprobar</button>
-                          <button onClick={() => confirmarAccion(solicitud, "rechazar")} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">❌ Rechazar</button>
-                        </div>
-                      ) : (
-                        <div className="flex gap-2 justify-center flex-wrap">
-                          {solicitud.estatus === "APROBADA" && (
-                            <button onClick={() => confirmarAccion(solicitud, "baja")} disabled={loading} className="bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🚫 Dar de Baja</button>
-                          )}
-                          <button onClick={() => confirmarAccion(solicitud, "eliminar")} disabled={loading} className="bg-red-700 hover:bg-red-800 disabled:bg-red-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">🗑️ Eliminar</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* 🔥 TABLA DETALLADA DE APROBADAS (con datos del usuario creado) */}
-      {filtro === "APROBADAS" && solicitudesFiltradas.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-emerald-200 overflow-hidden">
-          <div className="bg-emerald-50 border-b border-emerald-200 p-4">
-            <h3 className="text-lg font-bold text-emerald-900 flex items-center gap-2">
-              <span>🔐</span> Credenciales de Usuarios Creados
-            </h3>
-            <p className="text-xs text-emerald-700 mt-1">
-              Información de acceso de los usuarios aprobados. Comparte estas credenciales con cada usuario.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="p-4 font-bold text-slate-700">Nombre Registro</th>
-                  <th className="p-4 font-bold text-slate-700">Correo de Acceso</th>
-                  <th className="p-4 font-bold text-slate-700">Contraseña</th>
-                  <th className="p-4 font-bold text-slate-700">Rol</th>
-                  <th className="p-4 font-bold text-slate-700">Empleado Vinculado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {solicitudesFiltradas.filter(s => s.estatus === "APROBADA").map((sol) => (
-                  <tr key={sol.id} className="hover:bg-slate-50">
-                    <td className="p-4 font-semibold text-slate-800">{sol.nombre}</td>
-                    <td className="p-4 font-mono text-xs text-blue-700 bg-blue-50 px-3 py-1 rounded">
-                      {sol.correo_creado || sol.correo || sol.email || "N/A"}
-                    </td>
-                    <td className="p-4">
-                      {sol.password_creada ? (
-                        <span className="font-mono text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded border border-amber-200">
-                          🔑 {sol.password_creada}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-xs italic">No disponible</span>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-bold">
-                        {sol.rol_asignado || "N/A"}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      {sol.empleado_vinculado_nombre ? (
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-semibold">
-                          ✅ {sol.empleado_vinculado_nombre}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-xs italic">Sin vincular</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL CONFIRMACIÓN */}
-      {modalConfirmacion.abierto && modalConfirmacion.solicitud && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="text-center mb-4">
-              <div className={"w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 " + (modalConfirmacion.colorIcono || "bg-slate-100")}>
-                {modalConfirmacion.icono || "❓"}
-              </div>
-              <h3 className="text-xl font-bold text-slate-800">{modalConfirmacion.titulo}</h3>
-              <p className="text-sm text-slate-600 mt-2">{modalConfirmacion.descripcion}</p>
-
-              {modalConfirmacion.accion === "aprobar" && (
-                <div className="mt-4 text-left space-y-3">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">Asignar Rol:</label>
-                    <select value={modalConfirmacion.rolSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, rolSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white">
-                      <option value="SUPERVISOR">👷 Supervisor</option>
-                      <option value="ADMINISTRATIVO">💼 Administrativo</option>
-                      <option value="VISOR">👁️ Visor</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1">🔗 Vincular a Empleado:</label>
-                    <div className="relative mb-2">
-                      <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                      <input type="text" placeholder="Buscar por nombre, número o puesto..." value={modalConfirmacion.busquedaEmpleado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, busquedaEmpleado: e.target.value }))} className="w-full border border-slate-300 rounded-lg pl-9 p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm" />
-                    </div>
-                    <select value={modalConfirmacion.empleadoSeleccionado} onChange={(e) => setModalConfirmacion(prev => ({ ...prev, empleadoSeleccionado: e.target.value }))} className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white" size={Math.min(empleadosFiltrados.length, 6)}>
-                      <option value="">-- Sin vincular --</option>
-                      {empleadosFiltrados.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                          #{emp.numero_empleado || "S/N"} - {emp.nombre_completo} {emp.puesto ? `(${emp.puesto})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-slate-500 mt-1">Mostrando {empleadosFiltrados.length} de {empleados.length}</p>
-                  </div>
+    <Layout>
+      <div className="space-y-6">
+        {/* 🔥 HEADER CON GRADIENTE */}
+        <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMtOS45NDEgMC0xOCA4LjA1OS0xOCAxOHM4LjA1OSAxOCAxOCAxOCAxOC04LjA1OSAxOC0xOC04LjA1OS0xOC0xOC0xOHptMCAzMmMtNy43MzIgMC0xNC02LjI2OC0xNC0xNHM2LjI2OC0xNCAxNC0xNCAxNCA2LjI2OCAxNCAxNC02LjI2OCAxNC0xNCAxNHoiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjIiLz48L2c+PC9zdmc+')] opacity-20"></div>
+          <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-3xl">⚡</div>
+                <div>
+                  <h1 className="text-3xl md:text-4xl font-black tracking-tight">Incidencias</h1>
+                  <p className="text-white/80 text-sm mt-1">Gestión de nómina con validación en dos niveles</p>
                 </div>
-              )}
-
-              <div className="bg-slate-50 rounded-lg p-3 mt-3 text-left">
-                <div className="font-bold text-slate-800">{modalConfirmacion.solicitud.nombre}</div>
-                <div className="text-xs text-slate-600 font-mono">{modalConfirmacion.solicitud.correo || modalConfirmacion.solicitud.email}</div>
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setModalConfirmacion(prev => ({ ...prev, abierto: false }))} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
-              <button onClick={ejecutarAccion} disabled={loading} className={"flex-1 text-white py-2.5 rounded-lg font-semibold transition disabled:opacity-50 " + (modalConfirmacion.colorBoton || "bg-blue-600")}>
-                {loading ? "Procesando..." : modalConfirmacion.textoBoton}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                🔒 <span className="hidden sm:inline">Permisos</span>
+              </button>
+              <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                ⚙️ <span className="hidden sm:inline">Columnas</span>
               </button>
             </div>
           </div>
         </div>
-      )}
 
-      {/* MODAL PASSWORD ADMIN */}
-      {modalPasswordAdmin.abierto && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <div className="text-center mb-4">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 bg-blue-100">🔐</div>
-              <h3 className="text-xl font-bold text-slate-800">Verificación de Seguridad</h3>
-              <p className="text-sm text-slate-600 mt-2">Ingresa tu contraseña de administrador.</p>
-            </div>
-            <div className="space-y-4">
+        {/* 🔥 SELECTOR DE PERÍODO */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-xl">📅</div>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Tu Contraseña:</label>
-                <input type="password" value={modalPasswordAdmin.password} onChange={(e) => setModalPasswordAdmin(prev => ({ ...prev, password: e.target.value }))} placeholder="Ingresa tu contraseña" className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-blue-500 bg-white" autoFocus />
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
-                <p className="text-xs text-blue-800">
-                  <strong>📋 Resumen:</strong><br />
-                  Usuario: {modalPasswordAdmin.solicitud?.nombre}<br />
-                  Correo: {modalPasswordAdmin.solicitud?.correo || modalPasswordAdmin.solicitud?.email}<br />
-                  Rol: {modalPasswordAdmin.rolSeleccionado}<br />
-                  {modalPasswordAdmin.empleadoSeleccionado && (
-                    <>Empleado: {empleados.find(e => String(e.id) === String(modalPasswordAdmin.empleadoSeleccionado))?.nombre_completo || "N/A"}</>
-                  )}
-                </p>
+                <div className="text-xs text-slate-500 font-semibold uppercase">Período de Nómina</div>
+                <div className="text-sm font-bold text-slate-800">Selecciona el período activo</div>
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setModalPasswordAdmin({ abierto: false, password: "", solicitud: null, rolSeleccionado: "", empleadoSeleccionado: "" })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition">Cancelar</button>
-              <button onClick={() => {
-                if (!modalPasswordAdmin.password || modalPasswordAdmin.password.length < 6) {
-                  alert("⚠️ La contraseña debe tener al menos 6 caracteres.");
-                  return;
-                }
-                ejecutarAprobacion(modalPasswordAdmin.solicitud, modalPasswordAdmin.rolSeleccionado, modalPasswordAdmin.empleadoSeleccionado, modalPasswordAdmin.password);
-              }} disabled={loading || !modalPasswordAdmin.password} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-2.5 rounded-lg font-semibold transition">
-                {loading ? "Creando..." : "✅ Crear Usuario"}
+            <select value={periodoId} onChange={e => setPeriodoId(e.target.value)} className="flex-1 border-2 border-slate-200 rounded-xl p-3 bg-slate-50 font-semibold focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition">
+              {periodos.map(p => <option key={p.id} value={p.id}>{p.descripcion}</option>)}
+            </select>
+            {periodoActual && (
+              <div className="text-xs bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-medium">
+                📆 {new Date(periodoActual.fecha_inicio).toLocaleDateString('es-MX')} - {new Date(periodoActual.fecha_fin).toLocaleDateString('es-MX')}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 🔥 KPIs MODERNOS */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <KpiModerno titulo="Empleados" valor={kpis.total} icono="👥" color="blue" />
+          <KpiModerno titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="indigo" />
+          <KpiModerno titulo="Sin Captura" valor={kpis.sinCaptura} icono="⚠️" color="gray" />
+          <KpiModerno titulo="Pendientes" valor={kpis.pendientes} icono="⏳" color="amber" />
+          <KpiModerno titulo="Aprobados" valor={kpis.aprobados} icono="✅" color="emerald" />
+          <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
+        </div>
+
+        {/* 🔥 TABS COMPACTOS */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setVistaActual("supervisor")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${
+              vistaActual === "supervisor"
+                ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30"
+                : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"
+            }`}
+          >
+            <span className="text-base">👷</span>
+            <span>Supervisor</span>
+            {kpis.sinCaptura > 0 && vistaActual !== "supervisor" && (
+              <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {kpis.sinCaptura}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setVistaActual("rrhh")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${
+              vistaActual === "rrhh"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/30"
+                : "bg-white text-slate-600 border-slate-200 hover:border-purple-300 hover:text-purple-600"
+            }`}
+          >
+            <span className="text-base">🔍</span>
+            <span>Recursos Humanos</span>
+            {kpis.pendientes > 0 && vistaActual !== "rrhh" && (
+              <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {kpis.pendientes}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* 🔥 FILTROS */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <div className="grid md:grid-cols-4 gap-3">
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar empleado..."
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+              />
+            </div>
+            <select value={departamentoFiltro} onChange={e => setDepartamentoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
+              {departamentos.map(d => <option key={d} value={d}>{d === "TODOS" ? "🏢 Todos los departamentos" : d}</option>)}
+            </select>
+            <select value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
+              <option value="TODOS">📊 Todos los estados</option>
+              <option value="sin_captura">⚠️ Sin captura</option>
+              <option value="pendiente">⏳ Pendiente</option>
+              <option value="aprobado">✅ Aprobado</option>
+              <option value="rechazado">❌ Rechazado</option>
+            </select>
+            <div className="flex items-center justify-end bg-slate-50 rounded-xl px-4 py-2.5">
+              <span className="text-sm text-slate-600">
+                <strong className="text-slate-900">{registrosFiltrados.length}</strong> de <strong className="text-slate-900">{empleados.length}</strong>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 🔥 TABLA PRINCIPAL */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="p-4 font-bold text-slate-700 sticky left-0 bg-slate-50 z-10">No.</th>
+                  <th className="p-4 font-bold text-slate-700">Colaborador</th>
+                  <th className="p-4 font-bold text-slate-700">Departamento</th>
+                  <th className="p-4 font-bold text-slate-700">Puesto</th>
+                  <th className="p-4 font-bold text-slate-700">Estado</th>
+                  {columnasActivas.map(col => (
+                    <th key={col.campo} className={`p-4 text-right font-bold ${
+                      esCampoMonetario(col.campo) ? 'bg-emerald-50 text-emerald-900' :
+                      col.permite_supervisor ? 'bg-blue-50 text-blue-900' : 'bg-slate-50 text-slate-700'
+                    }`}>
+                      <div className="flex items-center justify-end gap-1">
+                        {col.etiqueta}
+                        {col.permite_supervisor && <span className="text-[9px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded-full">👷</span>}
+                      </div>
+                    </th>
+                  ))}
+                  {vistaActual === "rrhh" && <th className="p-4 font-bold text-slate-700">💬 Obs.</th>}
+                  <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-10">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingEmpleados ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="border-b border-slate-100">
+                      {Array.from({ length: 6 }).map((_, j) => (
+                        <td key={j} className="p-4"><div className="h-4 bg-slate-200 rounded animate-pulse"></div></td>
+                      ))}
+                    </tr>
+                  ))
+                ) : registrosPaginados.length === 0 ? (
+                  <tr>
+                    <td colSpan={20} className="p-12 text-center">
+                      <div className="text-6xl mb-3">📭</div>
+                      <div className="text-slate-500 font-semibold">No hay resultados</div>
+                      <div className="text-xs text-slate-400 mt-1">Intenta ajustar los filtros</div>
+                    </td>
+                  </tr>
+                ) : (
+                  registrosPaginados.map(({ empleado, incidencia }) => {
+                    const estado = incidencia?.estado || "sin_captura";
+                    const estadoConfig = {
+                      sin_captura: { color: "bg-slate-100 text-slate-600", icono: "⚠️", label: "Sin captura" },
+                      pendiente: { color: "bg-amber-100 text-amber-800", icono: "⏳", label: "Pendiente" },
+                      aprobado: { color: "bg-emerald-100 text-emerald-800", icono: "✅", label: "Aprobado" },
+                      rechazado: { color: "bg-red-100 text-red-800", icono: "❌", label: "Rechazado" },
+                    }[estado];
+
+                    return (
+                      <tr key={empleado.id} className={`border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
+                        <td className="p-4 font-mono text-slate-600 sticky left-0 bg-inherit">{empleado.numero_empleado || "S/N"}</td>
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-800">{empleado.nombre_completo || "Sin nombre"}</div>
+                        </td>
+                        <td className="p-4 text-slate-600">{empleado.departamentos?.nombre || "N/A"}</td>
+                        <td className="p-4 text-slate-600">{empleado.puestos?.nombre || "Sin asignar"}</td>
+                        <td className="p-4">
+                          <span className={`${estadoConfig.color} px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1`}>
+                            {estadoConfig.icono} {estadoConfig.label}
+                          </span>
+                        </td>
+                        {columnasActivas.map(col => {
+                          const val = incidencia?.[col.campo];
+                          const esMonet = esCampoMonetario(col.campo);
+                          const displayVal = val !== null && val !== undefined && val !== ""
+                            ? (esMonet ? `$${Number(val).toFixed(2)}` : val)
+                            : <span className="text-slate-300">—</span>;
+                          return (
+                            <td key={col.campo} className={`p-4 text-right ${esMonet ? 'text-emerald-700 font-semibold' : 'text-slate-700'}`}>
+                              {displayVal}
+                            </td>
+                          );
+                        })}
+                        {vistaActual === "rrhh" && (
+                          <td className="p-4 max-w-[150px]">
+                            <div className="truncate text-[11px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
+                              {incidencia?.comentarios_rrhh || <span className="text-slate-300">—</span>}
+                            </div>
+                          </td>
+                        )}
+                        <td className="p-4 sticky right-0 bg-inherit">
+                          {vistaActual === "supervisor" ? (
+                            <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                              {incidencia ? "✏️ Editar" : "📝 Capturar"}
+                            </button>
+                          ) : (
+                            <button onClick={() => setModalRevision({ abierto: true, registro: { empleado, incidencia } })} className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                              🔍 Validar
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 🔥 PAGINACIÓN */}
+          {totalPaginas > 1 && (
+            <div className="border-t border-slate-200 px-5 py-3 flex items-center justify-between bg-slate-50">
+              <div className="text-xs text-slate-600">
+                Página <strong>{paginaActual}</strong> de <strong>{totalPaginas}</strong>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setPaginaActual(p => Math.max(1, p - 1))}
+                  disabled={paginaActual === 1}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  ← Anterior
+                </button>
+                <button
+                  onClick={() => setPaginaActual(p => Math.min(totalPaginas, p + 1))}
+                  disabled={paginaActual === totalPaginas}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 🔥 MODALES */}
+      {modalCaptura.abierto && modalCaptura.empleado && (
+        <ModalCaptura
+          empleado={modalCaptura.empleado}
+          columnas={columnasSupervisor}
+          guardando={guardando}
+          onGuardar={guardarCapturaRapida}
+          onCerrar={() => setModalCaptura({ abierto: false, empleado: null })}
+        />
+      )}
+
+      {modalRevision.abierto && modalRevision.registro && (
+        <ModalRevision
+          registro={modalRevision.registro}
+          columnas={columnasActivas}
+          guardando={guardando}
+          onGuardar={guardarRevision}
+          onCerrar={() => setModalRevision({ abierto: false, registro: null })}
+        />
+      )}
+
+      {modalPermisos && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">🔒 Permisos de Captura</h3>
+                <p className="text-xs text-gray-500">Marca qué campos puede llenar el supervisor</p>
+              </div>
+              <button onClick={() => setModalPermisos(false)} className="text-gray-400 font-bold text-xl">✕</button>
+            </div>
+            <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+              {columnasDelMapeo.map(col => (
+                <label key={col.campo} className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 cursor-pointer">
+                  <input type="checkbox" checked={permisosSupervisor[col.campo] || false} onChange={e => setPermisosSupervisor(prev => ({ ...prev, [col.campo]: e.target.checked }))} className="w-5 h-5 text-amber-600 rounded" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-slate-700 text-sm">{col.etiqueta}</div>
+                    <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
+                  </div>
+                  {permisosSupervisor[col.campo] ? (
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold">👷 Supervisor</span>
+                  ) : (
+                    <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded font-bold">🔒 Solo RH</span>
+                  )}
+                </label>
+              ))}
+              {columnasDelMapeo.length === 0 && <div className="text-center text-gray-500 py-8">No hay columnas mapeadas a incidencias.</div>}
+            </div>
+            <div className="pt-3 border-t flex justify-end gap-2">
+              <button onClick={() => setModalPermisos(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+              <button onClick={guardarPermisos} disabled={guardandoPermisos} className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-amber-300">
+                {guardandoPermisos ? "Guardando..." : "💾 Guardar Permisos"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {modalConfigColumnas && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <div><h3 className="text-lg font-bold text-slate-800">⚙️ Columnas de Incidencias</h3><p className="text-xs text-gray-500">Arrastra para reordenar</p></div>
+              <button onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
+            </div>
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              {columnasDelMapeo.map(col => {
+                const idx = ordenColumnas.indexOf(col.campo);
+                return (
+                  <div key={col.campo} draggable
+                    onDragStart={(e) => { e.dataTransfer.setData('text/plain', col.campo); e.currentTarget.classList.add('opacity-40'); }}
+                    onDragEnd={(e) => { e.currentTarget.classList.remove('opacity-40', 'ring-2', 'ring-blue-400'); }}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
+                    onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
+                    onDrop={(e) => {
+                      e.preventDefault(); e.currentTarget.classList.remove('ring-2', 'ring-blue-400');
+                      const campoArrastrado = e.dataTransfer.getData('text/plain');
+                      if (campoArrastrado !== col.campo) {
+                        setOrdenColumnas(prev => { const nuevo = prev.filter(c => c !== campoArrastrado); nuevo.splice(nuevo.indexOf(col.campo), 0, campoArrastrado); return nuevo; });
+                      }
+                    }}
+                    className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 cursor-move">
+                    <div className="text-slate-400 cursor-grab select-none">⋮⋮</div>
+                    <div className="bg-slate-200 text-slate-700 text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center">{idx + 1}</div>
+                    <input type="checkbox" checked={columnasVisibles[col.campo] !== false} onChange={(e) => { e.stopPropagation(); cambiarVisibilidadColumna(col.campo); }} className="w-4 h-4 text-blue-600 rounded" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-700 text-sm truncate flex items-center gap-2">
+                        {col.etiqueta}
+                        {col.permite_supervisor && <span className="text-[9px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">👷</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">📄 {col.original}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => moverColumna(col.campo, 'arriba')} disabled={idx === 0} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↑</button>
+                      <button onClick={() => moverColumna(col.campo, 'abajo')} disabled={idx === ordenColumnas.length - 1} className="bg-blue-100 hover:bg-blue-200 disabled:bg-slate-200 disabled:cursor-not-allowed text-blue-700 disabled:text-slate-400 px-2 py-1 rounded text-xs font-bold">↓</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="pt-3 border-t flex justify-end"><button onClick={() => setModalConfigColumnas(false)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-semibold">Aplicar</button></div>
+          </div>
+        </div>
+      )}
+    </Layout>
+  );
+}
+
+// 🔥 COMPONENTE KPI MODERNO
+function KpiModerno({ titulo, valor, icono, color }) {
+  const colores = {
+    blue: { bg: "bg-blue-50", text: "text-blue-600" },
+    indigo: { bg: "bg-indigo-50", text: "text-indigo-600" },
+    gray: { bg: "bg-slate-50", text: "text-slate-600" },
+    amber: { bg: "bg-amber-50", text: "text-amber-600" },
+    emerald: { bg: "bg-emerald-50", text: "text-emerald-600" },
+    red: { bg: "bg-red-50", text: "text-red-600" },
+  };
+  const { bg, text } = colores[color];
+
+  return (
+    <div className="bg-white rounded-2xl p-4 border border-slate-200 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-2">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${bg}`}>
+          {icono}
+        </div>
+      </div>
+      <div className={`text-2xl font-black ${text}`}>{valor}</div>
+      <div className="text-xs text-slate-500 font-medium mt-1">{titulo}</div>
+    </div>
+  );
+}
+
+// 🔥 MODAL CAPTURA SUPERVISOR
+function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
+  const [valores, setValores] = useState(() => {
+    const init = {};
+    columnas.forEach(col => { init[col.campo] = empleado.incidencia?.[col.campo] ?? 0; });
+    return init;
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+      <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-6 py-4 rounded-t-2xl">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold">📝 Captura de Incidencias</h3>
+              <p className="text-xs text-white/90 mt-0.5">
+                <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
+              </p>
+            </div>
+            <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          {columnas.length > 0 ? (
+            <div className="grid md:grid-cols-2 gap-3">
+              {columnas.map(col => (
+                <div key={col.campo} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <label className="block text-xs font-bold text-blue-800 mb-1">{col.etiqueta}</label>
+                  <input type="number" step="0.01" min="0" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 text-center">
+              ⚠️ RH no ha habilitado campos para captura. Solicita permisos.
+            </div>
+          )}
+        </div>
+        <div className="border-t px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
+          <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+          <button type="submit" disabled={guardando || columnas.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300">
+            {guardando ? "Guardando..." : "📝 Enviar a RH"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// 🔥 MODAL REVISIÓN RH
+function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
+  const { empleado, incidencia } = registro;
+  const [valores, setValores] = useState(() => {
+    const init = {};
+    columnas.forEach(col => { init[col.campo] = incidencia?.[col.campo] ?? 0; });
+    return init;
+  });
+  const [estadoFinal, setEstadoFinal] = useState(incidencia?.estado || "pendiente");
+  const [comentario, setComentario] = useState(incidencia?.comentarios_rrhh || "");
+
+  const columnasSup = columnas.filter(c => c.permite_supervisor);
+  const columnasRHOnly = columnas.filter(c => !c.permite_supervisor);
+
+  const totalSumas = columnas.filter(c => esCampoMonetario(c.campo) && !normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/))
+    .reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
+  const totalRestas = columnas.filter(c => esCampoMonetario(c.campo) && normalizar(c.campo).match(/descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/))
+    .reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
+  const neto = totalSumas - totalRestas;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+      <form onSubmit={(e) => { e.preventDefault(); onGuardar(incidencia?.id, valores, estadoFinal, comentario); }} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col">
+        <div className="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-4 rounded-t-2xl">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold">🔍 Validación de RH</h3>
+              <p className="text-xs text-white/90 mt-0.5">
+                <strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}
+              </p>
+            </div>
+            <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            {["pendiente", "aprobado", "rechazado"].map(est => (
+              <button key={est} type="button" onClick={() => setEstadoFinal(est)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${estadoFinal === est ? (est === "aprobado" ? "bg-emerald-100 border-emerald-500 text-emerald-800" : est === "rechazado" ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-800") : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}>
+                {est === "pendiente" ? "⏳ Pendiente" : est === "aprobado" ? "✅ Aprobar" : "❌ Rechazar"}
+              </button>
+            ))}
+          </div>
+
+          {columnasSup.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h4 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
+                👷 Propuesta del Supervisor ({columnasSup.length})
+                <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-normal">Verifica con reloj checador</span>
+              </h4>
+              <div className="grid md:grid-cols-3 gap-3">
+                {columnasSup.map(col => (
+                  <div key={col.campo}>
+                    <label className="block text-xs font-semibold text-blue-800 mb-1">{col.etiqueta}</label>
+                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {columnasRHOnly.length > 0 && (
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+              <h4 className="font-bold text-purple-900 mb-3">🔒 Exclusivos de RH ({columnasRHOnly.length})</h4>
+              <div className="grid md:grid-cols-3 gap-3">
+                {columnasRHOnly.map(col => (
+                  <div key={col.campo}>
+                    <label className="block text-xs font-semibold text-purple-800 mb-1">{col.etiqueta}</label>
+                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-purple-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-purple-500" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-1">💬 Observaciones de RH</label>
+            <textarea rows="3" value={comentario} onChange={e => setComentario(e.target.value)} placeholder="Ej: Ajustado según reloj checador..." className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
+          </div>
+        </div>
+
+        <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4 rounded-b-2xl">
+          <div className="grid md:grid-cols-3 gap-4 mb-4">
+            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
+              <div className="text-xs text-slate-500 uppercase font-semibold">Percepciones</div>
+              <div className="text-xl font-bold text-emerald-600">+ ${totalSumas.toFixed(2)}</div>
+            </div>
+            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
+              <div className="text-xs text-slate-500 uppercase font-semibold">Deducciones</div>
+              <div className="text-xl font-bold text-red-600">- ${totalRestas.toFixed(2)}</div>
+            </div>
+            <div className="text-center bg-white rounded-xl p-3 shadow-md border-2 border-purple-500">
+              <div className="text-xs text-purple-600 uppercase font-bold">Neto</div>
+              <div className="text-2xl font-black text-purple-900">${neto.toFixed(2)}</div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
+            <button type="submit" disabled={guardando} className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-purple-300">
+              {guardando ? "Guardando..." : `💾 Guardar como ${estadoFinal.toUpperCase()}`}
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
   );
 }

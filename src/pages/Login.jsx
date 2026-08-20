@@ -39,9 +39,10 @@ export default function Login() {
       return;
     }
 
+    // 1. Buscar el perfil del usuario
     const { data: perfil, error: perfilError } = await supabase
       .from("profiles") 
-      .select("rol, activo")
+      .select("rol, nombre, activo")
       .eq("id", usuario.id)
       .maybeSingle();
 
@@ -59,14 +60,82 @@ export default function Login() {
       return;
     }
 
-    // 🔥 NORMALIZAR EL ROL: Convierte a mayúsculas y quita espacios para comparar sin errores
-    const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
-    console.log("🔐 Rol detectado en Login:", rolNormalizado);
+    // 2. 🔥 BÚSQUEDA FLEXIBLE DEL EMPLEADO VINCULADO
+    let empleadoVinculado = null;
 
-    // 🔥 REDIRECCIÓN INTELIGENTE SEGÚN EL ROL NORMALIZADO
+    // Intento 1: Buscar por id_usuario (vinculación oficial)
+    const { data: porIdUsuario } = await supabase
+      .from("empleados")
+      .select("id, nombre_completo")
+      .eq("id_usuario", usuario.id)
+      .maybeSingle();
+
+    if (porIdUsuario) {
+      empleadoVinculado = porIdUsuario;
+      console.log("✅ Empleado encontrado por id_usuario");
+    }
+
+    // Intento 2: Si no se encuentra, buscar por nombre del perfil
+    if (!empleadoVinculado && perfil.nombre) {
+      const { data: porNombre } = await supabase
+        .from("empleados")
+        .select("id, nombre_completo")
+        .ilike("nombre_completo", `%${perfil.nombre}%`)
+        .maybeSingle();
+
+      if (porNombre) {
+        empleadoVinculado = porNombre;
+        console.log("✅ Empleado encontrado por nombre del perfil");
+        
+        // 🔥 VINCULAR AUTOMÁTICAMENTE para futuras sesiones
+        await supabase
+          .from("empleados")
+          .update({ id_usuario: usuario.id })
+          .eq("id", porNombre.id);
+        console.log("✅ Vinculación automática creada");
+      }
+    }
+
+    // Intento 3: Buscar por correo electrónico
+    if (!empleadoVinculado && usuario.email) {
+      const { data: porCorreo } = await supabase
+        .from("empleados")
+        .select("id, nombre_completo")
+        .ilike("correo", usuario.email)
+        .maybeSingle();
+
+      if (porCorreo) {
+        empleadoVinculado = porCorreo;
+        console.log("✅ Empleado encontrado por correo");
+        
+        // 🔥 VINCULAR AUTOMÁTICAMENTE
+        await supabase
+          .from("empleados")
+          .update({ id_usuario: usuario.id })
+          .eq("id", porCorreo.id);
+        console.log("✅ Vinculación automática creada");
+      }
+    }
+
+    // 3. NORMALIZAR EL ROL
+    const rolNormalizado = String(perfil.rol || "").trim().toUpperCase();
+    console.log("🔐 Rol detectado:", rolNormalizado);
+
+    // 4. 🔥 REDIRECCIÓN INTELIGENTE
     if (rolNormalizado === "SUPERVISOR" || rolNormalizado === "VISOR") {
+      // Supervisores necesitan estar vinculados a un empleado
+      if (!empleadoVinculado) {
+        setLoading(false);
+        alert(
+          "No hemos podido asociar tu cuenta con un perfil de empleado activo.\n\n" +
+          "Por favor, contacta a Recursos Humanos indicando tu correo electrónico registrado."
+        );
+        await supabase.auth.signOut();
+        return;
+      }
       navigate("/incidencias/supervisor", { replace: true });
     } else {
+      // Administradores y otros roles pueden entrar sin vinculación estricta
       navigate("/dashboard", { replace: true });
     }
     

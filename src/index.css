@@ -1,16 +1,20 @@
 @import "tailwindcss";
 
+/* ==========================================
+   ESTILOS BASE
+   ========================================== */
 body {
   margin: 0;
-  background: #f1f5f9;
-  font-family:
-    Inter,
-    system-ui,
-    sans-serif;
+  background: #f1f5f9; /* Equivale a bg-slate-100 de Tailwind */
+  font-family: Inter, system-ui, sans-serif;
 }
 
 * {
   box-sizing: border-box;
+  
+  /* SOPORTE PARA FIREFOX (Scrollbars delgados) */
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 a {
@@ -19,4 +23,33 @@ a {
 
 table {
   border-collapse: collapse;
+}
+
+/* ==========================================
+   SCROLLBARS PERSONALIZADOS Y ELEGANTES
+   (Para Chrome, Edge, Safari y navegadores WebKit)
+   ========================================== */
+
+/* 1. Ancho y alto del scrollbar (delgado) */
+::-webkit-scrollbar {
+  width: 8px;   /* Para scroll vertical */
+  height: 8px;  /* Para scroll horizontal (ideal para tablas de incidencias) */
+}
+
+/* 2. Fondo del track (invisible para que se vea limpio) */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 3. El "pulgar" o parte que se arrastra */
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1; /* Equivale a tailwind: bg-slate-300 */
+  border-radius: 9999px;     /* Bordes completamente redondeados */
+  border: 2px solid transparent;
+  background-clip: content-box; /* Truco CSS para que se vea aún más delgado */
+}
+
+/* 4. Efecto al pasar el mouse por encima (hover) */
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8; /* Equivale a tailwind: bg-slate-400 */
 }

@@ -428,13 +428,14 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* 🔥 TABLA PRINCIPAL */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="overflow-x-auto">
+        {/* 🔥 TABLA PRINCIPAL CON SCROLL INTERNO Y SOMBRAS PREMIUM */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col max-h-[75vh]">
+          <div className="overflow-auto flex-1">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-30 shadow-sm">
                 <tr>
-                  <th className="p-4 font-bold text-slate-700 sticky left-0 bg-slate-50 z-10">No.</th>
+                  {/* 🔥 COLUMNA FIJA IZQUIERDA CON SOMBRA PREMIUM */}
+                  <th className="p-4 font-bold text-slate-700 sticky left-0 bg-slate-50 z-40 border-r border-slate-200 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.08)]">No.</th>
                   <th className="p-4 font-bold text-slate-700">Colaborador</th>
                   <th className="p-4 font-bold text-slate-700">Departamento</th>
                   <th className="p-4 font-bold text-slate-700">Puesto</th>
@@ -451,14 +452,16 @@ export default function Incidencias() {
                     </th>
                   ))}
                   {vistaActual === "rrhh" && <th className="p-4 font-bold text-slate-700">💬 Obs.</th>}
-                  <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-10">Acción</th>
+                  
+                  {/* 🔥 COLUMNA FIJA DERECHA CON SOMBRA PREMIUM */}
+                  <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-40 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)]">Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingEmpleados ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-b border-slate-100">
-                      {Array.from({ length: 6 }).map((_, j) => (
+                      {Array.from({ length: 8 }).map((_, j) => (
                         <td key={j} className="p-4"><div className="h-4 bg-slate-200 rounded animate-pulse"></div></td>
                       ))}
                     </tr>
@@ -482,8 +485,14 @@ export default function Incidencias() {
                     }[estado];
 
                     return (
-                      <tr key={empleado.id} className={`border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
-                        <td className="p-4 font-mono text-slate-600 sticky left-0 bg-inherit">{empleado.numero_empleado || "S/N"}</td>
+                      // 🔥 SE AGREGÓ LA CLASE 'group' PARA EL EFECTO HOVER EN COLUMNAS FIJAS
+                      <tr key={empleado.id} className={`group border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
+                        
+                        {/* 🔥 CELDA FIJA IZQUIERDA CON SOMBRA Y HOVER SINCRONIZADO */}
+                        <td className="p-4 font-mono text-slate-600 sticky left-0 bg-white group-hover:bg-slate-50 z-20 border-r border-slate-200 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
+                          {empleado.numero_empleado || "S/N"}
+                        </td>
+                        
                         <td className="p-4">
                           <div className="font-semibold text-slate-800">{empleado.nombre_completo || "Sin nombre"}</div>
                         </td>
@@ -513,7 +522,9 @@ export default function Incidencias() {
                             </div>
                           </td>
                         )}
-                        <td className="p-4 sticky right-0 bg-inherit">
+                        
+                        {/* 🔥 CELDA FIJA DERECHA CON SOMBRA Y HOVER SINCRONIZADO */}
+                        <td className="p-4 sticky right-0 bg-white group-hover:bg-slate-50 z-20 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
                           {vistaActual === "supervisor" ? (
                             <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
                               {incidencia ? "✏️ Editar" : "📝 Capturar"}
@@ -532,9 +543,9 @@ export default function Incidencias() {
             </table>
           </div>
 
-          {/* 🔥 PAGINACIÓN */}
+          {/* 🔥 PAGINACIÓN FIJA ABAJO */}
           {totalPaginas > 1 && (
-            <div className="border-t border-slate-200 px-5 py-3 flex items-center justify-between bg-slate-50">
+            <div className="border-t border-slate-200 px-5 py-3 flex items-center justify-between bg-slate-50 sticky bottom-0 z-30 shadow-[0_-2px_5px_-2px_rgba(0,0,0,0.05)]">
               <div className="text-xs text-slate-600">
                 Página <strong>{paginaActual}</strong> de <strong>{totalPaginas}</strong>
               </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "../services/supabase";
 import { Link } from "react-router-dom";
 
@@ -14,6 +14,7 @@ export default function SolicitudesUsuario() {
     accion: "", 
     rolSeleccionado: "SUPERVISOR",
     empleadoSeleccionado: "",
+    busquedaEmpleado: "", // 🔥 NUEVO: Para el buscador dinámico
     titulo: "",
     descripcion: "",
     colorIcono: "",
@@ -53,7 +54,6 @@ export default function SolicitudesUsuario() {
     try {
       console.log("🔄 Cargando lista de empleados para vinculación...");
       
-      // Obtenemos solo los campos planos que sabemos que existen en la tabla empleados
       const { data, error } = await supabase
         .from("empleados")
         .select("id, nombre_completo, numero_empleado, puesto, departamento, activo")
@@ -63,7 +63,6 @@ export default function SolicitudesUsuario() {
       if (error) {
         console.error("⚠️ Error con filtro 'activo', intentando sin filtro:", error);
         
-        // Fallback: intentar traer todos los empleados sin filtrar por si la columna 'activo' no existe o falla
         const { data: dataFallback, error: errorFallback } = await supabase
           .from("empleados")
           .select("id, nombre_completo, numero_empleado, puesto")
@@ -142,10 +141,10 @@ export default function SolicitudesUsuario() {
         if (empleadoId) {
           console.log("🔗 Vinculando usuario con empleado:", empleadoId);
           
-          // Actualizamos el campo id_usuario (o el campo que uses para vincular) en lugar de sobreescribir el id primario
+          // Actualizamos el campo id_usuario (o el campo que uses para vincular)
           const { error: updateEmpleadoError } = await supabase
             .from("empleados")
-            .update({ id_usuario: nuevoUserId }) // Asumiendo que tienes un campo id_usuario. Si no, ajusta al nombre correcto de tu columna de vinculación.
+            .update({ id_usuario: nuevoUserId }) 
             .eq("id", empleadoId);
 
           if (updateEmpleadoError) {
@@ -156,7 +155,7 @@ export default function SolicitudesUsuario() {
             const { error: updateSupervisorError } = await supabase
               .from("empleados")
               .update({ supervisor_id: nuevoUserId })
-              .eq("supervisor_id", empleadoId); // Ojo: verifica si esta lógica de reasignar supervisor es la deseada
+              .eq("supervisor_id", empleadoId);
 
             if (updateSupervisorError) {
               console.warn("⚠️ No se pudieron actualizar las referencias de supervisor:", updateSupervisorError.message);
@@ -181,7 +180,7 @@ export default function SolicitudesUsuario() {
       await cargarSolicitudes();
     } finally {
       setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "" }));
+      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }));
     }
   };
 
@@ -197,7 +196,7 @@ export default function SolicitudesUsuario() {
       if (error) throw new Error("Error de base de datos: " + error.message);
       
       setSolicitudes(prev => prev.map(s => s.id === solicitud.id ? { ...s, estatus: "RECHAZADA" } : s));
-      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "" }));
+      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }));
     } catch (error) {
       console.error("Error al rechazar:", error);
       alert("Error al rechazar: " + error.message);
@@ -254,7 +253,7 @@ export default function SolicitudesUsuario() {
       alert("Error al dar de baja: " + error.message);
     } finally {
       setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "" }));
+      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }));
     }
   };
 
@@ -301,7 +300,7 @@ export default function SolicitudesUsuario() {
       alert("Error al eliminar: " + error.message);
     } finally {
       setLoading(false);
-      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "" }));
+      setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }));
     }
   };
 
@@ -357,6 +356,7 @@ export default function SolicitudesUsuario() {
       accion,
       rolSeleccionado: "SUPERVISOR",
       empleadoSeleccionado: "",
+      busquedaEmpleado: "", // 🔥 Limpiar búsqueda al abrir el modal
       titulo,
       descripcion,
       colorIcono,
@@ -384,6 +384,17 @@ export default function SolicitudesUsuario() {
         break;
     }
   };
+
+  // 🔥 FILTRO DINÁMICO DE EMPLEADOS PARA EL MODAL
+  const empleadosFiltrados = useMemo(() => {
+    if (!modalConfirmacion.busquedaEmpleado) return empleados;
+    const texto = modalConfirmacion.busquedaEmpleado.toLowerCase();
+    return empleados.filter(emp => 
+      (emp.nombre_completo || "").toLowerCase().includes(texto) ||
+      (emp.numero_empleado || "").toLowerCase().includes(texto) ||
+      (emp.puesto || "").toLowerCase().includes(texto)
+    );
+  }, [empleados, modalConfirmacion.busquedaEmpleado]);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
@@ -511,18 +522,32 @@ export default function SolicitudesUsuario() {
                     <label className="block text-sm font-semibold text-slate-700 mb-1">
                       🔗 Vincular a Empleado Existente:
                     </label>
+                    
+                    {/* 🔥 INPUT DE BÚSQUEDA DINÁMICA */}
+                    <div className="relative mb-2">
+                      <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                      <input 
+                        type="text"
+                        placeholder="Buscar por nombre, número o puesto..."
+                        value={modalConfirmacion.busquedaEmpleado}
+                        onChange={(e) => setModalConfirmacion(prev => ({ ...prev, busquedaEmpleado: e.target.value }))}
+                        className="w-full border border-slate-300 rounded-lg pl-9 p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm"
+                      />
+                    </div>
+
                     <select 
                       value={modalConfirmacion.empleadoSeleccionado}
                       onChange={(e) => setModalConfirmacion(prev => ({ ...prev, empleadoSeleccionado: e.target.value }))}
                       className="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
+                      size={empleadosFiltrados.length > 0 ? Math.min(empleadosFiltrados.length, 6) : 1}
                     >
                       <option value="">-- Sin vincular (crear solo usuario) --</option>
                       
-                      {empleados.length === 0 && (
-                        <option disabled>⏳ Cargando lista de empleados...</option>
+                      {empleadosFiltrados.length === 0 && modalConfirmacion.busquedaEmpleado !== "" && (
+                        <option disabled className="text-red-500">No se encontraron empleados con ese criterio</option>
                       )}
                       
-                      {empleados.map(emp => (
+                      {empleadosFiltrados.map(emp => (
                         <option key={emp.id} value={emp.id}>
                           #{emp.numero_empleado || "S/N"} - {emp.nombre_completo || "Sin nombre"} 
                           {emp.puesto ? ` (${emp.puesto})` : ""}
@@ -530,7 +555,7 @@ export default function SolicitudesUsuario() {
                       ))}
                     </select>
                     <p className="text-xs text-slate-500 mt-1">
-                      💡 Selecciona el empleado al que pertenece este usuario. Total disponibles: {empleados.length}
+                      💡 Mostrando {empleadosFiltrados.length} de {empleados.length} empleados.
                     </p>
                   </div>
                 </div>
@@ -574,7 +599,7 @@ export default function SolicitudesUsuario() {
             </div>
             <div className="flex gap-3 mt-6">
               <button 
-                onClick={() => setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "" }))} 
+                onClick={() => setModalConfirmacion(prev => ({ ...prev, abierto: false, solicitud: null, accion: "", busquedaEmpleado: "" }))} 
                 className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-lg font-semibold transition"
               >
                 Cancelar

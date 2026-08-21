@@ -16,7 +16,7 @@ const limpiarPayload = (payload) => {
   return limpio;
 };
 
-// 🔥 NUEVO: Función de formato según tipo de dato del rubro
+// 🔥 MODIFICADO: Ahora recibe el tipo de dato de la columna específica
 const formatearValor = (valor, tipoDato) => {
   const num = Number(valor || 0);
   switch (tipoDato) {
@@ -34,7 +34,6 @@ const formatearValor = (valor, tipoDato) => {
 
 const ITEMS_POR_PAGINA = 50;
 
-// 🔥 NUEVO: Cada rubro tiene tipoDato
 const rubrosIniciales = {
   bonos: { titulo: "Bonos", icono: "💰", color: "emerald", bgLight: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", tipo: "positivo", tipoDato: "dinero" },
   deducciones: { titulo: "Deducciones", icono: "💸", color: "red", bgLight: "bg-red-50", text: "text-red-700", border: "border-red-200", tipo: "negativo", tipoDato: "dinero" },
@@ -83,6 +82,12 @@ export default function Incidencias() {
   const [asignacionesColumnas, setAsignacionesColumnas] = useState(() => {
     try { const g = localStorage.getItem("asignaciones_columnas_rubros"); return g ? JSON.parse(g) : {}; } catch { return {}; }
   });
+  
+  // 🔥 NUEVO: Tipos de dato por columna individual
+  const [tiposDatoColumnas, setTiposDatoColumnas] = useState(() => {
+    try { const g = localStorage.getItem("tipos_dato_columnas"); return g ? JSON.parse(g) : {}; } catch { return {}; }
+  });
+  
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
   const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
   const [modalPermisos, setModalPermisos] = useState(false);
@@ -210,6 +215,7 @@ export default function Incidencias() {
   useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
   useEffect(() => { localStorage.setItem("rubros_personalizados", JSON.stringify(rubrosPersonalizados)); }, [rubrosPersonalizados]);
   useEffect(() => { localStorage.setItem("asignaciones_columnas_rubros", JSON.stringify(asignacionesColumnas)); }, [asignacionesColumnas]);
+  useEffect(() => { localStorage.setItem("tipos_dato_columnas", JSON.stringify(tiposDatoColumnas)); }, [tiposDatoColumnas]);
   useEffect(() => { setPaginaActual(1); }, [busqueda, departamentoFiltro, puestoFiltro, estadoFiltro, periodoId]);
   useEffect(() => {
     const h = () => setMostrarBotonArriba(window.scrollY > 300);
@@ -310,6 +316,7 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, puestoFiltro, estadoFiltro]);
 
+  // 🔥 MODIFICADO: Ahora calcula totales usando el tipo de dato de cada columna
   const totalesPorRubro = useMemo(() => {
     const t = {};
     rubrosActivos.forEach(r => {
@@ -375,10 +382,14 @@ export default function Incidencias() {
   const periodoActual = periodos.find(p => p.id === periodoId);
   const abrirRubro = (r) => setModalRubro({ abierto: true, rubro: r });
 
+  // 🔥 NUEVO: Función para obtener el tipo de dato de una columna
+  const obtenerTipoDatoColumna = (campo, rubro) => {
+    return tiposDatoColumnas[campo] || todosLosRubros[rubro]?.tipoDato || 'entero';
+  };
+
   return (
     <Layout>
       <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-white overflow-auto p-6" : "space-y-6"}>
-        {/* 🔥 HEADER CON BOTONES DE CONFIG A LA IZQUIERDA */}
         <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
           <div className="relative">
             <div className="flex items-start gap-4 mb-4">
@@ -392,7 +403,7 @@ export default function Incidencias() {
               )}
             </div>
             
-            {/* 🔥 NUEVO: Botones de configuración debajo del título */}
+            {/* 🔥 MODIFICADO: Botones de configuración siempre visibles */}
             <div className="flex flex-wrap gap-2 pt-3 border-t border-white/20">
               <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
                 🔒 Permisos
@@ -400,11 +411,9 @@ export default function Incidencias() {
               <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
                 ⚙️ Columnas
               </button>
-              {vistaActual === "rrhh" && (
-                <button onClick={() => setModalConfigRubros(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
-                  🏷️ Rubros
-                </button>
-              )}
+              <button onClick={() => setModalConfigRubros(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                🏷️ Rubros
+              </button>
             </div>
           </div>
         </div>
@@ -615,8 +624,10 @@ export default function Incidencias() {
                           {rubrosActivos.map(r => {
                             const cfg = todosLosRubros[r];
                             const cols = columnasPorRubro[r];
+                            // 🔥 MODIFICADO: Suma usando el tipo de dato de cada columna
                             const total = incidencia ? cols.reduce((s, c) => s + Number(incidencia[c.campo] || 0), 0) : 0;
-                            return <td key={r} className={`p-4 text-right font-bold ${cfg.text}`}>{incidencia ? formatearValor(total, cfg.tipoDato || 'entero') : <span className="text-slate-300">—</span>}</td>;
+                            const tipoDatoRubro = cfg.tipoDato || 'entero';
+                            return <td key={r} className={`p-4 text-right font-bold ${cfg.text}`}>{incidencia ? formatearValor(total, tipoDatoRubro) : <span className="text-slate-300">—</span>}</td>;
                           })}
                           {vistaActual === "rrhh" && (
                             <td className="p-4 max-w-[150px]"><div className="truncate text-[11px] text-slate-600">{incidencia?.comentarios_rrhh || <span className="text-slate-300">—</span>}</div></td>
@@ -678,6 +689,8 @@ export default function Incidencias() {
           columnasDelMapeo={columnasDelMapeo}
           asignacionesColumnas={asignacionesColumnas}
           setAsignacionesColumnas={setAsignacionesColumnas}
+          tiposDatoColumnas={tiposDatoColumnas}
+          setTiposDatoColumnas={setTiposDatoColumnas}
           onCerrar={() => setModalConfigRubros(false)}
         />
       )}
@@ -690,6 +703,7 @@ export default function Incidencias() {
           registros={registros}
           todosLosEmpleados={empleados}
           guardando={guardando}
+          tiposDatoColumnas={tiposDatoColumnas}
           onGuardar={(ajustes) => guardarAjustesRubro(modalRubro.rubro, ajustes)}
           onCerrar={() => setModalRubro({ abierto: false, rubro: null })}
         />
@@ -768,7 +782,8 @@ export default function Incidencias() {
   );
 }
 
-function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, onCerrar }) {
+// 🔥 MODIFICADO: Ahora incluye selector de tipo de dato por columna
+function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, tiposDatoColumnas, setTiposDatoColumnas, onCerrar }) {
   const [nuevoRubro, setNuevoRubro] = useState({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro", tipoDato: "entero" });
   const [mostrarForm, setMostrarForm] = useState(false);
 
@@ -802,20 +817,17 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
     setRubrosPersonalizados(nR);
   };
 
-  // 🔥 NUEVO: Cambiar tipo de dato de un rubro
-  const cambiarTipoDato = (clave, nuevoTipoDato) => {
+  const cambiarTipoDatoRubro = (clave, nuevoTipoDato) => {
     if (rubrosIniciales[clave]) {
-      // Es un rubro predeterminado, lo guardamos como personalizado con el nuevo tipo
-      setRubrosPersonalizados(prev => ({ 
-        ...prev, 
-        [clave]: { ...rubrosIniciales[clave], tipoDato: nuevoTipoDato } 
-      }));
+      setRubrosPersonalizados(prev => ({ ...prev, [clave]: { ...rubrosIniciales[clave], tipoDato: nuevoTipoDato } }));
     } else {
-      setRubrosPersonalizados(prev => ({ 
-        ...prev, 
-        [clave]: { ...prev[clave], tipoDato: nuevoTipoDato } 
-      }));
+      setRubrosPersonalizados(prev => ({ ...prev, [clave]: { ...prev[clave], tipoDato: nuevoTipoDato } }));
     }
+  };
+
+  // 🔥 NUEVO: Cambiar tipo de dato de una columna específica
+  const cambiarTipoDatoColumna = (campo, nuevoTipoDato) => {
+    setTiposDatoColumnas(prev => ({ ...prev, [campo]: nuevoTipoDato }));
   };
 
   return (
@@ -825,7 +837,7 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-xl font-bold">🏷️ Configuración de Rubros</h3>
-              <p className="text-xs text-white/90 mt-1">Crea, reasigna columnas y define el tipo de dato de cada rubro</p>
+              <p className="text-xs text-white/90 mt-1">Crea rubros, reasigna columnas y define el tipo de dato de cada columna</p>
             </div>
             <button onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
           </div>
@@ -848,9 +860,8 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                     <option value="neutro">📋 Neutro (informativo)</option>
                   </select>
                   
-                  {/* 🔥 NUEVO: Selector de tipo de dato */}
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold mb-2">🔢 Tipo de Dato</label>
+                    <label className="block text-xs font-semibold mb-2">🔢 Tipo de Dato por Defecto</label>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {Object.entries(tiposDatoConfig).map(([key, cfg]) => (
                         <button
@@ -915,14 +926,13 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                       {!esPred && <button onClick={() => eliminar(clave)} className="text-red-600 hover:text-red-800 text-xs font-bold">🗑️ Eliminar</button>}
                     </div>
 
-                    {/* 🔥 NUEVO: Selector de tipo de dato para cada rubro */}
                     <div className="bg-white/50 rounded-lg p-3 mb-3 border border-white">
-                      <div className="text-[10px] font-bold text-slate-600 uppercase mb-2">Cambiar Tipo de Dato</div>
+                      <div className="text-[10px] font-bold text-slate-600 uppercase mb-2">Tipo de Dato por Defecto del Rubro</div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                         {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
                           <button
                             key={key}
-                            onClick={() => cambiarTipoDato(clave, key)}
+                            onClick={() => cambiarTipoDatoRubro(clave, key)}
                             className={`p-2 rounded border text-xs transition ${
                               tipoDatoActual === key 
                                 ? 'border-purple-500 bg-purple-100 font-bold' 
@@ -937,18 +947,44 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
 
                     {cols.length > 0 && (
                       <div className="space-y-2 mt-3">
-                        <div className="text-xs font-bold">Columnas asignadas:</div>
-                        {cols.map(col => (
-                          <div key={col.campo} className="bg-white rounded-lg p-2 flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="text-sm font-semibold">{col.etiqueta}</div>
-                              <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
+                        <div className="text-xs font-bold">Columnas asignadas (con tipo de dato individual):</div>
+                        {cols.map(col => {
+                          const tipoDatoCol = tiposDatoColumnas[col.campo] || tipoDatoActual;
+                          return (
+                            <div key={col.campo} className="bg-white rounded-lg p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <div className="text-sm font-semibold">{col.etiqueta}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
+                                </div>
+                                <select value={asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo)} onChange={(e) => setAsignacionesColumnas(prev => ({ ...prev, [col.campo]: e.target.value }))} className="border rounded px-2 py-1 text-xs">
+                                  {Object.entries(todosLosRubros).map(([k, v]) => (<option key={k} value={k}>{v.icono} {v.titulo}</option>))}
+                                </select>
+                              </div>
+                              
+                              {/* 🔥 NUEVO: Selector de tipo de dato para esta columna específica */}
+                              <div className="bg-slate-50 rounded p-2 border border-slate-200">
+                                <div className="text-[9px] font-bold text-slate-600 uppercase mb-1.5">Tipo de Dato de esta Columna</div>
+                                <div className="grid grid-cols-4 gap-1.5">
+                                  {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
+                                    <button
+                                      key={key}
+                                      onClick={() => cambiarTipoDatoColumna(col.campo, key)}
+                                      className={`p-1.5 rounded border text-[10px] transition ${
+                                        tipoDatoCol === key 
+                                          ? 'border-purple-500 bg-purple-100 font-bold' 
+                                          : 'border-slate-200 bg-white hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <span>{tCfg.icono}</span>
+                                      <div className="text-[9px]">{tCfg.label}</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                             </div>
-                            <select value={asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo)} onChange={(e) => setAsignacionesColumnas(prev => ({ ...prev, [col.campo]: e.target.value }))} className="border rounded px-2 py-1 text-xs">
-                              {Object.entries(todosLosRubros).map(([k, v]) => (<option key={k} value={k}>{v.icono} {v.titulo}</option>))}
-                            </select>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -966,11 +1002,12 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
   );
 }
 
-function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
+// 🔥 MODIFICADO: Ahora usa el tipo de dato de cada columna individual
+function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, tiposDatoColumnas, onGuardar, onCerrar }) {
   const [filtroDepto, setFiltroDepto] = useState("TODOS");
   const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
   const [busquedaInt, setBusquedaInt] = useState("");
-  const tipoDato = config.tipoDato || 'entero';
+  const tipoDatoRubro = config.tipoDato || 'entero';
   
   const [valoresRH, setValoresRH] = useState(() => {
     const init = {};
@@ -1031,10 +1068,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
     setValoresRH(nv);
   };
 
-  // 🔥 NUEVO: Determinar step del input según tipo de dato
-  const inputStep = tipoDato === 'entero' ? "1" : "0.01";
-  const inputPlaceholder = tipoDato === 'horas' ? "0.00" : tipoDato === 'porcentaje' ? "0.00" : "0";
-
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full max-h-[95vh] flex flex-col">
@@ -1044,7 +1077,7 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
               <h3 className={`text-xl font-bold ${config.text} flex items-center gap-2`}>
                 <span className="text-2xl">{config.icono}</span> Gestión de {config.titulo}
                 <span className="text-xs bg-white/60 px-2 py-0.5 rounded font-normal">
-                  {tiposDatoConfig[tipoDato]?.icono} {tiposDatoConfig[tipoDato]?.label}
+                  {tiposDatoConfig[tipoDatoRubro]?.icono} {tiposDatoConfig[tipoDatoRubro]?.label}
                 </span>
               </h3>
               <p className="text-xs text-slate-600 mt-1">Ajusta los montos de RH</p>
@@ -1099,12 +1132,21 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                   <th className="p-3 text-left font-bold sticky left-0 bg-slate-100 z-20">Empleado</th>
                   <th className="p-3 text-left font-bold">🏢 Depto</th>
                   <th className="p-3 text-left font-bold">💼 Puesto</th>
-                  {columnas.map(c => (
-                    <th key={c.campo} className="p-3 text-center font-bold">
-                      <div className="text-xs">{c.etiqueta}</div>
-                      <button onClick={() => { const v = prompt(`Aplicar a todos para "${c.etiqueta}":`, "0"); if (v !== null) aplicarTodos(c.campo, Number(v) || 0); }} className="text-[9px] text-blue-600 hover:text-blue-800 underline">aplicar a todos</button>
-                    </th>
-                  ))}
+                  {columnas.map(c => {
+                    // 🔥 MODIFICADO: Usa el tipo de dato de la columna específica
+                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                    const tCfg = tiposDatoConfig[tipoDatoCol];
+                    const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
+                    return (
+                      <th key={c.campo} className="p-3 text-center font-bold">
+                        <div className="text-xs flex items-center justify-center gap-1">
+                          <span>{tCfg?.icono}</span>
+                          <span>{c.etiqueta}</span>
+                        </div>
+                        <button onClick={() => { const v = prompt(`Aplicar a todos para "${c.etiqueta}":`, "0"); if (v !== null) aplicarTodos(c.campo, Number(v) || 0); }} className="text-[9px] text-blue-600 hover:text-blue-800 underline">aplicar a todos</button>
+                      </th>
+                    );
+                  })}
                   <th className="p-3 text-center font-bold bg-purple-50 sticky right-0 bg-purple-50 z-10">Total</th>
                 </tr>
               </thead>
@@ -1118,28 +1160,30 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                     <td className="p-3 text-xs"><span className="bg-slate-100 px-1.5 py-0.5 rounded">{empleado.departamentos?.nombre || "N/A"}</span></td>
                     <td className="p-3 text-xs"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{empleado.puestos?.nombre || "N/A"}</span></td>
                     {columnas.map(c => {
+                      // 🔥 MODIFICADO: Usa el tipo de dato de la columna específica
+                      const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                      const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
                       const vSup = Number(incidencia[c.campo] ?? 0);
                       const vRH = Number(valoresRH[empleado.id]?.[c.campo] ?? 0);
                       const diff = vRH - vSup;
                       return (
                         <td key={c.campo} className="p-2 text-center">
                           <div className="space-y-1">
-                            <div className="text-[10px] text-slate-400">Sup: {formatearValor(vSup, tipoDato)}</div>
+                            <div className="text-[10px] text-slate-400">Sup: {formatearValor(vSup, tipoDatoCol)}</div>
                             <input 
                               type="number" 
                               step={inputStep}
-                              placeholder={inputPlaceholder}
                               value={vRH} 
                               onChange={(e) => setValoresRH(prev => ({ ...prev, [empleado.id]: { ...prev[empleado.id], [c.campo]: e.target.value } }))} 
                               className={`w-24 border rounded px-2 py-1 text-xs text-center font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${diff !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`} 
                             />
-                            {diff !== 0 && <div className={`text-[9px] font-bold ${diff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>{diff > 0 ? '+' : ''}{formatearValor(diff, tipoDato)}</div>}
+                            {diff !== 0 && <div className={`text-[9px] font-bold ${diff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>{diff > 0 ? '+' : ''}{formatearValor(diff, tipoDatoCol)}</div>}
                           </div>
                         </td>
                       );
                     })}
                     <td className="p-3 text-center bg-purple-50/50 font-bold text-purple-900 sticky right-0 bg-purple-50 z-10">
-                      {formatearValor(columnas.reduce((a, c) => a + Number(valoresRH[empleado.id]?.[c.campo] || 0), 0), tipoDato)}
+                      {formatearValor(columnas.reduce((a, c) => a + Number(valoresRH[empleado.id]?.[c.campo] || 0), 0), tipoDatoRubro)}
                     </td>
                   </tr>
                 ))}
@@ -1147,8 +1191,11 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
               <tfoot className="bg-slate-800 text-white sticky bottom-0">
                 <tr>
                   <td colSpan={3} className="p-3 font-bold sticky left-0 bg-slate-800 z-10">TOTALES ({regsFiltrados.filter(r => r.incidencia).length})</td>
-                  {columnas.map(c => (<td key={c.campo} className="p-3 text-center font-bold">{formatearValor(totales.tpc[c.campo], tipoDato)}</td>))}
-                  <td className="p-3 text-center font-black text-xl text-yellow-300 sticky right-0 bg-slate-800 z-10">{formatearValor(totales.tg, tipoDato)}</td>
+                  {columnas.map(c => {
+                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                    return (<td key={c.campo} className="p-3 text-center font-bold">{formatearValor(totales.tpc[c.campo], tipoDatoCol)}</td>);
+                  })}
+                  <td className="p-3 text-center font-black text-xl text-yellow-300 sticky right-0 bg-slate-800 z-10">{formatearValor(totales.tg, tipoDatoRubro)}</td>
                 </tr>
               </tfoot>
             </table>

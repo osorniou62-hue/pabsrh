@@ -16,11 +16,13 @@ const limpiarPayload = (payload) => {
   return limpio;
 };
 
+// 🔥 MODIFICADO: Ahora incluye tipo "minutos"
 const formatearValor = (valor, tipoDato) => {
   const num = Number(valor || 0);
   switch (tipoDato) {
     case 'dinero': return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(num);
     case 'horas': return `${num.toFixed(2)}h`;
+    case 'minutos': return `${Math.round(num)}min (${(num / 60).toFixed(2)}h)`;
     case 'porcentaje': return `${num.toFixed(2)}%`;
     case 'entero': default: return Math.round(num).toString();
   }
@@ -32,14 +34,16 @@ const rubrosIniciales = {
   bonos: { titulo: "Bonos", icono: "💰", color: "emerald", bgLight: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", tipo: "positivo", tipoDato: "dinero" },
   deducciones: { titulo: "Deducciones", icono: "💸", color: "red", bgLight: "bg-red-50", text: "text-red-700", border: "border-red-200", tipo: "negativo", tipoDato: "dinero" },
   aguinaldo: { titulo: "Aguinaldo/PTU", icono: "🎁", color: "amber", bgLight: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", tipo: "positivo", tipoDato: "dinero" },
-  horas_extra: { titulo: "Horas Extra", icono: "⏰", color: "blue", bgLight: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", tipo: "positivo", tipoDato: "horas" },
+  horas_extra: { titulo: "Horas Extra", icono: "⏰", color: "blue", bgLight: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", tipo: "positivo", tipoDato: "minutos" },
   percepciones: { titulo: "Percepciones", icono: "💵", color: "indigo", bgLight: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200", tipo: "positivo", tipoDato: "dinero" },
   otros: { titulo: "Otros", icono: "📋", color: "slate", bgLight: "bg-slate-50", text: "text-slate-700", border: "border-slate-200", tipo: "neutro", tipoDato: "entero" },
 };
 
+// 🔥 MODIFICADO: Ahora incluye minutos
 const tiposDatoConfig = {
   entero: { label: "Número entero", icono: "🔢", ejemplo: "5" },
-  horas: { label: "Horas", icono: "⏰", ejemplo: "5.50h" },
+  horas: { label: "Horas", icono: "⏰", ejemplo: "2.50h" },
+  minutos: { label: "Minutos", icono: "⏱️", ejemplo: "150min (2.50h)" },
   dinero: { label: "Dinero ($)", icono: "💵", ejemplo: "$1,234.56" },
   porcentaje: { label: "Porcentaje (%)", icono: "%", ejemplo: "12.50%" },
 };
@@ -768,7 +772,7 @@ export default function Incidencias() {
   );
 }
 
-// 🔥 MODAL RUBRO CORREGIDO: Modal de cálculo integrado correctamente
+// 🔥 MODAL RUBRO CON SOPORTE PARA MINUTOS
 function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, tiposDatoColumnas, onGuardar, onCerrar }) {
   const [filtroDepto, setFiltroDepto] = useState("TODOS");
   const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
@@ -776,8 +780,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
   const [vistaComparativa, setVistaComparativa] = useState(false);
   const [pantallaCompletaModal, setPantallaCompletaModal] = useState(false);
   const [filtrosColapsados, setFiltrosColapsados] = useState(false);
-  
-  // 🔥 Modal de cálculo integrado
   const [modalCalculo, setModalCalculo] = useState({ abierto: false, empleadoId: null, campo: null });
   
   const tipoDatoRubro = config.tipoDato || 'entero';
@@ -877,7 +879,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
     }));
   };
 
-  // 🔥 Aplicar resultado del cálculo
   const aplicarCalculo = (valorCalculado) => {
     if (!modalCalculo.empleadoId || !modalCalculo.campo) return;
     setValoresRH(prev => ({
@@ -901,7 +902,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
   return (
     <div className={contenedorClase}>
       <div className={modalClase}>
-        {/* HEADER COMPACTO */}
         <div className={`${config.bgLight} border-b ${config.border} px-4 py-3 flex-shrink-0`}>
           <div className="flex justify-between items-start gap-3">
             <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -922,20 +922,19 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
               </div>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button onClick={() => setFiltrosColapsados(!filtrosColapsados)} className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200" title={filtrosColapsados ? "Mostrar filtros" : "Ocultar filtros"}>
+              <button onClick={() => setFiltrosColapsados(!filtrosColapsados)} className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200">
                 {filtrosColapsados ? "🔽" : "🔼"}
               </button>
-              <button onClick={() => setVistaComparativa(!vistaComparativa)} className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${vistaComparativa ? 'bg-slate-800 text-white border-slate-800' : 'bg-white/70 hover:bg-white text-slate-700 border-slate-200'}`} title="Vista comparativa Supervisor vs RH">
+              <button onClick={() => setVistaComparativa(!vistaComparativa)} className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${vistaComparativa ? 'bg-slate-800 text-white border-slate-800' : 'bg-white/70 hover:bg-white text-slate-700 border-slate-200'}`}>
                 👁️ {vistaComparativa ? "Ocultar" : "Comparar"}
               </button>
-              <button onClick={() => setPantallaCompletaModal(!pantallaCompletaModal)} className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200" title={pantallaCompletaModal ? "Salir de pantalla completa" : "Pantalla completa"}>
+              <button onClick={() => setPantallaCompletaModal(!pantallaCompletaModal)} className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200">
                 {pantallaCompletaModal ? "🗗" : "⛶"}
               </button>
               <button onClick={onCerrar} className="bg-white/70 hover:bg-white text-slate-700 w-8 h-8 rounded-lg font-bold flex items-center justify-center border border-slate-200">✕</button>
             </div>
           </div>
 
-          {/* PANEL RESUMEN COMPACTO */}
           <div className="mt-3 grid grid-cols-4 gap-2">
             <div className="bg-white/70 rounded-lg px-3 py-2 border border-white">
               <div className="text-[9px] text-slate-600 font-semibold uppercase">👷 Supervisor</div>
@@ -965,7 +964,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
             </div>
           </div>
 
-          {/* FILTROS COLAPSABLES */}
           {!filtrosColapsados && (
             <div className="mt-3 space-y-2">
               <div className="relative">
@@ -983,7 +981,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                     </button>
                   );
                 })}
-                {deptosUnicos.length > 8 && <span className="text-[10px] text-slate-400 self-center">+{deptosUnicos.length - 8} más</span>}
               </div>
               {filtroDepto !== "TODOS" && (
                 <div className="flex flex-wrap gap-1">
@@ -1003,7 +1000,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
           )}
         </div>
 
-        {/* TABLA */}
         <div className="flex-1 overflow-auto bg-white">
           {regsFiltrados.filter(r => r.incidencia).length === 0 ? (
             <div className="p-12 text-center"><div className="text-6xl mb-3">📭</div><div className="text-slate-500 font-semibold">Sin registros en este filtro</div></div>
@@ -1056,7 +1052,7 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                       <td className="p-2 text-[11px]"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px]">{empleado.puestos?.nombre || "Sin Puesto"}</span></td>
                       {columnas.map(c => {
                         const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                        const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
+                        const inputStep = tipoDatoCol === 'entero' || tipoDatoCol === 'minutos' ? "1" : "0.01";
                         const vSup = Number(incidencia[c.campo] ?? 0);
                         const vRH = Number(valoresRH[empleado.id]?.[c.campo] ?? 0);
                         const diff = vRH - vSup;
@@ -1075,7 +1071,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                               onChange={(e) => setValoresRH(prev => ({ ...prev, [empleado.id]: { ...prev[empleado.id], [c.campo]: e.target.value } }))} 
                               className={`w-full border-2 rounded px-1.5 py-1 text-[11px] text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 ${diff !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-300 bg-white'}`} 
                             />
-                            {/* 🔥 Botones de acción rápida */}
                             <div className="flex gap-0.5 justify-center mt-1">
                               <button
                                 onClick={() => aceptarSupervisorIndividual(empleado.id, c.campo)}
@@ -1151,7 +1146,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
           )}
         </div>
 
-        {/* FOOTER COMPACTO */}
         <div className="border-t-2 border-slate-300 px-4 py-2.5 bg-slate-50 flex-shrink-0 flex justify-between items-center gap-3">
           <div className="text-[11px] text-slate-600 flex items-center gap-2 flex-wrap">
             <span><strong>{regsFiltrados.filter(r => r.incidencia).length}</strong> empleados</span>
@@ -1170,11 +1164,10 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
           </div>
         </div>
 
-        {/* 🔥 MODAL DE CÁLCULO INTEGRADO (dentro del contenedor principal) */}
         {modalCalculo.abierto && modalCalculo.empleadoId && modalCalculo.campo && (() => {
           const registro = registros.find(r => r.empleado.id === modalCalculo.empleadoId);
           if (!registro) return null;
-          const { empleado, incidencia } = registro;
+          const { empleado } = registro;
           const columna = columnas.find(c => c.campo === modalCalculo.campo);
           if (!columna) return null;
           
@@ -1182,7 +1175,7 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
             <ModalCalculoFaltas
               empleado={empleado}
               columna={columna}
-              valorSupervisor={Number(incidencia?.[columna.campo] || 0)}
+              valorSupervisor={Number(registro.incidencia?.[columna.campo] || 0)}
               valorRH={Number(valoresRH[empleado.id]?.[columna.campo] || 0)}
               tipoDato={tiposDatoColumnas[columna.campo] || tipoDatoRubro}
               onAplicar={aplicarCalculo}
@@ -1195,9 +1188,22 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
   );
 }
 
-// 🔥 MODAL DE CÁLCULO POR FALTAS
+// 🔥 MODAL DE CÁLCULO CON SOPORTE PARA MINUTOS
 function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoDato, onAplicar, onCerrar }) {
-  const [bonoBase, setBonoBase] = useState(valorSupervisor || 0);
+  // 🔥 Detectar si es tipo tiempo (horas o minutos)
+  const esTiempo = tipoDato === 'horas' || tipoDato === 'minutos';
+  
+  // 🔥 Estado para unidad de entrada
+  const [unidadEntrada, setUnidadEntrada] = useState(tipoDato === 'minutos' ? 'minutos' : tipoDato === 'horas' ? 'horas' : 'valor');
+  
+  // Convertir valor del supervisor a la unidad de entrada
+  const valorBaseEnUnidad = useMemo(() => {
+    if (unidadEntrada === 'minutos' && tipoDato === 'horas') return valorSupervisor * 60;
+    if (unidadEntrada === 'horas' && tipoDato === 'minutos') return valorSupervisor / 60;
+    return valorSupervisor;
+  }, [valorSupervisor, unidadEntrada, tipoDato]);
+  
+  const [bonoBase, setBonoBase] = useState(valorBaseEnUnidad || 0);
   const [diasPeriodo, setDiasPeriodo] = useState(30);
   const [faltas, setFaltas] = useState(0);
   const [porcentajeImpacto, setPorcentajeImpacto] = useState(100);
@@ -1205,11 +1211,19 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
 
   const descuento = diasPeriodo > 0 ? (faltas * porcentajeImpacto) / (diasPeriodo * 100) : 0;
   const factor = Math.max(0, 1 - descuento);
-  const bonoCalculado = bonoBase * factor;
-  const montoDescuento = bonoBase - bonoCalculado;
+  const bonoCalculadoEnUnidad = bonoBase * factor;
+  
+  // 🔥 Convertir resultado a la unidad del sistema
+  const bonoCalculadoEnSistema = useMemo(() => {
+    if (unidadEntrada === 'minutos' && tipoDato === 'horas') return bonoCalculadoEnUnidad / 60;
+    if (unidadEntrada === 'horas' && tipoDato === 'minutos') return bonoCalculadoEnUnidad * 60;
+    return bonoCalculadoEnUnidad;
+  }, [bonoCalculadoEnUnidad, unidadEntrada, tipoDato]);
+  
+  const montoDescuentoEnUnidad = bonoBase - bonoCalculadoEnUnidad;
 
   const aplicarValor = () => {
-    const valorFinal = usarPersonalizado ? valorRH : bonoCalculado;
+    const valorFinal = usarPersonalizado ? valorRH : bonoCalculadoEnSistema;
     onAplicar(valorFinal);
   };
 
@@ -1232,34 +1246,105 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* 🔥 Selector de unidad (solo para tiempo) */}
+          {esTiempo && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3">
+              <div className="text-xs font-bold text-amber-900 mb-2 flex items-center gap-2">
+                ⚠️ Unidad de Entrada
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded font-normal">
+                  Sistema interpreta como: <strong>{tipoDato === 'minutos' ? 'MINUTOS' : 'HORAS'}</strong>
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setUnidadEntrada('minutos');
+                    if (tipoDato === 'horas') setBonoBase(valorSupervisor * 60);
+                  }}
+                  className={`p-2 rounded-lg border-2 text-xs font-bold transition ${
+                    unidadEntrada === 'minutos' 
+                      ? 'bg-amber-500 text-white border-amber-600' 
+                      : 'bg-white text-slate-700 border-slate-300 hover:border-amber-400'
+                  }`}
+                >
+                  ⏱️ Minutos
+                  <div className="text-[10px] font-normal mt-0.5">
+                    Supervisor: {Math.round(tipoDato === 'horas' ? valorSupervisor * 60 : valorSupervisor)} min
+                  </div>
+                </button>
+                <button
+                  onClick={() => {
+                    setUnidadEntrada('horas');
+                    if (tipoDato === 'minutos') setBonoBase(valorSupervisor / 60);
+                  }}
+                  className={`p-2 rounded-lg border-2 text-xs font-bold transition ${
+                    unidadEntrada === 'horas' 
+                      ? 'bg-amber-500 text-white border-amber-600' 
+                      : 'bg-white text-slate-700 border-slate-300 hover:border-amber-400'
+                  }`}
+                >
+                  ⏰ Horas
+                  <div className="text-[10px] font-normal mt-0.5">
+                    Supervisor: {(tipoDato === 'minutos' ? valorSupervisor / 60 : valorSupervisor).toFixed(2)} h
+                  </div>
+                </button>
+              </div>
+              <p className="text-[10px] text-amber-800 mt-2">
+                💡 El supervisor capturó <strong>{formatearValor(valorSupervisor, tipoDato)}</strong>. 
+                Selecciona la unidad en la que trabajarás el cálculo.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <div className="text-[10px] text-blue-700 font-bold uppercase">👷 Supervisor</div>
               <div className="text-lg font-black text-blue-900">{formatearValor(valorSupervisor, tipoDato)}</div>
+              {esTiempo && tipoDato === 'minutos' && (
+                <div className="text-[10px] text-blue-600 mt-0.5">= {(valorSupervisor / 60).toFixed(2)} horas</div>
+              )}
+              {esTiempo && tipoDato === 'horas' && (
+                <div className="text-[10px] text-blue-600 mt-0.5">= {Math.round(valorSupervisor * 60)} minutos</div>
+              )}
             </div>
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
               <div className="text-[10px] text-purple-700 font-bold uppercase">🔍 RH Actual</div>
               <div className="text-lg font-black text-purple-900">{formatearValor(valorRH, tipoDato)}</div>
+              {esTiempo && tipoDato === 'minutos' && (
+                <div className="text-[10px] text-purple-600 mt-0.5">= {(valorRH / 60).toFixed(2)} horas</div>
+              )}
+              {esTiempo && tipoDato === 'horas' && (
+                <div className="text-[10px] text-purple-600 mt-0.5">= {Math.round(valorRH * 60)} minutos</div>
+              )}
             </div>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
             <div className="text-[10px] text-slate-600 font-bold uppercase mb-1">📐 Fórmula aplicada</div>
             <div className="text-xs text-slate-700 font-mono bg-white rounded p-2 border border-slate-200">
-              Bono final = Bono base × (1 - (faltas × % impacto / (días × 100)))
+              Valor final = Valor base × (1 - (faltas × % impacto / (días × 100)))
             </div>
           </div>
 
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">💵 Bono Base (del Supervisor)</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                💵 Valor Base ({unidadEntrada === 'minutos' ? 'en minutos' : unidadEntrada === 'horas' ? 'en horas' : 'valor'})
+              </label>
               <input
                 type="number"
-                step="0.01"
+                step={unidadEntrada === 'valor' ? "0.01" : "1"}
                 value={bonoBase}
                 onChange={(e) => setBonoBase(Number(e.target.value) || 0)}
                 className="w-full border-2 border-slate-300 rounded-lg p-2.5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {esTiempo && (
+                <div className="text-[10px] text-slate-500 mt-1">
+                  Equivalente: {unidadEntrada === 'minutos' 
+                    ? `${(bonoBase / 60).toFixed(2)} horas` 
+                    : `${Math.round(bonoBase * 60)} minutos`}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -1318,9 +1403,6 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
                   </button>
                 ))}
               </div>
-              <p className="text-[10px] text-slate-500 mt-1">
-                100% = descuento proporcional completo · 50% = descuento a la mitad
-              </p>
             </div>
           </div>
 
@@ -1329,15 +1411,28 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>
                 <div className="text-[10px] text-slate-600">Descuento</div>
-                <div className="text-sm font-black text-red-600">-{formatearValor(montoDescuento, tipoDato)}</div>
+                <div className="text-sm font-black text-red-600">
+                  -{unidadEntrada === 'valor' 
+                    ? formatearValor(montoDescuentoEnUnidad, tipoDato)
+                    : `${Math.round(montoDescuentoEnUnidad)} ${unidadEntrada === 'minutos' ? 'min' : 'h'}`}
+                </div>
               </div>
               <div>
                 <div className="text-[10px] text-slate-600">Factor</div>
                 <div className="text-sm font-black text-slate-700">{(factor * 100).toFixed(1)}%</div>
               </div>
               <div>
-                <div className="text-[10px] text-slate-600">Bono Final</div>
-                <div className="text-lg font-black text-emerald-700">{formatearValor(bonoCalculado, tipoDato)}</div>
+                <div className="text-[10px] text-slate-600">Valor Final</div>
+                <div className="text-lg font-black text-emerald-700">
+                  {formatearValor(bonoCalculadoEnSistema, tipoDato)}
+                </div>
+                {esTiempo && (
+                  <div className="text-[10px] text-emerald-600 mt-0.5">
+                    {tipoDato === 'minutos' 
+                      ? `= ${(bonoCalculadoEnSistema / 60).toFixed(2)}h`
+                      : `= ${Math.round(bonoCalculadoEnSistema * 60)}min`}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1347,7 +1442,7 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
               <input type="radio" checked={!usarPersonalizado} onChange={() => setUsarPersonalizado(false)} className="mt-0.5" />
               <div className="flex-1">
                 <div className="text-xs font-bold text-slate-800">Aplicar valor calculado</div>
-                <div className="text-[10px] text-slate-600">Se aplicará: <strong className="text-emerald-700">{formatearValor(bonoCalculado, tipoDato)}</strong></div>
+                <div className="text-[10px] text-slate-600">Se aplicará: <strong className="text-emerald-700">{formatearValor(bonoCalculadoEnSistema, tipoDato)}</strong></div>
               </div>
             </label>
             <label className="flex items-start gap-2 cursor-pointer">
@@ -1368,7 +1463,7 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
             onClick={aplicarValor}
             className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow-sm flex items-center gap-2"
           >
-            ✅ Aplicar {formatearValor(usarPersonalizado ? valorRH : bonoCalculado, tipoDato)}
+            ✅ Aplicar {formatearValor(usarPersonalizado ? valorRH : bonoCalculadoEnSistema, tipoDato)}
           </button>
         </div>
       </div>
@@ -1376,15 +1471,42 @@ function ModalCalculoFaltas({ empleado, columna, valorSupervisor, valorRH, tipoD
   );
 }
 
+// 🔥 MODAL CONFIG RUBROS CON BUSCADOR
 function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, tiposDatoColumnas, setTiposDatoColumnas, onCerrar }) {
   const [nuevoRubro, setNuevoRubro] = useState({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro", tipoDato: "entero" });
   const [mostrarForm, setMostrarForm] = useState(false);
+  const [rubroExpandido, setRubroExpandido] = useState(null);
+  
+  // 🔥 NUEVO: Buscador de columnas
+  const [busquedaColumna, setBusquedaColumna] = useState("");
 
   const colores = [
     { v: "emerald", bg: "bg-emerald-500" }, { v: "red", bg: "bg-red-500" }, { v: "amber", bg: "bg-amber-500" },
     { v: "blue", bg: "bg-blue-500" }, { v: "indigo", bg: "bg-indigo-500" }, { v: "purple", bg: "bg-purple-500" },
     { v: "pink", bg: "bg-pink-500" }, { v: "teal", bg: "bg-teal-500" }, { v: "slate", bg: "bg-slate-500" },
   ];
+
+  // 🔥 Filtrar columnas por búsqueda
+  const columnasFiltradas = useMemo(() => {
+    if (!busquedaColumna.trim()) return columnasDelMapeo;
+    const texto = busquedaColumna.toLowerCase().trim();
+    return columnasDelMapeo.filter(col => 
+      col.etiqueta.toLowerCase().includes(texto) ||
+      col.campo.toLowerCase().includes(texto) ||
+      col.original.toLowerCase().includes(texto)
+    );
+  }, [columnasDelMapeo, busquedaColumna]);
+
+  // 🔥 Agrupar columnas filtradas por rubro
+  const columnasPorRubroFiltradas = useMemo(() => {
+    const agrupado = {};
+    columnasFiltradas.forEach(col => {
+      const rubro = asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo);
+      if (!agrupado[rubro]) agrupado[rubro] = [];
+      agrupado[rubro].push(col);
+    });
+    return agrupado;
+  }, [columnasFiltradas, asignacionesColumnas]);
 
   const crear = () => {
     if (!nuevoRubro.clave || !nuevoRubro.titulo) { alert("Completa clave y título"); return; }
@@ -1426,7 +1548,7 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
     localStorage.setItem("rubros_personalizados", JSON.stringify(rubrosPersonalizados));
     localStorage.setItem("asignaciones_columnas_rubros", JSON.stringify(asignacionesColumnas));
     localStorage.setItem("tipos_dato_columnas", JSON.stringify(tiposDatoColumnas));
-    alert("✅ Cambios guardados correctamente:\n\n• Rubros personalizados\n• Asignaciones de columnas\n• Tipos de dato por columna");
+    alert("✅ Cambios guardados correctamente");
     onCerrar();
   };
 
@@ -1443,7 +1565,40 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* 🔥 BUSCADOR DE COLUMNAS */}
+          <div className="bg-slate-50 border-2 border-slate-200 rounded-xl p-3">
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar columna por nombre, campo o etiqueta..."
+                value={busquedaColumna}
+                onChange={(e) => setBusquedaColumna(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+              />
+              {busquedaColumna && (
+                <button
+                  onClick={() => setBusquedaColumna("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-between mt-2 text-xs text-slate-600">
+              <span>
+                Mostrando <strong>{columnasFiltradas.length}</strong> de <strong>{columnasDelMapeo.length}</strong> columnas
+              </span>
+              {busquedaColumna && (
+                <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-bold">
+                  🔎 Filtrado por: "{busquedaColumna}"
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Formulario de nuevo rubro */}
           <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4">
             {!mostrarForm ? (
               <button onClick={() => setMostrarForm(true)} className="w-full text-center py-3 text-slate-600 font-semibold">+ Crear Nuevo Rubro</button>
@@ -1461,12 +1616,12 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                   </select>
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold mb-2">🔢 Tipo de Dato por Defecto</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                       {Object.entries(tiposDatoConfig).map(([key, cfg]) => (
-                        <button key={key} onClick={() => setNuevoRubro({ ...nuevoRubro, tipoDato: key })} className={`p-3 rounded-lg border-2 text-left transition ${nuevoRubro.tipoDato === key ? 'border-purple-500 bg-purple-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                        <button key={key} onClick={() => setNuevoRubro({ ...nuevoRubro, tipoDato: key })} className={`p-2 rounded-lg border-2 text-left transition ${nuevoRubro.tipoDato === key ? 'border-purple-500 bg-purple-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                           <div className="text-lg">{cfg.icono}</div>
-                          <div className="text-xs font-bold text-slate-800">{cfg.label}</div>
-                          <div className="text-[10px] text-slate-500 mt-0.5">Ej: {cfg.ejemplo}</div>
+                          <div className="text-[10px] font-bold text-slate-800">{cfg.label}</div>
+                          <div className="text-[9px] text-slate-500 mt-0.5">Ej: {cfg.ejemplo}</div>
                         </button>
                       ))}
                     </div>
@@ -1488,73 +1643,127 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
             )}
           </div>
 
+          {/* Lista de rubros con columnas filtradas */}
           <div>
-            <h4 className="font-bold mb-3">Rubros Existentes ({Object.keys(todosLosRubros).length})</h4>
-            <div className="space-y-3">
+            <h4 className="font-bold mb-3 flex items-center gap-2">
+              Rubros ({Object.keys(todosLosRubros).length})
+              {busquedaColumna && (
+                <span className="text-xs font-normal text-slate-500">
+                  · Mostrando {columnasFiltradas.length} columnas coincidentes
+                </span>
+              )}
+            </h4>
+            <div className="space-y-2">
               {Object.entries(todosLosRubros).map(([clave, cfg]) => {
-                const cols = columnasDelMapeo.filter(c => (asignacionesColumnas[c.campo] || clasificarRubroInicial(c.campo)) === clave);
+                const cols = columnasPorRubroFiltradas[clave] || [];
                 const esPred = rubrosIniciales[clave];
                 const tipoDatoActual = cfg.tipoDato || 'entero';
                 const tipoDatoCfg = tiposDatoConfig[tipoDatoActual];
+                const estaExpandido = rubroExpandido === clave;
+
+                // Si hay búsqueda y este rubro no tiene columnas coincidentes, no mostrarlo
+                if (busquedaColumna && cols.length === 0) return null;
 
                 return (
-                  <div key={clave} className={`${cfg.bgLight} border-2 ${cfg.border} rounded-xl p-4`}>
-                    <div className="flex items-start justify-between mb-3">
+                  <div key={clave} className={`${cfg.bgLight} border-2 ${cfg.border} rounded-xl overflow-hidden`}>
+                    {/* Header del rubro (clickeable para expandir/colapsar) */}
+                    <div 
+                      className="p-3 flex items-center justify-between cursor-pointer hover:opacity-90"
+                      onClick={() => setRubroExpandido(estaExpandido ? null : clave)}
+                    >
                       <div className="flex items-center gap-3">
-                        <span className="text-3xl">{cfg.icono}</span>
+                        <span className="text-2xl">{cfg.icono}</span>
                         <div>
-                          <div className={`font-bold ${cfg.text}`}>{cfg.titulo}</div>
-                          <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
+                          <div className={`font-bold text-sm ${cfg.text}`}>{cfg.titulo}</div>
+                          <div className="text-[10px] text-slate-600 flex items-center gap-2 flex-wrap">
                             <span>{cols.length} columnas</span>
-                            <span className="bg-white/60 px-2 py-0.5 rounded text-[10px] font-bold">{tipoDatoCfg.icono} {tipoDatoCfg.label}</span>
-                            {!esPred && <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Personalizado</span>}
+                            <span className="bg-white/60 px-1.5 py-0.5 rounded text-[9px] font-bold">{tipoDatoCfg.icono} {tipoDatoCfg.label}</span>
+                            {!esPred && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] font-bold">Personalizado</span>}
                           </div>
                         </div>
                       </div>
-                      {!esPred && <button onClick={() => eliminar(clave)} className="text-red-600 hover:text-red-800 text-xs font-bold">🗑️ Eliminar</button>}
-                    </div>
-
-                    <div className="bg-white/50 rounded-lg p-3 mb-3 border border-white">
-                      <div className="text-[10px] font-bold text-slate-600 uppercase mb-2">Tipo de Dato por Defecto</div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                        {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
-                          <button key={key} onClick={() => cambiarTipoDatoRubro(clave, key)} className={`p-2 rounded border text-xs transition ${tipoDatoActual === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                            <span className="mr-1">{tCfg.icono}</span>{tCfg.label}
+                      <div className="flex items-center gap-2">
+                        {!esPred && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); eliminar(clave); }} 
+                            className="text-red-600 hover:text-red-800 text-xs font-bold"
+                          >
+                            🗑️
                           </button>
-                        ))}
+                        )}
+                        <span className="text-slate-400 text-lg">{estaExpandido ? '▼' : '▶'}</span>
                       </div>
                     </div>
 
-                    {cols.length > 0 && (
-                      <div className="space-y-2 mt-3">
-                        <div className="text-xs font-bold">Columnas asignadas:</div>
-                        {cols.map(col => {
-                          const tipoDatoCol = tiposDatoColumnas[col.campo] || tipoDatoActual;
-                          return (
-                            <div key={col.campo} className="bg-white rounded-lg p-3 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <div className="text-sm font-semibold">{col.etiqueta}</div>
-                                  <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
-                                </div>
-                                <select value={asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo)} onChange={(e) => setAsignacionesColumnas(prev => ({ ...prev, [col.campo]: e.target.value }))} className="border rounded px-2 py-1 text-xs">
-                                  {Object.entries(todosLosRubros).map(([k, v]) => (<option key={k} value={k}>{v.icono} {v.titulo}</option>))}
-                                </select>
-                              </div>
-                              <div className="bg-slate-50 rounded p-2 border border-slate-200">
-                                <div className="text-[9px] font-bold text-slate-600 uppercase mb-1.5">Tipo de Dato de esta Columna</div>
-                                <div className="grid grid-cols-4 gap-1.5">
-                                  {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
-                                    <button key={key} onClick={() => cambiarTipoDatoColumna(col.campo, key)} className={`p-1.5 rounded border text-[10px] transition ${tipoDatoCol === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                                      <span>{tCfg.icono}</span>
-                                      <div className="text-[9px]">{tCfg.label}</div>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
+                    {/* Contenido expandido */}
+                    {estaExpandido && (
+                      <div className="bg-white/30 border-t border-white/50 p-3 space-y-2">
+                        {/* Tipo de dato por defecto */}
+                        <div className="bg-white/50 rounded-lg p-2 border border-white">
+                          <div className="text-[10px] font-bold text-slate-600 uppercase mb-1.5">Tipo de Dato por Defecto del Rubro</div>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-1.5">
+                            {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
+                              <button 
+                                key={key} 
+                                onClick={() => cambiarTipoDatoRubro(clave, key)} 
+                                className={`p-1.5 rounded border text-[10px] transition ${tipoDatoActual === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                              >
+                                <span className="mr-1">{tCfg.icono}</span>{tCfg.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Columnas del rubro */}
+                        {cols.length > 0 ? (
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-600 uppercase mb-1.5">Columnas en este Rubro</div>
+                            <div className="space-y-1.5">
+                              {cols.map(col => {
+                                const tipoDatoCol = tiposDatoColumnas[col.campo] || tipoDatoActual;
+                                return (
+                                  <div key={col.campo} className="bg-white rounded-lg p-2 space-y-1.5 border border-slate-200">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-semibold text-slate-800 truncate">{col.etiqueta}</div>
+                                        <div className="text-[9px] text-slate-500 font-mono truncate">{col.campo}</div>
+                                      </div>
+                                      <select 
+                                        value={asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo)} 
+                                        onChange={(e) => setAsignacionesColumnas(prev => ({ ...prev, [col.campo]: e.target.value }))} 
+                                        className="border rounded px-1.5 py-1 text-[10px] flex-shrink-0"
+                                      >
+                                        {Object.entries(todosLosRubros).map(([k, v]) => (
+                                          <option key={k} value={k}>{v.icono} {v.titulo}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="bg-slate-50 rounded p-1.5 border border-slate-200">
+                                      <div className="text-[9px] font-bold text-slate-600 uppercase mb-1">Tipo de Dato de esta Columna</div>
+                                      <div className="grid grid-cols-5 gap-1">
+                                        {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
+                                          <button 
+                                            key={key} 
+                                            onClick={() => cambiarTipoDatoColumna(col.campo, key)} 
+                                            className={`p-1 rounded border text-[9px] transition ${tipoDatoCol === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                                            title={tCfg.ejemplo}
+                                          >
+                                            <span>{tCfg.icono}</span>
+                                            <div className="text-[8px]">{tCfg.label}</div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
+                          </div>
+                        ) : (
+                          <div className="text-center text-xs text-slate-500 py-2">
+                            No hay columnas en este rubro
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

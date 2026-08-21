@@ -51,6 +51,8 @@ export default function Incidencias() {
   const [guardandoPermisos, setGuardandoPermisos] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
+  const [mostrarBotonArriba, setMostrarBotonArriba] = useState(false);
+
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [ordenColumnas, setOrdenColumnas] = useState(() => {
     try { return JSON.parse(localStorage.getItem("incidencias_orden_columnas")) || []; } catch { return []; }
@@ -151,7 +153,6 @@ export default function Incidencias() {
     cargarTodo();
   }, []);
 
-  // 🔥 Carga de incidencias solo cuando cambia el período
   useEffect(() => {
     if (!periodoId) return;
     const cargarIncidencias = async () => {
@@ -188,6 +189,14 @@ export default function Incidencias() {
   useEffect(() => { localStorage.setItem("incidencias_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
   useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
   useEffect(() => { setPaginaActual(1); }, [busqueda, departamentoFiltro, estadoFiltro, periodoId]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setMostrarBotonArriba(window.scrollY > 300);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const guardarPermisos = async () => {
     setGuardandoPermisos(true);
@@ -265,11 +274,24 @@ export default function Incidencias() {
     });
   };
 
+  // 🔥 ORDENAMIENTO INTELIGENTE: Departamento → Puesto → Nombre
   const registros = useMemo(() => {
-    return empleados.map(emp => ({
-      empleado: emp,
-      incidencia: incidencias.find(i => i.empleado_id === emp.id) || null
-    }));
+    return empleados
+      .map(emp => ({
+        empleado: emp,
+        incidencia: incidencias.find(i => i.empleado_id === emp.id) || null
+      }))
+      .sort((a, b) => {
+        const deptoA = (a.empleado.departamentos?.nombre || "Sin Departamento").toLowerCase();
+        const deptoB = (b.empleado.departamentos?.nombre || "Sin Departamento").toLowerCase();
+        if (deptoA !== deptoB) return deptoA.localeCompare(deptoB);
+
+        const puestoA = (a.empleado.puestos?.nombre || "Sin Puesto").toLowerCase();
+        const puestoB = (b.empleado.puestos?.nombre || "Sin Puesto").toLowerCase();
+        if (puestoA !== puestoB) return puestoA.localeCompare(puestoB);
+
+        return (a.empleado.nombre_completo || "").localeCompare(b.empleado.nombre_completo || "");
+      });
   }, [empleados, incidencias]);
 
   const registrosFiltrados = useMemo(() => {
@@ -291,6 +313,31 @@ export default function Incidencias() {
     return registrosFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
   }, [registrosFiltrados, paginaActual]);
 
+  // 🔥 DETECTAR SEPARADORES DE GRUPO (para mostrar headers visuales)
+  const registrosConSeparadores = useMemo(() => {
+    return registrosPaginados.map((registro, index) => {
+      const anterior = index > 0 ? registrosPaginados[index - 1] : null;
+      
+      const deptoActual = registro.empleado.departamentos?.nombre || "Sin Departamento";
+      const puestoActual = registro.empleado.puestos?.nombre || "Sin Puesto";
+      
+      const mostrarHeaderDepto = !anterior || 
+        (anterior.empleado.departamentos?.nombre || "Sin Departamento") !== deptoActual;
+      
+      const mostrarHeaderPuesto = !anterior ||
+        (anterior.empleado.departamentos?.nombre || "Sin Departamento") !== deptoActual ||
+        (anterior.empleado.puestos?.nombre || "Sin Puesto") !== puestoActual;
+
+      return {
+        ...registro,
+        mostrarHeaderDepto,
+        mostrarHeaderPuesto,
+        deptoActual,
+        puestoActual
+      };
+    });
+  }, [registrosPaginados]);
+
   const kpis = useMemo(() => {
     const total = empleados.length;
     const conCaptura = incidencias.length;
@@ -302,6 +349,16 @@ export default function Incidencias() {
 
   const departamentos = ["TODOS", ...new Set(empleados.map(e => e?.departamentos?.nombre).filter(Boolean))].sort();
   const periodoActual = periodos.find(p => p.id === periodoId);
+
+  // 🔥 Contar empleados por departamento para mostrar en el filtro
+  const conteoPorDepto = useMemo(() => {
+    const conteo = {};
+    empleados.forEach(emp => {
+      const depto = emp.departamentos?.nombre || "Sin Departamento";
+      conteo[depto] = (conteo[depto] || 0) + 1;
+    });
+    return conteo;
+  }, [empleados]);
 
   return (
     <Layout>
@@ -411,7 +468,11 @@ export default function Incidencias() {
               />
             </div>
             <select value={departamentoFiltro} onChange={e => setDepartamentoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
-              {departamentos.map(d => <option key={d} value={d}>{d === "TODOS" ? "🏢 Todos los departamentos" : d}</option>)}
+              {departamentos.map(d => (
+                <option key={d} value={d}>
+                  {d === "TODOS" ? "🏢 Todos los departamentos" : `${d} (${conteoPorDepto[d] || 0})`}
+                </option>
+              ))}
             </select>
             <select value={estadoFiltro} onChange={e => setEstadoFiltro(e.target.value)} className="border border-slate-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition">
               <option value="TODOS">📊 Todos los estados</option>
@@ -428,17 +489,16 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* 🔥 TABLA PRINCIPAL CON SCROLL INTERNO Y SOMBRAS PREMIUM */}
+        {/* 🔥 TABLA PRINCIPAL CON ORDENAMIENTO Y SEPARADORES */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col max-h-[75vh]">
           <div className="overflow-auto flex-1">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-30 shadow-sm">
                 <tr>
-                  {/* 🔥 COLUMNA FIJA IZQUIERDA CON SOMBRA PREMIUM */}
                   <th className="p-4 font-bold text-slate-700 sticky left-0 bg-slate-50 z-40 border-r border-slate-200 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.08)]">No.</th>
                   <th className="p-4 font-bold text-slate-700">Colaborador</th>
-                  <th className="p-4 font-bold text-slate-700">Departamento</th>
-                  <th className="p-4 font-bold text-slate-700">Puesto</th>
+                  <th className="p-4 font-bold text-slate-700">🏢 Departamento</th>
+                  <th className="p-4 font-bold text-slate-700">💼 Puesto</th>
                   <th className="p-4 font-bold text-slate-700">Estado</th>
                   {columnasActivas.map(col => (
                     <th key={col.campo} className={`p-4 text-right font-bold ${
@@ -452,8 +512,6 @@ export default function Incidencias() {
                     </th>
                   ))}
                   {vistaActual === "rrhh" && <th className="p-4 font-bold text-slate-700">💬 Obs.</th>}
-                  
-                  {/* 🔥 COLUMNA FIJA DERECHA CON SOMBRA PREMIUM */}
                   <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-40 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)]">Acción</th>
                 </tr>
               </thead>
@@ -466,7 +524,7 @@ export default function Incidencias() {
                       ))}
                     </tr>
                   ))
-                ) : registrosPaginados.length === 0 ? (
+                ) : registrosConSeparadores.length === 0 ? (
                   <tr>
                     <td colSpan={20} className="p-12 text-center">
                       <div className="text-6xl mb-3">📭</div>
@@ -475,7 +533,7 @@ export default function Incidencias() {
                     </td>
                   </tr>
                 ) : (
-                  registrosPaginados.map(({ empleado, incidencia }) => {
+                  registrosConSeparadores.map(({ empleado, incidencia, mostrarHeaderDepto, mostrarHeaderPuesto, deptoActual, puestoActual }, idx) => {
                     const estado = incidencia?.estado || "sin_captura";
                     const estadoConfig = {
                       sin_captura: { color: "bg-slate-100 text-slate-600", icono: "⚠️", label: "Sin captura" },
@@ -485,57 +543,91 @@ export default function Incidencias() {
                     }[estado];
 
                     return (
-                      // 🔥 SE AGREGÓ LA CLASE 'group' PARA EL EFECTO HOVER EN COLUMNAS FIJAS
-                      <tr key={empleado.id} className={`group border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
-                        
-                        {/* 🔥 CELDA FIJA IZQUIERDA CON SOMBRA Y HOVER SINCRONIZADO */}
-                        <td className="p-4 font-mono text-slate-600 sticky left-0 bg-white group-hover:bg-slate-50 z-20 border-r border-slate-200 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
-                          {empleado.numero_empleado || "S/N"}
-                        </td>
-                        
-                        <td className="p-4">
-                          <div className="font-semibold text-slate-800">{empleado.nombre_completo || "Sin nombre"}</div>
-                        </td>
-                        <td className="p-4 text-slate-600">{empleado.departamentos?.nombre || "N/A"}</td>
-                        <td className="p-4 text-slate-600">{empleado.puestos?.nombre || "Sin asignar"}</td>
-                        <td className="p-4">
-                          <span className={`${estadoConfig.color} px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1`}>
-                            {estadoConfig.icono} {estadoConfig.label}
-                          </span>
-                        </td>
-                        {columnasActivas.map(col => {
-                          const val = incidencia?.[col.campo];
-                          const esMonet = esCampoMonetario(col.campo);
-                          const displayVal = val !== null && val !== undefined && val !== ""
-                            ? (esMonet ? `$${Number(val).toFixed(2)}` : val)
-                            : <span className="text-slate-300">—</span>;
-                          return (
-                            <td key={col.campo} className={`p-4 text-right ${esMonet ? 'text-emerald-700 font-semibold' : 'text-slate-700'}`}>
-                              {displayVal}
+                      <>
+                        {/* 🔥 HEADER DE DEPARTAMENTO */}
+                        {mostrarHeaderDepto && (
+                          <tr key={`depto-${idx}`} className="bg-gradient-to-r from-slate-700 to-slate-800 text-white sticky top-[57px] z-20">
+                            <td colSpan={20} className="px-4 py-2.5 font-bold text-sm flex items-center gap-2">
+                              <span className="text-lg">🏢</span>
+                              <span className="uppercase tracking-wide">{deptoActual}</span>
+                              <span className="ml-auto text-xs bg-white/20 px-2 py-0.5 rounded-full">
+                                {empleados.filter(e => (e.departamentos?.nombre || "Sin Departamento") === deptoActual).length} empleados
+                              </span>
                             </td>
-                          );
-                        })}
-                        {vistaActual === "rrhh" && (
-                          <td className="p-4 max-w-[150px]">
-                            <div className="truncate text-[11px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
-                              {incidencia?.comentarios_rrhh || <span className="text-slate-300">—</span>}
-                            </div>
-                          </td>
+                          </tr>
                         )}
-                        
-                        {/* 🔥 CELDA FIJA DERECHA CON SOMBRA Y HOVER SINCRONIZADO */}
-                        <td className="p-4 sticky right-0 bg-white group-hover:bg-slate-50 z-20 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
-                          {vistaActual === "supervisor" ? (
-                            <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
-                              {incidencia ? "✏️ Editar" : "📝 Capturar"}
-                            </button>
-                          ) : (
-                            <button onClick={() => setModalRevision({ abierto: true, registro: { empleado, incidencia } })} className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
-                              🔍 Validar
-                            </button>
+
+                        {/* 🔥 HEADER DE PUESTO */}
+                        {mostrarHeaderPuesto && (
+                          <tr key={`puesto-${idx}`} className="bg-slate-100 border-b border-slate-300">
+                            <td colSpan={20} className="px-6 py-1.5 text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-2">
+                              <span>💼</span>
+                              <span>{puestoActual}</span>
+                              <span className="ml-auto text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
+                                {empleados.filter(e => 
+                                  (e.departamentos?.nombre || "Sin Departamento") === deptoActual && 
+                                  (e.puestos?.nombre || "Sin Puesto") === puestoActual
+                                ).length}
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* 🔥 FILA DEL EMPLEADO */}
+                        <tr key={empleado.id} className={`group border-b border-slate-100 hover:bg-slate-50 transition ${estado === "rechazado" ? "bg-red-50/30" : ""}`}>
+                          <td className="p-4 font-mono text-slate-600 sticky left-0 bg-white group-hover:bg-slate-50 z-20 border-r border-slate-200 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
+                            {empleado.numero_empleado || "S/N"}
+                          </td>
+                          <td className="p-4">
+                            <div className="font-semibold text-slate-800">{empleado.nombre_completo || "Sin nombre"}</div>
+                          </td>
+                          <td className="p-4 text-slate-600">
+                            <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-medium">
+                              {empleado.departamentos?.nombre || "N/A"}
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-600">
+                            <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">
+                              {empleado.puestos?.nombre || "Sin asignar"}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className={`${estadoConfig.color} px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1`}>
+                              {estadoConfig.icono} {estadoConfig.label}
+                            </span>
+                          </td>
+                          {columnasActivas.map(col => {
+                            const val = incidencia?.[col.campo];
+                            const esMonet = esCampoMonetario(col.campo);
+                            const displayVal = val !== null && val !== undefined && val !== ""
+                              ? (esMonet ? `$${Number(val).toFixed(2)}` : val)
+                              : <span className="text-slate-300">—</span>;
+                            return (
+                              <td key={col.campo} className={`p-4 text-right ${esMonet ? 'text-emerald-700 font-semibold' : 'text-slate-700'}`}>
+                                {displayVal}
+                              </td>
+                            );
+                          })}
+                          {vistaActual === "rrhh" && (
+                            <td className="p-4 max-w-[150px]">
+                              <div className="truncate text-[11px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
+                                {incidencia?.comentarios_rrhh || <span className="text-slate-300">—</span>}
+                              </div>
+                            </td>
                           )}
-                        </td>
-                      </tr>
+                          <td className="p-4 sticky right-0 bg-white group-hover:bg-slate-50 z-20 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)] transition-colors duration-200">
+                            {vistaActual === "supervisor" ? (
+                              <button onClick={() => setModalCaptura({ abierto: true, empleado: { ...empleado, incidencia } })} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                                {incidencia ? "✏️ Editar" : "📝 Capturar"}
+                              </button>
+                            ) : (
+                              <button onClick={() => setModalRevision({ abierto: true, registro: { empleado, incidencia } })} className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm transition">
+                                🔍 Validar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      </>
                     );
                   })
                 )}
@@ -570,6 +662,17 @@ export default function Incidencias() {
         </div>
       </div>
 
+      {/* 🔥 BOTÓN FLOTANTE "VOLVER ARRIBA" */}
+      {mostrarBotonArriba && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed bottom-6 right-6 bg-slate-800 hover:bg-slate-900 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl transition-all z-40 opacity-80 hover:opacity-100 hover:scale-110 animate-fade-in"
+          title="Volver arriba"
+        >
+          ↑
+        </button>
+      )}
+
       {/* 🔥 MODALES */}
       {modalCaptura.abierto && modalCaptura.empleado && (
         <ModalCaptura
@@ -593,7 +696,7 @@ export default function Incidencias() {
 
       {modalPermisos && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] flex flex-col scroll-smooth">
             <div className="flex justify-between items-center pb-3 border-b">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">🔒 Permisos de Captura</h3>
@@ -630,7 +733,7 @@ export default function Incidencias() {
 
       {modalConfigColumnas && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto scroll-smooth">
             <div className="flex justify-between items-center pb-3 border-b">
               <div><h3 className="text-lg font-bold text-slate-800">⚙️ Columnas de Incidencias</h3><p className="text-xs text-gray-500">Arrastra para reordenar</p></div>
               <button onClick={() => setModalConfigColumnas(false)} className="text-gray-400 font-bold text-xl">✕</button>
@@ -713,7 +816,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-      <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col">
+      <form onSubmit={(e) => { e.preventDefault(); onGuardar(empleado.id, valores); }} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col scroll-smooth">
         <div className="bg-gradient-to-r from-blue-500 to-blue-700 text-white px-6 py-4 rounded-t-2xl">
           <div className="flex justify-between items-center">
             <div>
@@ -774,7 +877,7 @@ function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-      <form onSubmit={(e) => { e.preventDefault(); onGuardar(incidencia?.id, valores, estadoFinal, comentario); }} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col">
+      <form onSubmit={(e) => { e.preventDefault(); onGuardar(incidencia?.id, valores, estadoFinal, comentario); }} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col scroll-smooth">
         <div className="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-4 rounded-t-2xl">
           <div className="flex justify-between items-center">
             <div>

@@ -30,6 +30,10 @@ const limpiarPayload = (payload) => {
   return limpio;
 };
 
+const formatearMoneda = (valor) => {
+  return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valor || 0);
+};
+
 const ITEMS_POR_PAGINA = 50;
 
 export default function Incidencias() {
@@ -49,10 +53,7 @@ export default function Incidencias() {
   const [busqueda, setBusqueda] = useState("");
   const [paginaActual, setPaginaActual] = useState(1);
 
-  // 🔥 NUEVO: Modo pantalla completa
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
-
-  // 🔥 NUEVO: Modal de segmentos monetarios
   const [modalSegmento, setModalSegmento] = useState({ abierto: false, tipo: null, titulo: "", icono: "", color: "" });
 
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
@@ -105,7 +106,6 @@ export default function Incidencias() {
 
   const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
 
-  // 🔥 NUEVO: Agrupar columnas monetarias por tipo (Bonos, Deducciones, Percepciones)
   const segmentosMonetarios = useMemo(() => {
     const bonos = columnasActivas.filter(c => esCampoMonetario(c.campo) && !esDeduccion(c.campo) && !normalizar(c.campo).includes('sueldo') && !normalizar(c.campo).includes('neto') && !normalizar(c.campo).includes('total'));
     const deducciones = columnasActivas.filter(c => esCampoMonetario(c.campo) && esDeduccion(c.campo));
@@ -262,7 +262,6 @@ export default function Incidencias() {
     finally { setGuardando(false); }
   };
 
-  // 🔥 NUEVO: Guardar ajustes masivos de RH para un segmento
   const guardarAjustesSegmento = async (ajustes) => {
     setGuardando(true);
     try {
@@ -326,6 +325,41 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, puestoFiltro, estadoFiltro]);
 
+  // 🔥 NUEVO: Totales por segmento (respetando filtros activos)
+  const totalesPorSegmento = useMemo(() => {
+    const calcular = (columnas) => {
+      return columnas.reduce((total, col) => {
+        const sumaEmpleados = registrosFiltrados.reduce((acc, r) => {
+          if (r.incidencia) {
+            return acc + Number(r.incidencia[col.campo] || 0);
+          }
+          return acc;
+        }, 0);
+        return total + sumaEmpleados;
+      }, 0);
+    };
+
+    return {
+      bonos: calcular(segmentosMonetarios.bonos),
+      deducciones: calcular(segmentosMonetarios.deducciones),
+      percepciones: calcular(segmentosMonetarios.percepciones),
+    };
+  }, [registrosFiltrados, segmentosMonetarios]);
+
+  // 🔥 NUEVO: Totales por columna monetaria (para el footer de la tabla)
+  const totalesPorColumna = useMemo(() => {
+    const totales = {};
+    columnasActivas.forEach(col => {
+      if (esCampoMonetario(col.campo)) {
+        totales[col.campo] = registrosFiltrados.reduce((acc, r) => {
+          if (r.incidencia) return acc + Number(r.incidencia[col.campo] || 0);
+          return acc;
+        }, 0);
+      }
+    });
+    return totales;
+  }, [registrosFiltrados, columnasActivas]);
+
   const totalPaginas = Math.ceil(registrosFiltrados.length / ITEMS_POR_PAGINA);
   const registrosPaginados = useMemo(() => {
     const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
@@ -386,7 +420,6 @@ export default function Incidencias() {
 
   const periodoActual = periodos.find(p => p.id === periodoId);
 
-  // 🔥 NUEVO: Abrir modal de segmento
   const abrirSegmento = (tipo) => {
     const config = {
       bonos: { titulo: "Gestión de Bonos", icono: "💰", color: "emerald" },
@@ -399,7 +432,7 @@ export default function Incidencias() {
   return (
     <Layout>
       <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-white overflow-auto p-6" : "space-y-6"}>
-        {/* 🔥 HEADER CON GRADIENTE */}
+        {/* HEADER */}
         <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
           <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMtOS45NDEgMC0xOCA4LjA1OS0xOCAxOHM4LjA1OSAxOCAxOCAxOCAxOC04LjA1OSAxOC0xOC04LjA1OS0xOC0xOC0xOHptMCAzMmMtNy43MzIgMC0xNC02LjI2OC0xNC0xNHM2LjI2OC0xNCAxNC0xNCAxNCA2LjI2OCAxNCAxNC02LjI2OCAxNC0xNCAxNHoiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjIiLz48L2c+PC9zdmc+')] opacity-20"></div>
           <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -421,14 +454,14 @@ export default function Incidencias() {
               </button>
               {pantallaCompleta && (
                 <button onClick={() => setPantallaCompleta(false)} className="bg-white text-indigo-700 px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition hover:bg-indigo-50">
-                  ✕ Salir de Pantalla Completa
+                  ✕ Salir
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        {/* 🔥 SELECTOR DE PERÍODO */}
+        {/* SELECTOR DE PERÍODO */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex flex-col md:flex-row items-center gap-4">
             <div className="flex items-center gap-3">
@@ -449,7 +482,7 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* 🔥 KPIs MODERNOS */}
+        {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           <KpiModerno titulo="Empleados" valor={kpis.total} icono="👥" color="blue" />
           <KpiModerno titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="indigo" />
@@ -459,40 +492,93 @@ export default function Incidencias() {
           <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
         </div>
 
-        {/* 🔥 TABS COMPACTOS */}
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"}`}>
-            <span className="text-base">👷</span><span>Supervisor</span>
-          </button>
-          <button onClick={() => setVistaActual("rrhh")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "rrhh" ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-purple-300 hover:text-purple-600"}`}>
-            <span className="text-base">🔍</span><span>Recursos Humanos</span>
-          </button>
-          
-          {/* 🔥 NUEVO: BOTONES DE SEGMENTOS MONETARIOS (solo visibles para RH) */}
-          {vistaActual === "rrhh" && (
-            <>
-              {segmentosMonetarios.bonos.length > 0 && (
-                <button onClick={() => abrirSegmento("bonos")} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400">
-                  💰 <span>Bonos ({segmentosMonetarios.bonos.length})</span>
-                </button>
-              )}
-              {segmentosMonetarios.deducciones.length > 0 && (
-                <button onClick={() => abrirSegmento("deducciones")} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 bg-red-50 text-red-700 border-red-300 hover:bg-red-100 hover:border-red-400">
-                  💸 <span>Deducciones ({segmentosMonetarios.deducciones.length})</span>
-                </button>
-              )}
-              {segmentosMonetarios.percepciones.length > 0 && (
-                <button onClick={() => abrirSegmento("percepciones")} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100 hover:border-blue-400">
-                  💵 <span>Percepciones ({segmentosMonetarios.percepciones.length})</span>
-                </button>
-              )}
-            </>
+        {/* TABS + BOTONES DE SEGMENTOS CON TOTALES */}
+        <div className="space-y-3">
+          {/* Fila 1: Tabs Supervisor/RH */}
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"}`}>
+              <span className="text-base">👷</span><span>Supervisor</span>
+            </button>
+            <button onClick={() => setVistaActual("rrhh")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "rrhh" ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-purple-300 hover:text-purple-600"}`}>
+              <span className="text-base">🔍</span><span>Recursos Humanos</span>
+            </button>
+          </div>
+
+          {/* 🔥 Fila 2: BOTONES DE SEGMENTOS CON TOTALES (solo para RH) */}
+          {vistaActual === "rrhh" && (segmentosMonetarios.bonos.length > 0 || segmentosMonetarios.deducciones.length > 0 || segmentosMonetarios.percepciones.length > 0) && (
+            <div className="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <span>💼</span> Gestión por Rubro
+                  <span className="text-[10px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-normal">
+                    Totales calculados sobre {registrosFiltrados.length} empleados filtrados
+                  </span>
+                </h3>
+                {(departamentoFiltro !== "TODOS" || puestoFiltro !== "TODOS") && (
+                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-semibold">
+                    🔍 Filtros activos: {departamentoFiltro !== "TODOS" ? departamentoFiltro : ""} {puestoFiltro !== "TODOS" ? `→ ${puestoFiltro}` : ""}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {segmentosMonetarios.bonos.length > 0 && (
+                  <button onClick={() => abrirSegmento("bonos")} className="group bg-white hover:bg-emerald-50 border-2 border-emerald-200 hover:border-emerald-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">💰</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
+                        {segmentosMonetarios.bonos.length} campos
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Bonos</div>
+                    <div className="text-2xl font-black text-emerald-700 mt-1">
+                      {formatearMoneda(totalesPorSegmento.bonos)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-emerald-600 transition">
+                      Click para gestionar →
+                    </div>
+                  </button>
+                )}
+                {segmentosMonetarios.deducciones.length > 0 && (
+                  <button onClick={() => abrirSegmento("deducciones")} className="group bg-white hover:bg-red-50 border-2 border-red-200 hover:border-red-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">💸</span>
+                      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
+                        {segmentosMonetarios.deducciones.length} campos
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Deducciones</div>
+                    <div className="text-2xl font-black text-red-700 mt-1">
+                      {formatearMoneda(totalesPorSegmento.deducciones)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-red-600 transition">
+                      Click para gestionar →
+                    </div>
+                  </button>
+                )}
+                {segmentosMonetarios.percepciones.length > 0 && (
+                  <button onClick={() => abrirSegmento("percepciones")} className="group bg-white hover:bg-blue-50 border-2 border-blue-200 hover:border-blue-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">💵</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">
+                        {segmentosMonetarios.percepciones.length} campos
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Percepciones</div>
+                    <div className="text-2xl font-black text-blue-700 mt-1">
+                      {formatearMoneda(totalesPorSegmento.percepciones)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-blue-600 transition">
+                      Click para gestionar →
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* 🔥 FILTROS MEJORADOS: BÚSQUEDA + CHIPS DE DEPARTAMENTO */}
+        {/* FILTROS */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
-          {/* Fila 1: Búsqueda + Estado + Contador */}
           <div className="grid md:grid-cols-4 gap-3">
             <div className="relative md:col-span-2">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
@@ -512,7 +598,7 @@ export default function Incidencias() {
             </div>
           </div>
 
-          {/* 🔥 Fila 2: CHIPS DE DEPARTAMENTO */}
+          {/* Chips de Departamento */}
           <div>
             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
               <span>🏢</span> Filtrar por Departamento
@@ -527,26 +613,16 @@ export default function Incidencias() {
                 const count = depto === "TODOS" ? empleados.length : (conteoPorDepto[depto] || 0);
                 const activo = departamentoFiltro === depto;
                 return (
-                  <button
-                    key={depto}
-                    onClick={() => { setDepartamentoFiltro(depto); setPuestoFiltro("TODOS"); }}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-                      activo 
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-md" 
-                        : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"
-                    }`}
-                  >
+                  <button key={depto} onClick={() => { setDepartamentoFiltro(depto); setPuestoFiltro("TODOS"); }} className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${activo ? "bg-indigo-600 text-white border-indigo-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"}`}>
                     {depto === "TODOS" ? "🌐 Todos" : depto}
-                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
-                      {count}
-                    </span>
+                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* 🔥 Fila 3: CHIPS DE PUESTO (filtrados por departamento seleccionado) */}
+          {/* Chips de Puesto */}
           {departamentoFiltro !== "TODOS" && (
             <div>
               <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
@@ -554,24 +630,12 @@ export default function Incidencias() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {puestosUnicosFiltrados.map(puesto => {
-                  const count = puesto === "TODOS" 
-                    ? conteoPorDepto[departamentoFiltro] || 0
-                    : (conteoPorPuesto[puesto] || 0);
+                  const count = puesto === "TODOS" ? conteoPorDepto[departamentoFiltro] || 0 : (conteoPorPuesto[puesto] || 0);
                   const activo = puestoFiltro === puesto;
                   return (
-                    <button
-                      key={puesto}
-                      onClick={() => setPuestoFiltro(puesto)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-                        activo 
-                          ? "bg-blue-600 text-white border-blue-600 shadow-md" 
-                          : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50"
-                      }`}
-                    >
+                    <button key={puesto} onClick={() => setPuestoFiltro(puesto)} className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${activo ? "bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50"}`}>
                       {puesto === "TODOS" ? "🌐 Todos" : puesto}
-                      <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
-                        {count}
-                      </span>
+                      <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
                     </button>
                   );
                 })}
@@ -580,21 +644,14 @@ export default function Incidencias() {
           )}
         </div>
 
-        {/* 🔥 TABLA PRINCIPAL */}
+        {/* TABLA PRINCIPAL */}
         <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col ${pantallaCompleta ? "h-[calc(100vh-120px)]" : "max-h-[75vh]"}`}>
-          {/* Barra de herramientas de la tabla */}
           <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
             <div className="flex items-center gap-3">
               <h3 className="font-bold text-slate-800 text-sm">📋 Registros del Período</h3>
-              <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-semibold">
-                {registrosFiltrados.length} empleados
-              </span>
+              <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-semibold">{registrosFiltrados.length} empleados</span>
             </div>
-            <button
-              onClick={() => setPantallaCompleta(!pantallaCompleta)}
-              className="bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5"
-              title={pantallaCompleta ? "Salir de pantalla completa" : "Ver en pantalla completa"}
-            >
+            <button onClick={() => setPantallaCompleta(!pantallaCompleta)} className="bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
               {pantallaCompleta ? "🗗 Minimizar" : "⛶ Pantalla Completa"}
             </button>
           </div>
@@ -710,6 +767,27 @@ export default function Incidencias() {
                   })
                 )}
               </tbody>
+              
+              {/* 🔥 NUEVO: FOOTER CON TOTALES POR COLUMNA */}
+              {columnasActivas.some(c => esCampoMonetario(c.campo)) && registrosFiltrados.length > 0 && (
+                <tfoot className="bg-slate-800 text-white sticky bottom-0 z-20 border-t-2 border-slate-600">
+                  <tr>
+                    <td colSpan={5} className="p-3 font-bold text-sm text-right">
+                      TOTALES ({registrosFiltrados.length} empleados)
+                    </td>
+                    {columnasActivas.map(col => {
+                      const esMonet = esCampoMonetario(col.campo);
+                      return (
+                        <td key={col.campo} className={`p-3 text-right font-bold ${esMonet ? 'text-yellow-300' : ''}`}>
+                          {esMonet ? formatearMoneda(totalesPorColumna[col.campo] || 0) : ""}
+                        </td>
+                      );
+                    })}
+                    {vistaActual === "rrhh" && <td></td>}
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 
@@ -725,12 +803,12 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* 🔥 BOTÓN FLOTANTE "VOLVER ARRIBA" */}
+      {/* BOTÓN VOLVER ARRIBA */}
       {mostrarBotonArriba && !pantallaCompleta && (
         <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="fixed bottom-6 right-6 bg-slate-800 hover:bg-slate-900 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl transition-all z-40 opacity-80 hover:opacity-100 hover:scale-110 animate-fade-in" title="Volver arriba">↑</button>
       )}
 
-      {/* 🔥 MODAL DE SEGMENTOS MONETARIOS */}
+      {/* 🔥 MODAL DE SEGMENTOS CON FILTROS POR DEPARTAMENTO Y PUESTO */}
       {modalSegmento.abierto && (
         <ModalSegmento
           tipo={modalSegmento.tipo}
@@ -738,7 +816,8 @@ export default function Incidencias() {
           icono={modalSegmento.icono}
           color={modalSegmento.color}
           columnas={modalSegmento.tipo === "bonos" ? segmentosMonetarios.bonos : modalSegmento.tipo === "deducciones" ? segmentosMonetarios.deducciones : segmentosMonetarios.percepciones}
-          registros={registrosFiltrados}
+          registros={registros}
+          todosLosEmpleados={empleados}
           guardando={guardando}
           onGuardar={guardarAjustesSegmento}
           onCerrar={() => setModalSegmento({ abierto: false, tipo: null, titulo: "", icono: "", color: "" })}
@@ -816,9 +895,13 @@ export default function Incidencias() {
   );
 }
 
-// 🔥 NUEVO: MODAL DE GESTIÓN DE SEGMENTOS MONETARIOS
-function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guardando, onGuardar, onCerrar }) {
-  // Valores editables por RH (inicialmente iguales a lo que capturó el supervisor)
+// 🔥 NUEVO: MODAL DE SEGMENTOS CON FILTROS POR DEPARTAMENTO Y PUESTO
+function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
+  // 🔥 Filtros internos del modal
+  const [filtroDepto, setFiltroDepto] = useState("TODOS");
+  const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
+  const [busquedaInterna, setBusquedaInterna] = useState("");
+
   const [valoresRH, setValoresRH] = useState(() => {
     const init = {};
     registros.forEach(r => {
@@ -838,13 +921,39 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guarda
     blue: { bg: "bg-blue-50", border: "border-blue-200", text: "text-blue-800", btn: "bg-blue-600 hover:bg-blue-700" },
   }[color];
 
-  // Calcular totales
+  // 🔥 Departamentos únicos
+  const departamentosUnicos = useMemo(() => {
+    return ["TODOS", ...new Set(todosLosEmpleados.map(e => e.departamentos?.nombre).filter(Boolean))].sort();
+  }, [todosLosEmpleados]);
+
+  // 🔥 Puestos filtrados por departamento
+  const puestosUnicos = useMemo(() => {
+    const empleadosFiltradosPorDepto = filtroDepto === "TODOS" 
+      ? todosLosEmpleados 
+      : todosLosEmpleados.filter(e => (e.departamentos?.nombre || "Sin Departamento") === filtroDepto);
+    return ["TODOS", ...new Set(empleadosFiltradosPorDepto.map(e => e.puestos?.nombre).filter(Boolean))].sort();
+  }, [todosLosEmpleados, filtroDepto]);
+
+  // 🔥 Registros filtrados dentro del modal
+  const registrosFiltradosModal = useMemo(() => {
+    const texto = busquedaInterna.toLowerCase().trim();
+    return registros.filter(r => {
+      const emp = r.empleado;
+      const coincideTexto = !texto || [emp.nombre_completo, emp.numero_empleado, emp.puestos?.nombre]
+        .some(c => String(c || "").toLowerCase().includes(texto));
+      const coincideDepto = filtroDepto === "TODOS" || emp.departamentos?.nombre === filtroDepto;
+      const coincidePuesto = filtroPuesto === "TODOS" || emp.puestos?.nombre === filtroPuesto;
+      return coincideTexto && coincideDepto && coincidePuesto;
+    });
+  }, [registros, filtroDepto, filtroPuesto, busquedaInterna]);
+
+  // 🔥 Totales del modal (sobre registros filtrados)
   const totales = useMemo(() => {
     const totalesPorCampo = {};
     let totalGeneral = 0;
     columnas.forEach(col => { totalesPorCampo[col.campo] = 0; });
     
-    registros.forEach(r => {
+    registrosFiltradosModal.forEach(r => {
       if (r.incidencia) {
         columnas.forEach(col => {
           const val = Number(valoresRH[r.empleado.id]?.[col.campo] || 0);
@@ -854,10 +963,10 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guarda
       }
     });
     return { totalesPorCampo, totalGeneral };
-  }, [valoresRH, columnas, registros]);
+  }, [valoresRH, columnas, registrosFiltradosModal]);
 
   const handleGuardar = () => {
-    const ajustes = registros
+    const ajustes = registrosFiltradosModal
       .filter(r => r.incidencia)
       .map(r => ({
         incidenciaId: r.incidencia.id,
@@ -865,17 +974,17 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guarda
       }));
     
     if (ajustes.length === 0) {
-      alert("No hay registros con incidencias para guardar.");
+      alert("No hay registros con incidencias para guardar en este filtro.");
       return;
     }
     
+    if (!window.confirm(`¿Guardar ajustes para ${ajustes.length} empleados?`)) return;
     onGuardar(ajustes);
   };
 
-  // Aplicar un valor a todos los empleados
   const aplicarATodos = (campo, valor) => {
     const nuevosValores = { ...valoresRH };
-    registros.forEach(r => {
+    registrosFiltradosModal.forEach(r => {
       if (r.incidencia) {
         nuevosValores[r.empleado.id] = { ...nuevosValores[r.empleado.id], [campo]: valor };
       }
@@ -885,106 +994,212 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guarda
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full max-h-[95vh] flex flex-col">
         {/* Header */}
         <div className={`${colorClasses.bg} border-b ${colorClasses.border} px-6 py-4 rounded-t-2xl`}>
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-start">
             <div>
               <h3 className={`text-xl font-bold ${colorClasses.text} flex items-center gap-2`}>
                 <span className="text-2xl">{icono}</span> {titulo}
               </h3>
               <p className="text-xs text-slate-600 mt-1">
-                Revisa los valores del supervisor y ajusta los montos de RH. Los totales se calculan automáticamente.
+                Revisa los valores del supervisor y ajusta los montos de RH. Filtra por departamento o puesto para gestión segmentada.
               </p>
             </div>
             <button onClick={onCerrar} className="text-slate-400 hover:text-slate-700 font-bold text-2xl">✕</button>
           </div>
+
+          {/* 🔥 FILTROS DEL MODAL */}
+          <div className="mt-4 space-y-3">
+            {/* Fila 1: Búsqueda */}
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input 
+                type="text" 
+                placeholder="Buscar empleado dentro de este segmento..." 
+                value={busquedaInterna}
+                onChange={(e) => setBusquedaInterna(e.target.value)}
+                className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white" 
+              />
+            </div>
+
+            {/* Fila 2: Chips de Departamento */}
+            <div>
+              <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
+                <span>🏢</span> Departamento
+                {filtroDepto !== "TODOS" && (
+                  <button onClick={() => { setFiltroDepto("TODOS"); setFiltroPuesto("TODOS"); }} className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-bold hover:bg-red-200">
+                    ✕ Limpiar
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {departamentosUnicos.map(depto => {
+                  const count = depto === "TODOS" 
+                    ? registros.filter(r => r.incidencia).length
+                    : registros.filter(r => r.incidencia && r.empleado.departamentos?.nombre === depto).length;
+                  const activo = filtroDepto === depto;
+                  return (
+                    <button
+                      key={depto}
+                      onClick={() => { setFiltroDepto(depto); setFiltroPuesto("TODOS"); }}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border ${
+                        activo 
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" 
+                          : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"
+                      }`}
+                    >
+                      {depto === "TODOS" ? "🌐 Todos" : depto}
+                      <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Fila 3: Chips de Puesto (solo si hay depto seleccionado) */}
+            {filtroDepto !== "TODOS" && (
+              <div>
+                <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
+                  <span>💼</span> Puesto en <span className="text-indigo-600">{filtroDepto}</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {puestosUnicos.map(puesto => {
+                    const count = puesto === "TODOS"
+                      ? registros.filter(r => r.incidencia && r.empleado.departamentos?.nombre === filtroDepto).length
+                      : registros.filter(r => r.incidencia && r.empleado.departamentos?.nombre === filtroDepto && r.empleado.puestos?.nombre === puesto).length;
+                    const activo = filtroPuesto === puesto;
+                    return (
+                      <button
+                        key={puesto}
+                        onClick={() => setFiltroPuesto(puesto)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border ${
+                          activo 
+                            ? "bg-blue-600 text-white border-blue-600 shadow-sm" 
+                            : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50"
+                        }`}
+                      >
+                        {puesto === "TODOS" ? "🌐 Todos" : puesto}
+                        <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tabla de gestión */}
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-100 sticky top-0 z-10">
-              <tr>
-                <th className="p-3 text-left font-bold text-slate-700 sticky left-0 bg-slate-100 z-20">Empleado</th>
-                {columnas.map(col => (
-                  <th key={col.campo} className="p-3 text-center font-bold text-slate-700">
-                    <div className="text-xs">{col.etiqueta}</div>
-                    <button
-                      onClick={() => {
-                        const valor = prompt(`Aplicar valor a TODOS los empleados para "${col.etiqueta}":`, "0");
-                        if (valor !== null) aplicarATodos(col.campo, Number(valor) || 0);
-                      }}
-                      className="text-[9px] text-blue-600 hover:text-blue-800 underline mt-0.5"
-                      title="Aplicar este valor a todos los empleados"
-                    >
-                      aplicar a todos
-                    </button>
-                  </th>
+        <div className="flex-1 overflow-auto bg-white">
+          {registrosFiltradosModal.filter(r => r.incidencia).length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="text-6xl mb-3">📭</div>
+              <div className="text-slate-500 font-semibold">No hay registros con incidencias en este filtro</div>
+              <div className="text-xs text-slate-400 mt-1">Ajusta los filtros o cambia de departamento</div>
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="bg-slate-100 sticky top-0 z-10">
+                <tr>
+                  <th className="p-3 text-left font-bold text-slate-700 sticky left-0 bg-slate-100 z-20">Empleado</th>
+                  <th className="p-3 text-left font-bold text-slate-700">🏢 Depto</th>
+                  <th className="p-3 text-left font-bold text-slate-700">💼 Puesto</th>
+                  {columnas.map(col => (
+                    <th key={col.campo} className="p-3 text-center font-bold text-slate-700">
+                      <div className="text-xs">{col.etiqueta}</div>
+                      <button
+                        onClick={() => {
+                          const valor = prompt(`Aplicar valor a TODOS los empleados filtrados (${registrosFiltradosModal.filter(r => r.incidencia).length}) para "${col.etiqueta}":`, "0");
+                          if (valor !== null) aplicarATodos(col.campo, Number(valor) || 0);
+                        }}
+                        className="text-[9px] text-blue-600 hover:text-blue-800 underline mt-0.5"
+                        title="Aplicar este valor a todos los empleados filtrados"
+                      >
+                        aplicar a todos
+                      </button>
+                    </th>
+                  ))}
+                  <th className="p-3 text-center font-bold text-slate-700 bg-purple-50 sticky right-0 bg-purple-50 z-10">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {registrosFiltradosModal.filter(r => r.incidencia).map(({ empleado, incidencia }) => (
+                  <tr key={empleado.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="p-3 sticky left-0 bg-white z-10">
+                      <div className="font-semibold text-slate-800 text-xs">{empleado.nombre_completo}</div>
+                      <div className="text-[10px] text-slate-500">#{empleado.numero_empleado}</div>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">
+                      <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
+                        {empleado.departamentos?.nombre || "N/A"}
+                      </span>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">
+                      <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                        {empleado.puestos?.nombre || "N/A"}
+                      </span>
+                    </td>
+                    {columnas.map(col => {
+                      const valSupervisor = incidencia[col.campo] ?? 0;
+                      const valRH = valoresRH[empleado.id]?.[col.campo] ?? 0;
+                      const diferencia = Number(valRH) - Number(valSupervisor);
+                      return (
+                        <td key={col.campo} className="p-2 text-center">
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-slate-400">Sup: ${Number(valSupervisor).toFixed(2)}</div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={valRH}
+                              onChange={(e) => setValoresRH(prev => ({
+                                ...prev,
+                                [empleado.id]: { ...prev[empleado.id], [col.campo]: e.target.value }
+                              }))}
+                              className={`w-20 border rounded px-2 py-1 text-xs text-center font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${diferencia !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}
+                            />
+                            {diferencia !== 0 && (
+                              <div className={`text-[9px] font-bold ${diferencia > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {diferencia > 0 ? '+' : ''}{diferencia.toFixed(2)}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="p-3 text-center bg-purple-50/50 font-bold text-purple-900 sticky right-0 bg-purple-50 z-10">
+                      ${columnas.reduce((acc, col) => acc + Number(valoresRH[empleado.id]?.[col.campo] || 0), 0).toFixed(2)}
+                    </td>
+                  </tr>
                 ))}
-                <th className="p-3 text-center font-bold text-slate-700 bg-purple-50">Total por Empleado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {registros.filter(r => r.incidencia).map(({ empleado, incidencia }) => (
-                <tr key={empleado.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="p-3 sticky left-0 bg-white z-10">
-                    <div className="font-semibold text-slate-800 text-xs">{empleado.nombre_completo}</div>
-                    <div className="text-[10px] text-slate-500">#{empleado.numero_empleado} · {empleado.puestos?.nombre}</div>
+              </tbody>
+              <tfoot className="bg-slate-800 text-white sticky bottom-0">
+                <tr>
+                  <td colSpan={3} className="p-3 font-bold sticky left-0 bg-slate-800 z-10">
+                    TOTALES ({registrosFiltradosModal.filter(r => r.incidencia).length} empleados)
                   </td>
-                  {columnas.map(col => {
-                    const valSupervisor = incidencia[col.campo] ?? 0;
-                    const valRH = valoresRH[empleado.id]?.[col.campo] ?? 0;
-                    const diferencia = Number(valRH) - Number(valSupervisor);
-                    return (
-                      <td key={col.campo} className="p-2 text-center">
-                        <div className="space-y-1">
-                          <div className="text-[10px] text-slate-400">Sup: ${Number(valSupervisor).toFixed(2)}</div>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={valRH}
-                            onChange={(e) => setValoresRH(prev => ({
-                              ...prev,
-                              [empleado.id]: { ...prev[empleado.id], [col.campo]: e.target.value }
-                            }))}
-                            className={`w-20 border rounded px-2 py-1 text-xs text-center font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${diferencia !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}
-                          />
-                          {diferencia !== 0 && (
-                            <div className={`text-[9px] font-bold ${diferencia > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {diferencia > 0 ? '+' : ''}{diferencia.toFixed(2)}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="p-3 text-center bg-purple-50/50 font-bold text-purple-900">
-                    ${columnas.reduce((acc, col) => acc + Number(valoresRH[empleado.id]?.[col.campo] || 0), 0).toFixed(2)}
+                  {columnas.map(col => (
+                    <td key={col.campo} className="p-3 text-center font-bold">
+                      ${totales.totalesPorCampo[col.campo].toFixed(2)}
+                    </td>
+                  ))}
+                  <td className="p-3 text-center font-black text-xl text-yellow-300 sticky right-0 bg-slate-800 z-10">
+                    ${totales.totalGeneral.toFixed(2)}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-slate-800 text-white sticky bottom-0">
-              <tr>
-                <td className="p-3 font-bold sticky left-0 bg-slate-800">TOTALES</td>
-                {columnas.map(col => (
-                  <td key={col.campo} className="p-3 text-center font-bold">
-                    ${totales.totalesPorCampo[col.campo].toFixed(2)}
-                  </td>
-                ))}
-                <td className="p-3 text-center font-black text-xl text-yellow-300">
-                  ${totales.totalGeneral.toFixed(2)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+              </tfoot>
+            </table>
+          )}
         </div>
 
-        {/* Footer con acciones */}
+        {/* Footer */}
         <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-between items-center">
           <div className="text-xs text-slate-600">
-            <strong>{registros.filter(r => r.incidencia).length}</strong> empleados con incidencias · <strong>{columnas.length}</strong> campos
+            <strong>{registrosFiltradosModal.filter(r => r.incidencia).length}</strong> de <strong>{registros.filter(r => r.incidencia).length}</strong> empleados visibles · <strong>{columnas.length}</strong> campos
           </div>
           <div className="flex gap-2">
             <button onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100">Cancelar</button>
@@ -998,7 +1213,7 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, guarda
   );
 }
 
-// 🔥 COMPONENTE KPI MODERNO
+// KPI MODERNO
 function KpiModerno({ titulo, valor, icono, color }) {
   const colores = {
     blue: { bg: "bg-blue-50", text: "text-blue-600" },
@@ -1020,7 +1235,7 @@ function KpiModerno({ titulo, valor, icono, color }) {
   );
 }
 
-// 🔥 MODAL CAPTURA SUPERVISOR
+// MODAL CAPTURA SUPERVISOR
 function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
@@ -1062,7 +1277,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   );
 }
 
-// 🔥 MODAL REVISIÓN RH
+// MODAL REVISIÓN RH
 function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   const { empleado, incidencia } = registro;
   const [valores, setValores] = useState(() => {

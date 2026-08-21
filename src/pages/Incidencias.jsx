@@ -16,7 +16,6 @@ const limpiarPayload = (payload) => {
   return limpio;
 };
 
-// 🔥 MODIFICADO: Ahora recibe el tipo de dato de la columna específica
 const formatearValor = (valor, tipoDato) => {
   const num = Number(valor || 0);
   switch (tipoDato) {
@@ -82,12 +81,9 @@ export default function Incidencias() {
   const [asignacionesColumnas, setAsignacionesColumnas] = useState(() => {
     try { const g = localStorage.getItem("asignaciones_columnas_rubros"); return g ? JSON.parse(g) : {}; } catch { return {}; }
   });
-  
-  // 🔥 NUEVO: Tipos de dato por columna individual
   const [tiposDatoColumnas, setTiposDatoColumnas] = useState(() => {
     try { const g = localStorage.getItem("tipos_dato_columnas"); return g ? JSON.parse(g) : {}; } catch { return {}; }
   });
-  
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
   const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
   const [modalPermisos, setModalPermisos] = useState(false);
@@ -316,7 +312,6 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, puestoFiltro, estadoFiltro]);
 
-  // 🔥 MODIFICADO: Ahora calcula totales usando el tipo de dato de cada columna
   const totalesPorRubro = useMemo(() => {
     const t = {};
     rubrosActivos.forEach(r => {
@@ -382,11 +377,6 @@ export default function Incidencias() {
   const periodoActual = periodos.find(p => p.id === periodoId);
   const abrirRubro = (r) => setModalRubro({ abierto: true, rubro: r });
 
-  // 🔥 NUEVO: Función para obtener el tipo de dato de una columna
-  const obtenerTipoDatoColumna = (campo, rubro) => {
-    return tiposDatoColumnas[campo] || todosLosRubros[rubro]?.tipoDato || 'entero';
-  };
-
   return (
     <Layout>
       <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-white overflow-auto p-6" : "space-y-6"}>
@@ -403,7 +393,6 @@ export default function Incidencias() {
               )}
             </div>
             
-            {/* 🔥 MODIFICADO: Botones de configuración siempre visibles */}
             <div className="flex flex-wrap gap-2 pt-3 border-t border-white/20">
               <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
                 🔒 Permisos
@@ -624,7 +613,6 @@ export default function Incidencias() {
                           {rubrosActivos.map(r => {
                             const cfg = todosLosRubros[r];
                             const cols = columnasPorRubro[r];
-                            // 🔥 MODIFICADO: Suma usando el tipo de dato de cada columna
                             const total = incidencia ? cols.reduce((s, c) => s + Number(incidencia[c.campo] || 0), 0) : 0;
                             const tipoDatoRubro = cfg.tipoDato || 'entero';
                             return <td key={r} className={`p-4 text-right font-bold ${cfg.text}`}>{incidencia ? formatearValor(total, tipoDatoRubro) : <span className="text-slate-300">—</span>}</td>;
@@ -782,7 +770,6 @@ export default function Incidencias() {
   );
 }
 
-// 🔥 MODIFICADO: Ahora incluye selector de tipo de dato por columna
 function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, tiposDatoColumnas, setTiposDatoColumnas, onCerrar }) {
   const [nuevoRubro, setNuevoRubro] = useState({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro", tipoDato: "entero" });
   const [mostrarForm, setMostrarForm] = useState(false);
@@ -825,9 +812,16 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
     }
   };
 
-  // 🔥 NUEVO: Cambiar tipo de dato de una columna específica
   const cambiarTipoDatoColumna = (campo, nuevoTipoDato) => {
     setTiposDatoColumnas(prev => ({ ...prev, [campo]: nuevoTipoDato }));
+  };
+
+  const guardarCambios = () => {
+    localStorage.setItem("rubros_personalizados", JSON.stringify(rubrosPersonalizados));
+    localStorage.setItem("asignaciones_columnas_rubros", JSON.stringify(asignacionesColumnas));
+    localStorage.setItem("tipos_dato_columnas", JSON.stringify(tiposDatoColumnas));
+    alert("✅ Cambios guardados correctamente:\n\n• Rubros personalizados\n• Asignaciones de columnas\n• Tipos de dato por columna");
+    onCerrar();
   };
 
   return (
@@ -962,7 +956,6 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                                 </select>
                               </div>
                               
-                              {/* 🔥 NUEVO: Selector de tipo de dato para esta columna específica */}
                               <div className="bg-slate-50 rounded p-2 border border-slate-200">
                                 <div className="text-[9px] font-bold text-slate-600 uppercase mb-1.5">Tipo de Dato de esta Columna</div>
                                 <div className="grid grid-cols-4 gap-1.5">
@@ -994,15 +987,31 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
           </div>
         </div>
 
-        <div className="border-t px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-end">
-          <button onClick={onCerrar} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Cerrar</button>
+        <div className="border-t px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-between items-center">
+          <div className="text-xs text-slate-500 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+            Los cambios se guardan automáticamente en tu navegador
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={onCerrar} 
+              className="bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 transition"
+            >
+              ❌ Cancelar
+            </button>
+            <button 
+              onClick={guardarCambios} 
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md transition flex items-center gap-2"
+            >
+              💾 Guardar Cambios
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// 🔥 MODIFICADO: Ahora usa el tipo de dato de cada columna individual
 function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, tiposDatoColumnas, onGuardar, onCerrar }) {
   const [filtroDepto, setFiltroDepto] = useState("TODOS");
   const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
@@ -1133,10 +1142,8 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                   <th className="p-3 text-left font-bold">🏢 Depto</th>
                   <th className="p-3 text-left font-bold">💼 Puesto</th>
                   {columnas.map(c => {
-                    // 🔥 MODIFICADO: Usa el tipo de dato de la columna específica
                     const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
                     const tCfg = tiposDatoConfig[tipoDatoCol];
-                    const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
                     return (
                       <th key={c.campo} className="p-3 text-center font-bold">
                         <div className="text-xs flex items-center justify-center gap-1">
@@ -1160,7 +1167,6 @@ function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, gua
                     <td className="p-3 text-xs"><span className="bg-slate-100 px-1.5 py-0.5 rounded">{empleado.departamentos?.nombre || "N/A"}</span></td>
                     <td className="p-3 text-xs"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{empleado.puestos?.nombre || "N/A"}</span></td>
                     {columnas.map(c => {
-                      // 🔥 MODIFICADO: Usa el tipo de dato de la columna específica
                       const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
                       const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
                       const vSup = Number(incidencia[c.campo] ?? 0);

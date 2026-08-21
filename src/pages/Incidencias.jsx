@@ -18,7 +18,7 @@ const esCampoMonetario = (campo) => {
 
 const esDeduccion = (campo) => {
   const n = normalizar(campo);
-  return /descuento|deduccion|adeudo|falta|prestamo|infonavit|imss|sancion/.test(n);
+  return /descuento|deduccion|adeudo|prestamo|infonavit|imss|sancion/.test(n);
 };
 
 const limpiarPayload = (payload) => {
@@ -36,24 +36,23 @@ const formatearMoneda = (valor) => {
 
 const ITEMS_POR_PAGINA = 50;
 
-// 🔥 CLASIFICACIÓN DE RUBROS
-const clasificarRubro = (campo) => {
+const rubrosIniciales = {
+  bonos: { titulo: "Bonos", icono: "💰", color: "emerald", bgLight: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", tipo: "positivo" },
+  deducciones: { titulo: "Deducciones", icono: "💸", color: "red", bgLight: "bg-red-50", text: "text-red-700", border: "border-red-200", tipo: "negativo" },
+  aguinaldo: { titulo: "Aguinaldo/PTU", icono: "🎁", color: "amber", bgLight: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", tipo: "positivo" },
+  horas_extra: { titulo: "Horas Extra", icono: "⏰", color: "blue", bgLight: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", tipo: "positivo" },
+  percepciones: { titulo: "Percepciones", icono: "💵", color: "indigo", bgLight: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200", tipo: "positivo" },
+  otros: { titulo: "Otros", icono: "📋", color: "slate", bgLight: "bg-slate-50", text: "text-slate-700", border: "border-slate-200", tipo: "neutro" },
+};
+
+const clasificarRubroInicial = (campo) => {
   const n = normalizar(campo);
   if (/bono|apoyo|gratificacion|comision|prima/.test(n)) return 'bonos';
   if (/descuento|deduccion|adeudo|prestamo|infonavit|imss|sancion|falta/.test(n)) return 'deducciones';
   if (/aguinaldo|ptu/.test(n)) return 'aguinaldo';
-  if (/horas? ?extra/.test(n)) return 'horas_extra';
+  if (/horas? ?extra|extras?/.test(n)) return 'horas_extra';
   if (/sueldo|salario|neto|total/.test(n)) return 'percepciones';
   return 'otros';
-};
-
-const configRubros = {
-  bonos: { titulo: "Bonos", icono: "💰", color: "emerald", bgLight: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
-  deducciones: { titulo: "Deducciones", icono: "💸", color: "red", bgLight: "bg-red-50", text: "text-red-700", border: "border-red-200" },
-  aguinaldo: { titulo: "Aguinaldo/PTU", icono: "🎁", color: "amber", bgLight: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
-  horas_extra: { titulo: "Horas Extra", icono: "⏰", color: "blue", bgLight: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" },
-  percepciones: { titulo: "Percepciones", icono: "💵", color: "indigo", bgLight: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200" },
-  otros: { titulo: "Otros", icono: "📋", color: "slate", bgLight: "bg-slate-50", text: "text-slate-700", border: "border-slate-200" },
 };
 
 export default function Incidencias() {
@@ -75,6 +74,21 @@ export default function Incidencias() {
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const [modalRubro, setModalRubro] = useState({ abierto: false, rubro: null });
+  const [modalConfigRubros, setModalConfigRubros] = useState(false);
+  
+  const [rubrosPersonalizados, setRubrosPersonalizados] = useState(() => {
+    try {
+      const guardado = localStorage.getItem("rubros_personalizados");
+      return guardado ? JSON.parse(guardado) : {};
+    } catch { return {}; }
+  });
+  
+  const [asignacionesColumnas, setAsignacionesColumnas] = useState(() => {
+    try {
+      const guardado = localStorage.getItem("asignaciones_columnas_rubros");
+      return guardado ? JSON.parse(guardado) : {};
+    } catch { return {}; }
+  });
 
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
   const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
@@ -94,6 +108,10 @@ export default function Incidencias() {
     try { return JSON.parse(localStorage.getItem("incidencias_columnas_visibles")) || {}; } catch { return {}; }
   });
 
+  const todosLosRubros = useMemo(() => {
+    return { ...rubrosIniciales, ...rubrosPersonalizados };
+  }, [rubrosPersonalizados]);
+
   const columnasDelMapeo = useMemo(() => {
     if (!configuracionMapeo?.asignacion) return [];
     const validas = [];
@@ -101,12 +119,13 @@ export default function Incidencias() {
       if (info.tablaDestino === 'incidencias' && (info.campoDestino || info.campoManual)) {
         const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
         if (campoFinal) {
+          const rubroAsignado = asignacionesColumnas[campoFinal] || clasificarRubroInicial(campoFinal);
           validas.push({
             original: colOriginal,
             campo: campoFinal,
             etiqueta: formatearNombreColumna(campoFinal),
             permite_supervisor: permisosSupervisor[campoFinal] || false,
-            rubro: clasificarRubro(campoFinal),
+            rubro: rubroAsignado,
           });
         }
       }
@@ -114,7 +133,7 @@ export default function Incidencias() {
     const unicas = new Map();
     validas.forEach(item => { if (!unicas.has(item.campo)) unicas.set(item.campo, item); });
     return Array.from(unicas.values());
-  }, [configuracionMapeo, permisosSupervisor]);
+  }, [configuracionMapeo, permisosSupervisor, asignacionesColumnas]);
 
   const columnasActivas = useMemo(() => {
     const visibles = columnasDelMapeo.filter(c => columnasVisibles[c.campo] !== false);
@@ -127,23 +146,20 @@ export default function Incidencias() {
 
   const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
 
-  // 🔥 AGRUPAR COLUMNAS POR RUBRO
   const columnasPorRubro = useMemo(() => {
     const agrupado = {};
-    Object.keys(configRubros).forEach(r => { agrupado[r] = []; });
+    Object.keys(todosLosRubros).forEach(r => { agrupado[r] = []; });
     columnasActivas.forEach(col => {
       const rubro = col.rubro || 'otros';
       if (!agrupado[rubro]) agrupado[rubro] = [];
       agrupado[rubro].push(col);
     });
-    // Filtrar rubros vacíos
     Object.keys(agrupado).forEach(r => {
       if (agrupado[r].length === 0) delete agrupado[r];
     });
     return agrupado;
-  }, [columnasActivas]);
+  }, [columnasActivas, todosLosRubros]);
 
-  // 🔥 RUBROS CON DATOS (para mostrar en la tabla y botones)
   const rubrosActivos = useMemo(() => {
     return Object.keys(columnasPorRubro).filter(r => columnasPorRubro[r].length > 0);
   }, [columnasPorRubro]);
@@ -242,6 +258,8 @@ export default function Incidencias() {
 
   useEffect(() => { localStorage.setItem("incidencias_columnas_visibles", JSON.stringify(columnasVisibles)); }, [columnasVisibles]);
   useEffect(() => { localStorage.setItem("incidencias_orden_columnas", JSON.stringify(ordenColumnas)); }, [ordenColumnas]);
+  useEffect(() => { localStorage.setItem("rubros_personalizados", JSON.stringify(rubrosPersonalizados)); }, [rubrosPersonalizados]);
+  useEffect(() => { localStorage.setItem("asignaciones_columnas_rubros", JSON.stringify(asignacionesColumnas)); }, [asignacionesColumnas]);
   useEffect(() => { setPaginaActual(1); }, [busqueda, departamentoFiltro, puestoFiltro, estadoFiltro, periodoId]);
 
   useEffect(() => {
@@ -297,7 +315,6 @@ export default function Incidencias() {
     finally { setGuardando(false); }
   };
 
-  // 🔥 NUEVO: Guardar ajustes de un rubro específico
   const guardarAjustesRubro = async (rubro, ajustes) => {
     setGuardando(true);
     try {
@@ -361,7 +378,6 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, puestoFiltro, estadoFiltro]);
 
-  // 🔥 TOTALES POR RUBRO (para la tabla y botones)
   const totalesPorRubro = useMemo(() => {
     const totales = {};
     rubrosActivos.forEach(rubro => {
@@ -443,7 +459,6 @@ export default function Incidencias() {
   return (
     <Layout>
       <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-white overflow-auto p-6" : "space-y-6"}>
-        {/* HEADER */}
         <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl relative overflow-hidden">
           <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0zNiAxOGMtOS45NDEgMC0xOCA4LjA1OS0xOCAxOHM4LjA1OSAxOCAxOCAxOCAxOC04LjA1OSAxOC0xOC04LjA1OS0xOC0xOC0xOHptMCAzMmMtNy43MzIgMC0xNC02LjI2OC0xNC0xNHM2LjI2OC0xNCAxNC0xNCAxNCA2LjI2OCAxNCAxNC02LjI2OCAxNC0xNCAxNHoiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjIiLz48L2c+PC9zdmc+')] opacity-20"></div>
           <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -463,6 +478,11 @@ export default function Incidencias() {
               <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
                 ⚙️ <span className="hidden sm:inline">Columnas</span>
               </button>
+              {vistaActual === "rrhh" && (
+                <button onClick={() => setModalConfigRubros(true)} className="bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
+                  🏷️ <span className="hidden sm:inline">Rubros</span>
+                </button>
+              )}
               {pantallaCompleta && (
                 <button onClick={() => setPantallaCompleta(false)} className="bg-white text-indigo-700 px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition hover:bg-indigo-50">
                   ✕ Salir
@@ -472,7 +492,6 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* SELECTOR DE PERÍODO */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex flex-col md:flex-row items-center gap-4">
             <div className="flex items-center gap-3">
@@ -493,7 +512,6 @@ export default function Incidencias() {
           </div>
         </div>
 
-        {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           <KpiModerno titulo="Empleados" valor={kpis.total} icono="👥" color="blue" />
           <KpiModerno titulo="Con Captura" valor={kpis.conCaptura} icono="📝" color="indigo" />
@@ -503,7 +521,6 @@ export default function Incidencias() {
           <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
         </div>
 
-        {/* TABS + BOTONES DE RUBROS COMPACTOS */}
         <div className="space-y-3">
           <div className="flex gap-2 flex-wrap">
             <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"}`}>
@@ -514,7 +531,6 @@ export default function Incidencias() {
             </button>
           </div>
 
-          {/* 🔥 BOTONES COMPACTOS DE RUBROS (solo para RH) */}
           {vistaActual === "rrhh" && rubrosActivos.length > 0 && (
             <div className="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-2xl p-4">
               <div className="flex items-center justify-between mb-3">
@@ -532,7 +548,7 @@ export default function Incidencias() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {rubrosActivos.map(rubro => {
-                  const config = configRubros[rubro];
+                  const config = todosLosRubros[rubro];
                   const total = totalesPorRubro[rubro] || 0;
                   const numColumnas = columnasPorRubro[rubro].length;
                   return (
@@ -557,7 +573,6 @@ export default function Incidencias() {
           )}
         </div>
 
-        {/* FILTROS */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
           <div className="grid md:grid-cols-4 gap-3">
             <div className="relative md:col-span-2">
@@ -622,7 +637,6 @@ export default function Incidencias() {
           )}
         </div>
 
-        {/* 🔥 TABLA PRINCIPAL CON COLUMNAS RESUMEN POR RUBRO */}
         <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col ${pantallaCompleta ? "h-[calc(100vh-120px)]" : "max-h-[75vh]"}`}>
           <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
             <div className="flex items-center gap-3">
@@ -644,9 +658,8 @@ export default function Incidencias() {
                   <th className="p-4 font-bold text-slate-700">💼 Puesto</th>
                   <th className="p-4 font-bold text-slate-700">Estado</th>
                   
-                  {/* 🔥 COLUMNAS RESUMEN POR RUBRO */}
                   {rubrosActivos.map(rubro => {
-                    const config = configRubros[rubro];
+                    const config = todosLosRubros[rubro];
                     return (
                       <th key={rubro} className={`p-4 text-right font-bold ${config.bgLight} ${config.text}`}>
                         <button
@@ -727,9 +740,8 @@ export default function Incidencias() {
                             </span>
                           </td>
                           
-                          {/* 🔥 COLUMNAS RESUMEN POR RUBRO (suma de todas las columnas del rubro) */}
                           {rubrosActivos.map(rubro => {
-                            const config = configRubros[rubro];
+                            const config = todosLosRubros[rubro];
                             const columnas = columnasPorRubro[rubro];
                             const totalRubro = columns => {
                               if (!incidencia) return 0;
@@ -768,21 +780,17 @@ export default function Incidencias() {
                 )}
               </tbody>
               
-              {/* FOOTER CON TOTALES POR RUBRO */}
               {rubrosActivos.length > 0 && registrosFiltrados.length > 0 && (
                 <tfoot className="bg-slate-800 text-white sticky bottom-0 z-20 border-t-2 border-slate-600">
                   <tr>
                     <td colSpan={5} className="p-3 font-bold text-sm text-right">
                       TOTALES ({registrosFiltrados.length} empleados)
                     </td>
-                    {rubrosActivos.map(rubro => {
-                      const config = configRubros[rubro];
-                      return (
-                        <td key={rubro} className={`p-3 text-right font-bold text-yellow-300`}>
-                          {formatearMoneda(totalesPorRubro[rubro] || 0)}
-                        </td>
-                      );
-                    })}
+                    {rubrosActivos.map(rubro => (
+                      <td key={rubro} className="p-3 text-right font-bold text-yellow-300">
+                        {formatearMoneda(totalesPorRubro[rubro] || 0)}
+                      </td>
+                    ))}
                     {vistaActual === "rrhh" && <td></td>}
                     <td></td>
                   </tr>
@@ -803,15 +811,26 @@ export default function Incidencias() {
         </div>
       </div>
 
-      {/* BOTÓN VOLVER ARRIBA */}
       {mostrarBotonArriba && !pantallaCompleta && (
         <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="fixed bottom-6 right-6 bg-slate-800 hover:bg-slate-900 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl transition-all z-40 opacity-80 hover:opacity-100 hover:scale-110 animate-fade-in" title="Volver arriba">↑</button>
       )}
 
-      {/* 🔥 MODAL DE GESTIÓN DE RUBRO */}
+      {modalConfigRubros && (
+        <ModalConfigRubros
+          todosLosRubros={todosLosRubros}
+          rubrosPersonalizados={rubrosPersonalizados}
+          setRubrosPersonalizados={setRubrosPersonalizados}
+          columnasDelMapeo={columnasDelMapeo}
+          asignacionesColumnas={asignacionesColumnas}
+          setAsignacionesColumnas={setAsignacionesColumnas}
+          onCerrar={() => setModalConfigRubros(false)}
+        />
+      )}
+
       {modalRubro.abierto && modalRubro.rubro && (
         <ModalRubro
           rubro={modalRubro.rubro}
+          config={todosLosRubros[modalRubro.rubro]}
           columnas={columnasPorRubro[modalRubro.rubro]}
           registros={registros}
           todosLosEmpleados={empleados}
@@ -892,9 +911,234 @@ export default function Incidencias() {
   );
 }
 
-// 🔥 MODAL DE GESTIÓN DE RUBRO (Bonos, Deducciones, etc.)
-function ModalRubro({ rubro, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
-  const config = configRubros[rubro];
+function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, onCerrar }) {
+  const [nuevoRubro, setNuevoRubro] = useState({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro" });
+  const [mostrarFormNuevo, setMostrarFormNuevo] = useState(false);
+
+  const coloresDisponibles = [
+    { valor: "emerald", nombre: "Verde", bg: "bg-emerald-500" },
+    { valor: "red", nombre: "Rojo", bg: "bg-red-500" },
+    { valor: "amber", nombre: "Ámbar", bg: "bg-amber-500" },
+    { valor: "blue", nombre: "Azul", bg: "bg-blue-500" },
+    { valor: "indigo", nombre: "Índigo", bg: "bg-indigo-500" },
+    { valor: "purple", nombre: "Púrpura", bg: "bg-purple-500" },
+    { valor: "pink", nombre: "Rosa", bg: "bg-pink-500" },
+    { valor: "teal", nombre: "Teal", bg: "bg-teal-500" },
+    { valor: "slate", nombre: "Gris", bg: "bg-slate-500" },
+  ];
+
+  const crearRubro = () => {
+    if (!nuevoRubro.clave || !nuevoRubro.titulo) {
+      alert("Completa la clave y el título del rubro");
+      return;
+    }
+    if (todosLosRubros[nuevoRubro.clave]) {
+      alert("Ya existe un rubro con esa clave");
+      return;
+    }
+
+    const color = nuevoRubro.color;
+    const nuevoRubroObj = {
+      titulo: nuevoRubro.titulo,
+      icono: nuevoRubro.icono,
+      color,
+      bgLight: `bg-${color}-50`,
+      text: `text-${color}-700`,
+      border: `border-${color}-200`,
+      tipo: nuevoRubro.tipo,
+    };
+
+    setRubrosPersonalizados(prev => ({ ...prev, [nuevoRubro.clave]: nuevoRubroObj }));
+    setNuevoRubro({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro" });
+    setMostrarFormNuevo(false);
+    alert(`✅ Rubro "${nuevoRubro.titulo}" creado exitosamente`);
+  };
+
+  const eliminarRubro = (clave) => {
+    if (rubrosIniciales[clave]) {
+      alert("No puedes eliminar los rubros predeterminados");
+      return;
+    }
+    if (!window.confirm(`¿Eliminar el rubro "${todosLosRubros[clave].titulo}"? Las columnas asignadas volverán a "Otros"`)) return;
+
+    const nuevasAsignaciones = { ...asignacionesColumnas };
+    Object.keys(nuevasAsignaciones).forEach(col => {
+      if (nuevasAsignaciones[col] === clave) {
+        nuevasAsignaciones[col] = 'otros';
+      }
+    });
+    setAsignacionesColumnas(nuevasAsignaciones);
+
+    const nuevosRubros = { ...rubrosPersonalizados };
+    delete nuevosRubros[clave];
+    setRubrosPersonalizados(nuevosRubros);
+  };
+
+  const reasignarColumna = (campo, nuevoRubro) => {
+    setAsignacionesColumnas(prev => ({ ...prev, [campo]: nuevoRubro }));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] flex flex-col">
+        <div className="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-4 rounded-t-2xl">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <span className="text-2xl">🏷️</span> Configuración de Rubros
+              </h3>
+              <p className="text-xs text-white/90 mt-1">
+                Crea nuevos rubros, reasigna columnas entre rubros y valida las matemáticas
+              </p>
+            </div>
+            <button onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4">
+            {!mostrarFormNuevo ? (
+              <button onClick={() => setMostrarFormNuevo(true)} className="w-full text-center py-3 text-slate-600 hover:text-slate-800 font-semibold">
+                + Crear Nuevo Rubro Personalizado
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <h4 className="font-bold text-slate-800">Crear Nuevo Rubro</h4>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Clave única (sin espacios)</label>
+                    <input
+                      type="text"
+                      value={nuevoRubro.clave}
+                      onChange={(e) => setNuevoRubro({ ...nuevoRubro, clave: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                      placeholder="ej: viaticos"
+                      className="w-full border rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Título del rubro</label>
+                    <input
+                      type="text"
+                      value={nuevoRubro.titulo}
+                      onChange={(e) => setNuevoRubro({ ...nuevoRubro, titulo: e.target.value })}
+                      placeholder="ej: Viáticos"
+                      className="w-full border rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Ícono (emoji)</label>
+                    <input
+                      type="text"
+                      value={nuevoRubro.icono}
+                      onChange={(e) => setNuevoRubro({ ...nuevoRubro, icono: e.target.value })}
+                      className="w-full border rounded-lg p-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo</label>
+                    <select
+                      value={nuevoRubro.tipo}
+                      onChange={(e) => setNuevoRubro({ ...nuevoRubro, tipo: e.target.value })}
+                      className="w-full border rounded-lg p-2 text-sm"
+                    >
+                      <option value="positivo">💰 Positivo (suma al neto)</option>
+                      <option value="negativo">💸 Negativo (resta del neto)</option>
+                      <option value="neutro">📋 Neutro (informativo)</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Color</label>
+                    <div className="flex flex-wrap gap-2">
+                      {coloresDisponibles.map(c => (
+                        <button
+                          key={c.valor}
+                          onClick={() => setNuevoRubro({ ...nuevoRubro, color: c.valor })}
+                          className={`${c.bg} w-8 h-8 rounded-lg border-2 ${nuevoRubro.color === c.valor ? 'border-slate-800' : 'border-transparent'} hover:border-slate-400`}
+                          title={c.nombre}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={crearRubro} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                    ✅ Crear Rubro
+                  </button>
+                  <button onClick={() => { setMostrarFormNuevo(false); setNuevoRubro({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro" }); }} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h4 className="font-bold text-slate-800 mb-3">Rubros Existentes ({Object.keys(todosLosRubros).length})</h4>
+            <div className="space-y-3">
+              {Object.entries(todosLosRubros).map(([clave, config]) => {
+                const columnasDelRubro = columnasDelMapeo.filter(c => (asignacionesColumnas[c.campo] || clasificarRubroInicial(c.campo)) === clave);
+                const esPredeterminado = rubrosIniciales[clave];
+
+                return (
+                  <div key={clave} className={`${config.bgLight} border-2 ${config.border} rounded-xl p-4`}>
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">{config.icono}</span>
+                        <div>
+                          <div className={`font-bold ${config.text}`}>{config.titulo}</div>
+                          <div className="text-xs text-slate-600">
+                            {columnasDelRubro.length} columnas
+                            {!esPredeterminado && <span className="ml-2 bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Personalizado</span>}
+                          </div>
+                        </div>
+                      </div>
+                      {!esPredeterminado && (
+                        <button onClick={() => eliminarRubro(clave)} className="text-red-600 hover:text-red-800 text-xs font-bold">
+                          🗑️ Eliminar
+                        </button>
+                      )}
+                    </div>
+
+                    {columnasDelRubro.length > 0 && (
+                      <div className="space-y-2 mt-3">
+                        <div className="text-xs font-bold text-slate-700">Columnas asignadas:</div>
+                        {columnasDelRubro.map(col => (
+                          <div key={col.campo} className="bg-white rounded-lg p-2 flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="text-sm font-semibold text-slate-800">{col.etiqueta}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{col.campo}</div>
+                            </div>
+                            <select
+                              value={asignacionesColumnas[col.campo] || clasificarRubroInicial(col.campo)}
+                              onChange={(e) => reasignarColumna(col.campo, e.target.value)}
+                              className="border border-slate-300 rounded px-2 py-1 text-xs"
+                            >
+                              {Object.entries(todosLosRubros).map(([k, v]) => (
+                                <option key={k} value={k}>{v.icono} {v.titulo}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-end">
+          <button onClick={onCerrar} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
   const [filtroDepto, setFiltroDepto] = useState("TODOS");
   const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
   const [busquedaInterna, setBusquedaInterna] = useState("");
@@ -1169,7 +1413,7 @@ function ModalRubro({ rubro, columnas, registros, todosLosEmpleados, guardando, 
           </div>
           <div className="flex gap-2">
             <button onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100">Cancelar</button>
-            <button onClick={handleGuardar} disabled={guardando} className={`bg-${config.color}-600 hover:bg-${config.color}-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center gap-2`}>
+            <button onClick={handleGuardar} disabled={guardando} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center gap-2">
               {guardando ? "⏳ Guardando..." : `💾 Guardar ${config.titulo}`}
             </button>
           </div>
@@ -1224,110 +1468,4 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
               {columnas.map(col => (
                 <div key={col.campo} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                   <label className="block text-xs font-bold text-blue-800 mb-1">{col.etiqueta}</label>
-                  <input type="number" step="0.01" min="0" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 text-center">⚠️ RH no ha habilitado campos para captura.</div>
-          )}
-        </div>
-        <div className="border-t px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
-          <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
-          <button type="submit" disabled={guardando || columnas.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-blue-300">{guardando ? "Guardando..." : "📝 Enviar a RH"}</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
-  const { empleado, incidencia } = registro;
-  const [valores, setValores] = useState(() => {
-    const init = {};
-    columnas.forEach(col => { init[col.campo] = incidencia?.[col.campo] ?? 0; });
-    return init;
-  });
-  const [estadoFinal, setEstadoFinal] = useState(incidencia?.estado || "pendiente");
-  const [comentario, setComentario] = useState(incidencia?.comentarios_rrhh || "");
-  const columnasSup = columnas.filter(c => c.permite_supervisor);
-  const columnasRHOnly = columnas.filter(c => !c.permite_supervisor);
-  const totalSumas = columnas.filter(c => esCampoMonetario(c.campo) && !esDeduccion(c.campo)).reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
-  const totalRestas = columnas.filter(c => esCampoMonetario(c.campo) && esDeduccion(c.campo)).reduce((acc, c) => acc + Number(valores[c.campo] || 0), 0);
-  const neto = totalSumas - totalRestas;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-      <form onSubmit={(e) => { e.preventDefault(); onGuardar(incidencia?.id, valores, estadoFinal, comentario); }} className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl max-h-[95vh] flex flex-col scroll-smooth">
-        <div className="bg-gradient-to-r from-purple-500 to-purple-700 text-white px-6 py-4 rounded-t-2xl">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-lg font-bold">🔍 Validación de RH</h3>
-              <p className="text-xs text-white/90 mt-0.5"><strong>{empleado.nombre_completo}</strong> · {empleado.departamentos?.nombre} · {empleado.puestos?.nombre}</p>
-            </div>
-            <button type="button" onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          <div className="grid grid-cols-3 gap-2">
-            {["pendiente", "aprobado", "rechazado"].map(est => (
-              <button key={est} type="button" onClick={() => setEstadoFinal(est)} className={`p-3 rounded-xl font-bold text-sm border-2 transition ${estadoFinal === est ? (est === "aprobado" ? "bg-emerald-100 border-emerald-500 text-emerald-800" : est === "rechazado" ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-800") : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}>
-                {est === "pendiente" ? "⏳ Pendiente" : est === "aprobado" ? "✅ Aprobar" : "❌ Rechazar"}
-              </button>
-            ))}
-          </div>
-          {columnasSup.length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <h4 className="font-bold text-blue-900 mb-3 flex items-center gap-2">👷 Propuesta del Supervisor ({columnasSup.length})</h4>
-              <div className="grid md:grid-cols-3 gap-3">
-                {columnasSup.map(col => (
-                  <div key={col.campo}>
-                    <label className="block text-xs font-semibold text-blue-800 mb-1">{col.etiqueta}</label>
-                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-blue-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-blue-500" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {columnasRHOnly.length > 0 && (
-            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-              <h4 className="font-bold text-purple-900 mb-3">🔒 Exclusivos de RH ({columnasRHOnly.length})</h4>
-              <div className="grid md:grid-cols-3 gap-3">
-                {columnasRHOnly.map(col => (
-                  <div key={col.campo}>
-                    <label className="block text-xs font-semibold text-purple-800 mb-1">{col.etiqueta}</label>
-                    <input type="number" step="0.01" value={valores[col.campo] ?? 0} onChange={e => setValores(prev => ({ ...prev, [col.campo]: e.target.value }))} className="w-full border border-purple-300 p-2 rounded text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-purple-500" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <label className="block text-sm font-bold text-slate-800 mb-1">💬 Observaciones de RH</label>
-            <textarea rows="3" value={comentario} onChange={e => setComentario(e.target.value)} placeholder="Ej: Ajustado según reloj checador..." className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
-          </div>
-        </div>
-        <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100 px-6 py-4 rounded-b-2xl">
-          <div className="grid md:grid-cols-3 gap-4 mb-4">
-            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
-              <div className="text-xs text-slate-500 uppercase font-semibold">Percepciones</div>
-              <div className="text-xl font-bold text-emerald-600">+ ${totalSumas.toFixed(2)}</div>
-            </div>
-            <div className="text-center bg-white rounded-xl p-3 border border-slate-200">
-              <div className="text-xs text-slate-500 uppercase font-semibold">Deducciones</div>
-              <div className="text-xl font-bold text-red-600">- ${totalRestas.toFixed(2)}</div>
-            </div>
-            <div className="text-center bg-white rounded-xl p-3 shadow-md border-2 border-purple-500">
-              <div className="text-xs text-purple-600 uppercase font-bold">Neto</div>
-              <div className="text-2xl font-black text-purple-900">${neto.toFixed(2)}</div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={onCerrar} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
-            <button type="submit" disabled={guardando} className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:bg-purple-300">{guardando ? "Guardando..." : `💾 Guardar como ${estadoFinal.toUpperCase()}`}</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  );
-}
+                  <input type="number" step="0.01" min="0" value={valores[col.campo]

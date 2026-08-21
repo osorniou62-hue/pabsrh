@@ -19,15 +19,10 @@ const limpiarPayload = (payload) => {
 const formatearValor = (valor, tipoDato) => {
   const num = Number(valor || 0);
   switch (tipoDato) {
-    case 'dinero':
-      return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(num);
-    case 'horas':
-      return `${num.toFixed(2)}h`;
-    case 'porcentaje':
-      return `${num.toFixed(2)}%`;
-    case 'entero':
-    default:
-      return Math.round(num).toString();
+    case 'dinero': return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(num);
+    case 'horas': return `${num.toFixed(2)}h`;
+    case 'porcentaje': return `${num.toFixed(2)}%`;
+    case 'entero': default: return Math.round(num).toString();
   }
 };
 
@@ -110,8 +105,7 @@ export default function Incidencias() {
         const campoFinal = info.esManual ? info.campoManual : info.campoDestino;
         if (campoFinal) {
           validas.push({
-            original: colOriginal,
-            campo: campoFinal,
+            original: colOriginal, campo: campoFinal,
             etiqueta: formatearNombreColumna(campoFinal),
             permite_supervisor: permisosSupervisor[campoFinal] || false,
             rubro: asignacionesColumnas[campoFinal] || clasificarRubroInicial(campoFinal),
@@ -330,7 +324,6 @@ export default function Incidencias() {
     return registrosFiltrados.slice(i, i + ITEMS_POR_PAGINA);
   }, [registrosFiltrados, paginaActual]);
 
-  // 🔥 CORREGIDO: Separadores sin tbody anidados
   const registrosConSeparadores = useMemo(() => {
     const resultado = [];
     registrosPaginados.forEach((r, i) => {
@@ -404,17 +397,10 @@ export default function Incidencias() {
                 <button onClick={() => setPantallaCompleta(false)} className="bg-white text-indigo-700 px-4 py-2.5 rounded-xl font-semibold text-sm flex-shrink-0">✕ Salir</button>
               )}
             </div>
-            
             <div className="flex flex-wrap gap-2 pt-3 border-t border-white/20">
-              <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
-                🔒 Permisos
-              </button>
-              <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
-                ⚙️ Columnas
-              </button>
-              <button onClick={() => setModalConfigRubros(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">
-                🏷️ Rubros
-              </button>
+              <button onClick={() => setModalPermisos(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">🔒 Permisos</button>
+              <button onClick={() => setModalConfigColumnas(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">⚙️ Columnas</button>
+              <button onClick={() => setModalConfigRubros(true)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 border border-white/20 transition">🏷️ Rubros</button>
             </div>
           </div>
         </div>
@@ -450,12 +436,8 @@ export default function Incidencias() {
 
         <div className="space-y-3">
           <div className="flex gap-2 flex-wrap">
-            <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"}`}>
-              👷 Supervisor
-            </button>
-            <button onClick={() => setVistaActual("rrhh")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border-2 ${vistaActual === "rrhh" ? "bg-purple-600 text-white border-purple-600 shadow-md" : "bg-white text-slate-600 border-slate-200 hover:border-purple-300"}`}>
-              🔍 Recursos Humanos
-            </button>
+            <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"}`}>👷 Supervisor</button>
+            <button onClick={() => setVistaActual("rrhh")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border-2 ${vistaActual === "rrhh" ? "bg-purple-600 text-white border-purple-600 shadow-md" : "bg-white text-slate-600 border-slate-200 hover:border-purple-300"}`}>🔍 Recursos Humanos</button>
           </div>
 
           {vistaActual === "rrhh" && rubrosActivos.length > 0 && (
@@ -611,7 +593,6 @@ export default function Incidencias() {
                       );
                     }
                     
-                    // Empleado
                     const { empleado, incidencia } = item.data;
                     const estado = incidencia?.estado || "sin_captura";
                     const estCfg = {
@@ -787,6 +768,390 @@ export default function Incidencias() {
   );
 }
 
+// 🔥 MODAL RUBRO RE DISEÑADO: Más compacto, con pantalla completa y mejor navegación
+function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, tiposDatoColumnas, onGuardar, onCerrar }) {
+  const [filtroDepto, setFiltroDepto] = useState("TODOS");
+  const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
+  const [busquedaInt, setBusquedaInt] = useState("");
+  const [vistaComparativa, setVistaComparativa] = useState(false);
+  const [pantallaCompletaModal, setPantallaCompletaModal] = useState(false);
+  const [filtrosColapsados, setFiltrosColapsados] = useState(false);
+  const tipoDatoRubro = config.tipoDato || 'entero';
+  
+  const [valoresRH, setValoresRH] = useState(() => {
+    const init = {};
+    registros.forEach(r => {
+      if (r.incidencia) {
+        init[r.empleado.id] = {};
+        columnas.forEach(c => { init[r.empleado.id][c.campo] = r.incidencia[c.campo] ?? 0; });
+      }
+    });
+    return init;
+  });
+
+  const deptosUnicos = useMemo(() => ["TODOS", ...new Set(todosLosEmpleados.map(e => e.departamentos?.nombre || "Sin Departamento"))].sort(), [todosLosEmpleados]);
+  const puestosUnicos = useMemo(() => {
+    const emp = filtroDepto === "TODOS" ? todosLosEmpleados : todosLosEmpleados.filter(e => (e.departamentos?.nombre || "Sin Departamento") === filtroDepto);
+    return ["TODOS", ...new Set(emp.map(e => e.puestos?.nombre || "Sin Puesto"))].sort();
+  }, [todosLosEmpleados, filtroDepto]);
+
+  const regsFiltrados = useMemo(() => {
+    const t = busquedaInt.toLowerCase().trim();
+    return registros.filter(r => {
+      const e = r.empleado;
+      const ct = !t || [e.nombre_completo, e.numero_empleado, e.puestos?.nombre].some(c => String(c || "").toLowerCase().includes(t));
+      const cd = filtroDepto === "TODOS" || (e.departamentos?.nombre || "Sin Departamento") === filtroDepto;
+      const cp = filtroPuesto === "TODOS" || (e.puestos?.nombre || "Sin Puesto") === filtroPuesto;
+      return ct && cd && cp;
+    });
+  }, [registros, filtroDepto, filtroPuesto, busquedaInt]);
+
+  const totalesComparativos = useMemo(() => {
+    const sup = {}, rh = {}, diff = {};
+    let totalSup = 0, totalRh = 0;
+    columnas.forEach(c => { sup[c.campo] = 0; rh[c.campo] = 0; diff[c.campo] = 0; });
+    regsFiltrados.forEach(r => {
+      if (r.incidencia) {
+        columnas.forEach(c => {
+          const vSup = Number(r.incidencia[c.campo] || 0);
+          const vRH = Number(valoresRH[r.empleado.id]?.[c.campo] || 0);
+          sup[c.campo] += vSup; rh[c.campo] += vRH; diff[c.campo] += (vRH - vSup);
+          totalSup += vSup; totalRh += vRH;
+        });
+      }
+    });
+    return { sup, rh, diff, totalSup, totalRh, diffTotal: totalRh - totalSup };
+  }, [valoresRH, columnas, regsFiltrados]);
+
+  const conteoDiferencias = useMemo(() => {
+    const conteo = { conDif: 0, sinDif: 0, sinCaptura: 0 };
+    regsFiltrados.forEach(r => {
+      if (!r.incidencia) { conteo.sinCaptura++; return; }
+      const tieneDif = columnas.some(c => {
+        const vSup = Number(r.incidencia[c.campo] || 0);
+        const vRH = Number(valoresRH[r.empleado.id]?.[c.campo] || 0);
+        return vSup !== vRH;
+      });
+      if (tieneDif) conteo.conDif++; else conteo.sinDif++;
+    });
+    return conteo;
+  }, [regsFiltrados, columnas, valoresRH]);
+
+  const guardar = () => {
+    const ajustes = regsFiltrados.filter(r => r.incidencia).map(r => ({ incidenciaId: r.incidencia.id, valores: valoresRH[r.empleado.id] || {} }));
+    if (ajustes.length === 0) { alert("No hay registros"); return; }
+    if (!confirm(`¿Guardar ${ajustes.length} ajustes?`)) return;
+    onGuardar(ajustes);
+  };
+
+  const aplicarTodos = (campo, valor) => {
+    const nv = { ...valoresRH };
+    regsFiltrados.forEach(r => {
+      if (r.incidencia) nv[r.empleado.id] = { ...nv[r.empleado.id], [campo]: valor };
+    });
+    setValoresRH(nv);
+  };
+
+  const aceptarSupervisorTodos = (campo) => {
+    const nv = { ...valoresRH };
+    regsFiltrados.forEach(r => {
+      if (r.incidencia) {
+        const vSup = Number(r.incidencia[campo] || 0);
+        nv[r.empleado.id] = { ...nv[r.empleado.id], [campo]: vSup };
+      }
+    });
+    setValoresRH(nv);
+  };
+
+  // 🔥 Layout dinámico según pantalla completa
+  const contenedorClase = pantallaCompletaModal
+    ? "fixed inset-0 bg-white z-50 flex flex-col"
+    : "fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm";
+  
+  const modalClase = pantallaCompletaModal
+    ? "w-full h-full flex flex-col"
+    : "bg-white rounded-2xl shadow-2xl max-w-[95vw] w-full max-h-[95vh] flex flex-col";
+
+  return (
+    <div className={contenedorClase}>
+      <div className={modalClase}>
+        {/* 🔥 HEADER COMPACTO */}
+        <div className={`${config.bgLight} border-b ${config.border} px-4 py-3 flex-shrink-0`}>
+          <div className="flex justify-between items-start gap-3">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <span className="text-3xl flex-shrink-0">{config.icono}</span>
+              <div className="min-w-0">
+                <h3 className={`text-lg font-bold ${config.text} truncate`}>
+                  {config.titulo}
+                  <span className="text-xs bg-white/60 px-2 py-0.5 rounded font-normal ml-2">
+                    {tiposDatoConfig[tipoDatoRubro]?.icono} {tiposDatoConfig[tipoDatoRubro]?.label}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  {regsFiltrados.filter(r => r.incidencia).length} empleados · {columnas.length} columnas
+                  {conteoDiferencias.conDif > 0 && (
+                    <span className="ml-2 bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">⚡ {conteoDiferencias.conDif} con ajustes</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {/* 🔥 NUEVO: Botones de control */}
+              <button
+                onClick={() => setFiltrosColapsados(!filtrosColapsados)}
+                className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200"
+                title={filtrosColapsados ? "Mostrar filtros" : "Ocultar filtros"}
+              >
+                {filtrosColapsados ? "🔽" : "🔼"}
+              </button>
+              <button
+                onClick={() => setVistaComparativa(!vistaComparativa)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                  vistaComparativa ? 'bg-slate-800 text-white border-slate-800' : 'bg-white/70 hover:bg-white text-slate-700 border-slate-200'
+                }`}
+                title="Vista comparativa Supervisor vs RH"
+              >
+                👁️ {vistaComparativa ? "Ocultar" : "Comparar"}
+              </button>
+              <button
+                onClick={() => setPantallaCompletaModal(!pantallaCompletaModal)}
+                className="bg-white/70 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200"
+                title={pantallaCompletaModal ? "Salir de pantalla completa" : "Pantalla completa"}
+              >
+                {pantallaCompletaModal ? "🗗" : "⛶"}
+              </button>
+              <button onClick={onCerrar} className="bg-white/70 hover:bg-white text-slate-700 w-8 h-8 rounded-lg font-bold flex items-center justify-center border border-slate-200">✕</button>
+            </div>
+          </div>
+
+          {/* 🔥 PANEL RESUMEN COMPACTO (4 tarjetas pequeñas en línea) */}
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            <div className="bg-white/70 rounded-lg px-3 py-2 border border-white">
+              <div className="text-[9px] text-slate-600 font-semibold uppercase">👷 Supervisor</div>
+              <div className="text-sm font-black text-blue-700 truncate">{formatearValor(totalesComparativos.totalSup, tipoDatoRubro)}</div>
+            </div>
+            <div className="bg-white/70 rounded-lg px-3 py-2 border border-white">
+              <div className="text-[9px] text-slate-600 font-semibold uppercase">🔍 RH</div>
+              <div className="text-sm font-black text-purple-700 truncate">{formatearValor(totalesComparativos.totalRh, tipoDatoRubro)}</div>
+            </div>
+            <div className="bg-white/70 rounded-lg px-3 py-2 border border-white">
+              <div className="text-[9px] text-slate-600 font-semibold uppercase">📊 Diferencia</div>
+              <div className={`text-sm font-black truncate ${totalesComparativos.diffTotal > 0 ? 'text-emerald-700' : totalesComparativos.diffTotal < 0 ? 'text-red-700' : 'text-slate-700'}`}>
+                {totalesComparativos.diffTotal > 0 ? '+' : ''}{formatearValor(totalesComparativos.diffTotal, tipoDatoRubro)}
+              </div>
+            </div>
+            <div className="bg-white/70 rounded-lg px-3 py-2 border border-white">
+              <div className="text-[9px] text-slate-600 font-semibold uppercase">📈 Estado</div>
+              <div className="text-sm font-black text-slate-800 flex items-center gap-1 truncate">
+                {conteoDiferencias.sinCaptura > 0 ? (
+                  <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">{conteoDiferencias.sinCaptura} sin captura</span>
+                ) : conteoDiferencias.conDif === 0 ? (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">✓ Todo OK</span>
+                ) : (
+                  <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">⚡ {conteoDiferencias.conDif} ajustes</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 🔥 FILTROS (colapsables) */}
+          {!filtrosColapsados && (
+            <div className="mt-3 space-y-2">
+              <div className="relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
+                <input 
+                  type="text" 
+                  placeholder="Buscar empleado..." 
+                  value={busquedaInt} 
+                  onChange={(e) => setBusquedaInt(e.target.value)} 
+                  className="w-full pl-8 pr-3 py-1.5 border rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500" 
+                />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <span className="text-[10px] font-bold text-slate-500 self-center mr-1">🏢</span>
+                {deptosUnicos.slice(0, 8).map(d => {
+                  const count = d === "TODOS" ? regsFiltrados.length : regsFiltrados.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === d).length;
+                  const activo = filtroDepto === d;
+                  return (
+                    <button key={d} onClick={() => { setFiltroDepto(d); setFiltroPuesto("TODOS"); }} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${activo ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300"}`}>
+                      {d === "TODOS" ? "Todos" : d} <span className={`ml-0.5 px-1 py-0 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
+                    </button>
+                  );
+                })}
+                {deptosUnicos.length > 8 && <span className="text-[10px] text-slate-400 self-center">+{deptosUnicos.length - 8} más</span>}
+              </div>
+              {filtroDepto !== "TODOS" && (
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-[10px] font-bold text-slate-500 self-center mr-1">💼</span>
+                  {puestosUnicos.slice(0, 10).map(p => {
+                    const count = p === "TODOS" ? regsFiltrados.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === filtroDepto).length : regsFiltrados.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === filtroDepto && (r.empleado.puestos?.nombre || "Sin Puesto") === p).length;
+                    const activo = filtroPuesto === p;
+                    return (
+                      <button key={p} onClick={() => setFiltroPuesto(p)} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${activo ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-700 border-slate-200 hover:border-blue-300"}`}>
+                        {p === "TODOS" ? "Todos" : p} <span className={`ml-0.5 px-1 py-0 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 🔥 TABLA CON MEJOR VISIBILIDAD */}
+        <div className="flex-1 overflow-auto bg-white">
+          {regsFiltrados.filter(r => r.incidencia).length === 0 ? (
+            <div className="p-12 text-center"><div className="text-6xl mb-3">📭</div><div className="text-slate-500 font-semibold">Sin registros en este filtro</div></div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead className="bg-slate-200 sticky top-0 z-10 shadow-md">
+                <tr>
+                  <th className="p-2 text-left font-bold text-slate-800 sticky left-0 bg-slate-200 z-20 border-b-2 border-slate-400 min-w-[140px]">Empleado</th>
+                  <th className="p-2 text-left font-bold text-slate-800 border-b-2 border-slate-400 min-w-[100px]">🏢 Depto</th>
+                  <th className="p-2 text-left font-bold text-slate-800 border-b-2 border-slate-400 min-w-[100px]">💼 Puesto</th>
+                  {columnas.map(c => {
+                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                    const tCfg = tiposDatoConfig[tipoDatoCol];
+                    return (
+                      <th key={c.campo} className="p-2 text-center font-bold text-slate-800 border-b-2 border-slate-400 min-w-[120px] bg-white">
+                        <div className="text-[11px] flex items-center justify-center gap-1 font-bold">
+                          <span>{tCfg?.icono}</span>
+                          <span className="truncate">{c.etiqueta}</span>
+                        </div>
+                        <div className="flex gap-1 justify-center mt-1">
+                          <button onClick={() => { const v = prompt(`Aplicar a todos para "${c.etiqueta}":`, "0"); if (v !== null) aplicarTodos(c.campo, Number(v) || 0); }} className="text-[9px] text-blue-600 hover:text-blue-800 underline font-semibold">todos</button>
+                          {vistaComparativa && (
+                            <button onClick={() => aceptarSupervisorTodos(c.campo)} className="text-[9px] text-emerald-600 hover:text-emerald-800 underline font-bold">=Sup</button>
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
+                  <th className="p-2 text-center font-bold text-purple-900 bg-purple-100 sticky right-0 z-10 border-b-2 border-slate-400 min-w-[100px]">Total RH</th>
+                </tr>
+              </thead>
+              <tbody>
+                {regsFiltrados.filter(r => r.incidencia).map(({ empleado, incidencia }) => {
+                  const tieneDiferencias = columnas.some(c => {
+                    const vSup = Number(incidencia[c.campo] || 0);
+                    const vRH = Number(valoresRH[empleado.id]?.[c.campo] || 0);
+                    return vSup !== vRH;
+                  });
+                  
+                  return (
+                    <tr key={empleado.id} className={`border-b border-slate-200 hover:bg-blue-50/50 ${tieneDiferencias ? 'bg-amber-50/40' : ''}`}>
+                      <td className="p-2 sticky left-0 bg-white z-10 border-r border-slate-200">
+                        <div className="font-semibold text-[11px] text-slate-800 flex items-center gap-1">
+                          {empleado.nombre_completo}
+                          {tieneDiferencias && <span className="text-[9px] bg-amber-200 text-amber-900 px-1 rounded font-bold">⚡</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-500">#{empleado.numero_empleado}</div>
+                      </td>
+                      <td className="p-2 text-[11px]"><span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">{empleado.departamentos?.nombre || "Sin Depto"}</span></td>
+                      <td className="p-2 text-[11px]"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px]">{empleado.puestos?.nombre || "Sin Puesto"}</span></td>
+                      {columnas.map(c => {
+                        const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                        const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
+                        const vSup = Number(incidencia[c.campo] ?? 0);
+                        const vRH = Number(valoresRH[empleado.id]?.[c.campo] ?? 0);
+                        const diff = vRH - vSup;
+                        
+                        return (
+                          <td key={c.campo} className={`p-1.5 text-center ${diff !== 0 ? 'bg-amber-50' : 'bg-white'}`}>
+                            {vistaComparativa && (
+                              <div className="text-[10px] text-blue-700 font-bold mb-1 bg-blue-50 rounded px-1 py-0.5 border border-blue-200">
+                                👷 {formatearValor(vSup, tipoDatoCol)}
+                              </div>
+                            )}
+                            <input 
+                              type="number" 
+                              step={inputStep}
+                              value={vRH} 
+                              onChange={(e) => setValoresRH(prev => ({ ...prev, [empleado.id]: { ...prev[empleado.id], [c.campo]: e.target.value } }))} 
+                              className={`w-full border-2 rounded px-1.5 py-1 text-[11px] text-center font-bold outline-none focus:ring-2 focus:ring-blue-500 ${diff !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-300 bg-white'}`} 
+                            />
+                            {diff !== 0 && (
+                              <div className={`text-[9px] font-bold mt-0.5 ${diff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {diff > 0 ? '▲' : '▼'} {formatearValor(Math.abs(diff), tipoDatoCol)}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="p-2 text-center bg-purple-50 font-black text-purple-900 sticky right-0 z-10 border-l-2 border-purple-300">
+                        {formatearValor(columnas.reduce((a, c) => a + Number(valoresRH[empleado.id]?.[c.campo] || 0), 0), tipoDatoRubro)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="sticky bottom-0 z-10">
+                {vistaComparativa && (
+                  <tr className="bg-blue-900 text-white">
+                    <td colSpan={3} className="p-2 text-[11px] font-bold text-blue-200 sticky left-0 bg-blue-900 z-10">👷 TOTAL SUPERVISOR</td>
+                    {columnas.map(c => {
+                      const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                      return (<td key={c.campo} className="p-2 text-center text-[11px] font-bold text-blue-200">{formatearValor(totalesComparativos.sup[c.campo], tipoDatoCol)}</td>);
+                    })}
+                    <td className="p-2 text-center text-[11px] font-bold text-blue-200 sticky right-0 bg-blue-900 z-10">{formatearValor(totalesComparativos.totalSup, tipoDatoRubro)}</td>
+                  </tr>
+                )}
+                <tr className="bg-slate-800 text-white">
+                  <td colSpan={3} className="p-2 text-[11px] font-bold sticky left-0 bg-slate-800 z-10">🔍 TOTALES RH</td>
+                  {columnas.map(c => {
+                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                    const totalCol = regsFiltrados.filter(r => r.incidencia).reduce((acc, r) => acc + Number(valoresRH[r.empleado.id]?.[c.campo] || 0), 0);
+                    return (<td key={c.campo} className="p-2 text-center text-[11px] font-bold">{formatearValor(totalCol, tipoDatoCol)}</td>);
+                  })}
+                  <td className="p-2 text-center font-black text-sm text-yellow-300 sticky right-0 bg-slate-800 z-10">
+                    {formatearValor(regsFiltrados.filter(r => r.incidencia).reduce((acc, r) => acc + columnas.reduce((a, c) => a + Number(valoresRH[r.empleado.id]?.[c.campo] || 0), 0), 0), tipoDatoRubro)}
+                  </td>
+                </tr>
+                {vistaComparativa && (
+                  <tr className="bg-slate-900 text-white">
+                    <td colSpan={3} className="p-2 text-[11px] font-bold text-slate-300 sticky left-0 bg-slate-900 z-10">📊 DIFERENCIA</td>
+                    {columnas.map(c => {
+                      const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
+                      const d = totalesComparativos.diff[c.campo];
+                      return (
+                        <td key={c.campo} className={`p-2 text-center text-[11px] font-bold ${d > 0 ? 'text-emerald-400' : d < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                          {d !== 0 ? (d > 0 ? '+' : '') + formatearValor(Math.abs(d), tipoDatoCol) : '—'}
+                        </td>
+                      );
+                    })}
+                    <td className={`p-2 text-center text-[11px] font-bold sticky right-0 bg-slate-900 z-10 ${totalesComparativos.diffTotal > 0 ? 'text-emerald-400' : totalesComparativos.diffTotal < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                      {totalesComparativos.diffTotal !== 0 ? (totalesComparativos.diffTotal > 0 ? '+' : '') + formatearValor(Math.abs(totalesComparativos.diffTotal), tipoDatoRubro) : '—'}
+                    </td>
+                  </tr>
+                )}
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        {/* 🔥 FOOTER COMPACTO */}
+        <div className="border-t-2 border-slate-300 px-4 py-2.5 bg-slate-50 flex-shrink-0 flex justify-between items-center gap-3">
+          <div className="text-[11px] text-slate-600 flex items-center gap-2 flex-wrap">
+            <span><strong>{regsFiltrados.filter(r => r.incidencia).length}</strong> empleados</span>
+            {conteoDiferencias.conDif > 0 && (
+              <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">⚡ {conteoDiferencias.conDif} con ajustes</span>
+            )}
+            {conteoDiferencias.sinDif > 0 && (
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">✓ {conteoDiferencias.sinDif} validados</span>
+            )}
+          </div>
+          <div className="flex gap-2 flex-shrink-0">
+            <button onClick={onCerrar} className="bg-white border border-slate-300 text-slate-700 px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-100">Cancelar</button>
+            <button onClick={guardar} disabled={guardando} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50 shadow-sm">
+              {guardando ? "⏳ Guardando..." : `💾 Guardar ${config.titulo}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPersonalizados, columnasDelMapeo, asignacionesColumnas, setAsignacionesColumnas, tiposDatoColumnas, setTiposDatoColumnas, onCerrar }) {
   const [nuevoRubro, setNuevoRubro] = useState({ clave: "", titulo: "", icono: "📋", color: "slate", tipo: "neutro", tipoDato: "entero" });
   const [mostrarForm, setMostrarForm] = useState(false);
@@ -848,7 +1213,7 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-xl font-bold">🏷️ Configuración de Rubros</h3>
-              <p className="text-xs text-white/90 mt-1">Crea rubros, reasigna columnas y define el tipo de dato de cada columna</p>
+              <p className="text-xs text-white/90 mt-1">Crea rubros, reasigna columnas y define el tipo de dato</p>
             </div>
             <button onClick={onCerrar} className="text-white/80 hover:text-white font-bold text-2xl">✕</button>
           </div>
@@ -866,24 +1231,15 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                   <input type="text" value={nuevoRubro.titulo} onChange={(e) => setNuevoRubro({ ...nuevoRubro, titulo: e.target.value })} placeholder="Título (ej: Viáticos)" className="border rounded-lg p-2 text-sm" />
                   <input type="text" value={nuevoRubro.icono} onChange={(e) => setNuevoRubro({ ...nuevoRubro, icono: e.target.value })} placeholder="Ícono (emoji)" className="border rounded-lg p-2 text-sm" />
                   <select value={nuevoRubro.tipo} onChange={(e) => setNuevoRubro({ ...nuevoRubro, tipo: e.target.value })} className="border rounded-lg p-2 text-sm">
-                    <option value="positivo">💰 Positivo (suma al neto)</option>
-                    <option value="negativo">💸 Negativo (resta del neto)</option>
-                    <option value="neutro">📋 Neutro (informativo)</option>
+                    <option value="positivo">💰 Positivo</option>
+                    <option value="negativo">💸 Negativo</option>
+                    <option value="neutro">📋 Neutro</option>
                   </select>
-                  
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold mb-2">🔢 Tipo de Dato por Defecto</label>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {Object.entries(tiposDatoConfig).map(([key, cfg]) => (
-                        <button
-                          key={key}
-                          onClick={() => setNuevoRubro({ ...nuevoRubro, tipoDato: key })}
-                          className={`p-3 rounded-lg border-2 text-left transition ${
-                            nuevoRubro.tipoDato === key 
-                              ? 'border-purple-500 bg-purple-50' 
-                              : 'border-slate-200 bg-white hover:border-slate-300'
-                          }`}
-                        >
+                        <button key={key} onClick={() => setNuevoRubro({ ...nuevoRubro, tipoDato: key })} className={`p-3 rounded-lg border-2 text-left transition ${nuevoRubro.tipoDato === key ? 'border-purple-500 bg-purple-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                           <div className="text-lg">{cfg.icono}</div>
                           <div className="text-xs font-bold text-slate-800">{cfg.label}</div>
                           <div className="text-[10px] text-slate-500 mt-0.5">Ej: {cfg.ejemplo}</div>
@@ -891,7 +1247,6 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                       ))}
                     </div>
                   </div>
-
                   <div className="md:col-span-2">
                     <label className="block text-xs font-semibold mb-1">🎨 Color</label>
                     <div className="flex flex-wrap gap-2">
@@ -927,9 +1282,7 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                           <div className={`font-bold ${cfg.text}`}>{cfg.titulo}</div>
                           <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
                             <span>{cols.length} columnas</span>
-                            <span className="bg-white/60 px-2 py-0.5 rounded text-[10px] font-bold">
-                              {tipoDatoCfg.icono} {tipoDatoCfg.label}
-                            </span>
+                            <span className="bg-white/60 px-2 py-0.5 rounded text-[10px] font-bold">{tipoDatoCfg.icono} {tipoDatoCfg.label}</span>
                             {!esPred && <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Personalizado</span>}
                           </div>
                         </div>
@@ -938,18 +1291,10 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                     </div>
 
                     <div className="bg-white/50 rounded-lg p-3 mb-3 border border-white">
-                      <div className="text-[10px] font-bold text-slate-600 uppercase mb-2">Tipo de Dato por Defecto del Rubro</div>
+                      <div className="text-[10px] font-bold text-slate-600 uppercase mb-2">Tipo de Dato por Defecto</div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                         {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
-                          <button
-                            key={key}
-                            onClick={() => cambiarTipoDatoRubro(clave, key)}
-                            className={`p-2 rounded border text-xs transition ${
-                              tipoDatoActual === key 
-                                ? 'border-purple-500 bg-purple-100 font-bold' 
-                                : 'border-slate-200 bg-white hover:border-slate-300'
-                            }`}
-                          >
+                          <button key={key} onClick={() => cambiarTipoDatoRubro(clave, key)} className={`p-2 rounded border text-xs transition ${tipoDatoActual === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                             <span className="mr-1">{tCfg.icono}</span>{tCfg.label}
                           </button>
                         ))}
@@ -958,7 +1303,7 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
 
                     {cols.length > 0 && (
                       <div className="space-y-2 mt-3">
-                        <div className="text-xs font-bold">Columnas asignadas (con tipo de dato individual):</div>
+                        <div className="text-xs font-bold">Columnas asignadas:</div>
                         {cols.map(col => {
                           const tipoDatoCol = tiposDatoColumnas[col.campo] || tipoDatoActual;
                           return (
@@ -972,20 +1317,11 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
                                   {Object.entries(todosLosRubros).map(([k, v]) => (<option key={k} value={k}>{v.icono} {v.titulo}</option>))}
                                 </select>
                               </div>
-                              
                               <div className="bg-slate-50 rounded p-2 border border-slate-200">
                                 <div className="text-[9px] font-bold text-slate-600 uppercase mb-1.5">Tipo de Dato de esta Columna</div>
                                 <div className="grid grid-cols-4 gap-1.5">
                                   {Object.entries(tiposDatoConfig).map(([key, tCfg]) => (
-                                    <button
-                                      key={key}
-                                      onClick={() => cambiarTipoDatoColumna(col.campo, key)}
-                                      className={`p-1.5 rounded border text-[10px] transition ${
-                                        tipoDatoCol === key 
-                                          ? 'border-purple-500 bg-purple-100 font-bold' 
-                                          : 'border-slate-200 bg-white hover:border-slate-300'
-                                      }`}
-                                    >
+                                    <button key={key} onClick={() => cambiarTipoDatoColumna(col.campo, key)} className={`p-1.5 rounded border text-[10px] transition ${tipoDatoCol === key ? 'border-purple-500 bg-purple-100 font-bold' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                                       <span>{tCfg.icono}</span>
                                       <div className="text-[9px]">{tCfg.label}</div>
                                     </button>
@@ -1010,396 +1346,8 @@ function ModalConfigRubros({ todosLosRubros, rubrosPersonalizados, setRubrosPers
             Los cambios se guardan automáticamente en tu navegador
           </div>
           <div className="flex gap-2">
-            <button 
-              onClick={onCerrar} 
-              className="bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 transition"
-            >
-              ❌ Cancelar
-            </button>
-            <button 
-              onClick={guardarCambios} 
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md transition flex items-center gap-2"
-            >
-              💾 Guardar Cambios
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// 🔥 MEJORADO: ModalRubro con panel comparativo Supervisor vs RH
-function ModalRubro({ rubro, config, columnas, registros, todosLosEmpleados, guardando, tiposDatoColumnas, onGuardar, onCerrar }) {
-  const [filtroDepto, setFiltroDepto] = useState("TODOS");
-  const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
-  const [busquedaInt, setBusquedaInt] = useState("");
-  const [vistaComparativa, setVistaComparativa] = useState(false);
-  const tipoDatoRubro = config.tipoDato || 'entero';
-  
-  const [valoresRH, setValoresRH] = useState(() => {
-    const init = {};
-    registros.forEach(r => {
-      if (r.incidencia) {
-        init[r.empleado.id] = {};
-        columnas.forEach(c => { init[r.empleado.id][c.campo] = r.incidencia[c.campo] ?? 0; });
-      }
-    });
-    return init;
-  });
-
-  const deptosUnicos = useMemo(() => ["TODOS", ...new Set(todosLosEmpleados.map(e => e.departamentos?.nombre || "Sin Departamento"))].sort(), [todosLosEmpleados]);
-  const puestosUnicos = useMemo(() => {
-    const emp = filtroDepto === "TODOS" ? todosLosEmpleados : todosLosEmpleados.filter(e => (e.departamentos?.nombre || "Sin Departamento") === filtroDepto);
-    return ["TODOS", ...new Set(emp.map(e => e.puestos?.nombre || "Sin Puesto"))].sort();
-  }, [todosLosEmpleados, filtroDepto]);
-
-  const regsFiltrados = useMemo(() => {
-    const t = busquedaInt.toLowerCase().trim();
-    return registros.filter(r => {
-      const e = r.empleado;
-      const ct = !t || [e.nombre_completo, e.numero_empleado, e.puestos?.nombre].some(c => String(c || "").toLowerCase().includes(t));
-      const cd = filtroDepto === "TODOS" || (e.departamentos?.nombre || "Sin Departamento") === filtroDepto;
-      const cp = filtroPuesto === "TODOS" || (e.puestos?.nombre || "Sin Puesto") === filtroPuesto;
-      return ct && cd && cp;
-    });
-  }, [registros, filtroDepto, filtroPuesto, busquedaInt]);
-
-  // 🔥 NUEVO: Totales comparativos Supervisor vs RH
-  const totalesComparativos = useMemo(() => {
-    const sup = {};
-    const rh = {};
-    const diff = {};
-    let totalSup = 0;
-    let totalRh = 0;
-    
-    columnas.forEach(c => { 
-      sup[c.campo] = 0; 
-      rh[c.campo] = 0;
-      diff[c.campo] = 0;
-    });
-    
-    regsFiltrados.forEach(r => {
-      if (r.incidencia) {
-        columnas.forEach(c => {
-          const vSup = Number(r.incidencia[c.campo] || 0);
-          const vRH = Number(valoresRH[r.empleado.id]?.[c.campo] || 0);
-          sup[c.campo] += vSup;
-          rh[c.campo] += vRH;
-          diff[c.campo] += (vRH - vSup);
-          totalSup += vSup;
-          totalRh += vRH;
-        });
-      }
-    });
-    
-    return { sup, rh, diff, totalSup, totalRh, diffTotal: totalRh - totalSup };
-  }, [valoresRH, columnas, regsFiltrados]);
-
-  const totales = useMemo(() => {
-    const tpc = {};
-    let tg = 0;
-    columnas.forEach(c => { tpc[c.campo] = 0; });
-    regsFiltrados.forEach(r => {
-      if (r.incidencia) {
-        columnas.forEach(c => {
-          const v = Number(valoresRH[r.empleado.id]?.[c.campo] || 0);
-          tpc[c.campo] += v;
-          tg += v;
-        });
-      }
-    });
-    return { tpc, tg };
-  }, [valoresRH, columnas, regsFiltrados]);
-
-  const guardar = () => {
-    const ajustes = regsFiltrados.filter(r => r.incidencia).map(r => ({ incidenciaId: r.incidencia.id, valores: valoresRH[r.empleado.id] || {} }));
-    if (ajustes.length === 0) { alert("No hay registros"); return; }
-    if (!confirm(`¿Guardar ${ajustes.length} ajustes?`)) return;
-    onGuardar(ajustes);
-  };
-
-  const aplicarTodos = (campo, valor) => {
-    const nv = { ...valoresRH };
-    regsFiltrados.forEach(r => {
-      if (r.incidencia) nv[r.empleado.id] = { ...nv[r.empleado.id], [campo]: valor };
-    });
-    setValoresRH(nv);
-  };
-
-  // 🔥 NUEVO: Aceptar valores del supervisor para todos
-  const aceptarSupervisorTodos = (campo) => {
-    const nv = { ...valoresRH };
-    regsFiltrados.forEach(r => {
-      if (r.incidencia) {
-        const vSup = Number(r.incidencia[campo] || 0);
-        nv[r.empleado.id] = { ...nv[r.empleado.id], [campo]: vSup };
-      }
-    });
-    setValoresRH(nv);
-  };
-
-  // 🔥 NUEVO: Contar diferencias por empleado
-  const conteoDiferencias = useMemo(() => {
-    const conteo = { conDif: 0, sinDif: 0, sinCaptura: 0 };
-    regsFiltrados.forEach(r => {
-      if (!r.incidencia) { conteo.sinCaptura++; return; }
-      const tieneDif = columnas.some(c => {
-        const vSup = Number(r.incidencia[c.campo] || 0);
-        const vRH = Number(valoresRH[r.empleado.id]?.[c.campo] || 0);
-        return vSup !== vRH;
-      });
-      if (tieneDif) conteo.conDif++; else conteo.sinDif++;
-    });
-    return conteo;
-  }, [regsFiltrados, columnas, valoresRH]);
-
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full max-h-[95vh] flex flex-col">
-        <div className={`${config.bgLight} border-b ${config.border} px-6 py-4 rounded-t-2xl`}>
-          <div className="flex justify-between items-start">
-            <div>
-              <h3 className={`text-xl font-bold ${config.text} flex items-center gap-2`}>
-                <span className="text-2xl">{config.icono}</span> Gestión de {config.titulo}
-                <span className="text-xs bg-white/60 px-2 py-0.5 rounded font-normal">
-                  {tiposDatoConfig[tipoDatoRubro]?.icono} {tiposDatoConfig[tipoDatoRubro]?.label}
-                </span>
-              </h3>
-              <p className="text-xs text-slate-600 mt-1">Compara lo que capturó el Supervisor vs los ajustes de RH</p>
-            </div>
-            <button onClick={onCerrar} className="text-slate-400 hover:text-slate-700 font-bold text-2xl">✕</button>
-          </div>
-
-          {/* 🔥 NUEVO: Panel Resumen Comparativo */}
-          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-white/70 rounded-lg p-3 border border-white">
-              <div className="text-[10px] text-slate-600 font-semibold uppercase">👷 Total Supervisor</div>
-              <div className="text-lg font-black text-blue-700">{formatearValor(totalesComparativos.totalSup, tipoDatoRubro)}</div>
-            </div>
-            <div className="bg-white/70 rounded-lg p-3 border border-white">
-              <div className="text-[10px] text-slate-600 font-semibold uppercase">🔍 Total RH</div>
-              <div className="text-lg font-black text-purple-700">{formatearValor(totalesComparativos.totalRh, tipoDatoRubro)}</div>
-            </div>
-            <div className="bg-white/70 rounded-lg p-3 border border-white">
-              <div className="text-[10px] text-slate-600 font-semibold uppercase">📊 Diferencia</div>
-              <div className={`text-lg font-black ${totalesComparativos.diffTotal > 0 ? 'text-emerald-700' : totalesComparativos.diffTotal < 0 ? 'text-red-700' : 'text-slate-700'}`}>
-                {totalesComparativos.diffTotal > 0 ? '+' : ''}{formatearValor(totalesComparativos.diffTotal, tipoDatoRubro)}
-              </div>
-            </div>
-            <div className="bg-white/70 rounded-lg p-3 border border-white">
-              <div className="text-[10px] text-slate-600 font-semibold uppercase">📈 Empleados</div>
-              <div className="text-lg font-black text-slate-800 flex items-center gap-2">
-                <span>{conteoDiferencias.conDif + conteoDiferencias.sinDif + conteoDiferencias.sinCaptura}</span>
-                {conteoDiferencias.conDif > 0 && (
-                  <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
-                    {conteoDiferencias.conDif} con ajustes
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 🔥 NUEVO: Toggle vista comparativa */}
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              onClick={() => setVistaComparativa(!vistaComparativa)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                vistaComparativa 
-                  ? 'bg-slate-800 text-white' 
-                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {vistaComparativa ? '👁️ Ocultar Comparativa' : '👁️ Mostrar Comparativa (Sup vs RH)'}
-            </button>
-            <span className="text-[10px] text-slate-500">
-              {vistaComparativa ? 'Verás el valor del Supervisor junto al input de RH' : 'Vista normal de edición'}
-            </span>
-          </div>
-
-          <div className="mt-3 space-y-3">
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-              <input type="text" placeholder="Buscar empleado..." value={busquedaInt} onChange={(e) => setBusquedaInt(e.target.value)} className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5">🏢 Departamento</div>
-              <div className="flex flex-wrap gap-1.5">
-                {deptosUnicos.map(d => {
-                  const count = d === "TODOS" ? registros.filter(r => r.incidencia).length : registros.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === d).length;
-                  const activo = filtroDepto === d;
-                  return (
-                    <button key={d} onClick={() => { setFiltroDepto(d); setFiltroPuesto("TODOS"); }} className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${activo ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300"}`}>
-                      {d === "TODOS" ? "🌐 Todos" : d} <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            {filtroDepto !== "TODOS" && (
-              <div>
-                <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5">💼 Puesto en {filtroDepto}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {puestosUnicos.map(p => {
-                    const count = p === "TODOS" ? registros.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === filtroDepto).length : registros.filter(r => r.incidencia && (r.empleado.departamentos?.nombre || "Sin Departamento") === filtroDepto && (r.empleado.puestos?.nombre || "Sin Puesto") === p).length;
-                    const activo = filtroPuesto === p;
-                    return (
-                      <button key={p} onClick={() => setFiltroPuesto(p)} className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${activo ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-700 border-slate-200 hover:border-blue-300"}`}>
-                        {p === "TODOS" ? "🌐 Todos" : p} <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto bg-white">
-          {regsFiltrados.filter(r => r.incidencia).length === 0 ? (
-            <div className="p-12 text-center"><div className="text-6xl mb-3">📭</div><div className="text-slate-500 font-semibold">Sin registros en este filtro</div></div>
-          ) : (
-            <table className="w-full text-xs">
-              <thead className="bg-slate-100 sticky top-0 z-10">
-                <tr>
-                  <th className="p-3 text-left font-bold sticky left-0 bg-slate-100 z-20">Empleado</th>
-                  <th className="p-3 text-left font-bold">🏢 Depto</th>
-                  <th className="p-3 text-left font-bold">💼 Puesto</th>
-                  {columnas.map(c => {
-                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                    const tCfg = tiposDatoConfig[tipoDatoCol];
-                    return (
-                      <th key={c.campo} className="p-3 text-center font-bold">
-                        <div className="text-xs flex items-center justify-center gap-1">
-                          <span>{tCfg?.icono}</span>
-                          <span>{c.etiqueta}</span>
-                        </div>
-                        <div className="flex gap-1 justify-center mt-1">
-                          <button onClick={() => { const v = prompt(`Aplicar a todos para "${c.etiqueta}":`, "0"); if (v !== null) aplicarTodos(c.campo, Number(v) || 0); }} className="text-[9px] text-blue-600 hover:text-blue-800 underline">todos</button>
-                          {vistaComparativa && (
-                            <button onClick={() => aceptarSupervisorTodos(c.campo)} className="text-[9px] text-emerald-600 hover:text-emerald-800 underline font-bold">=Sup</button>
-                          )}
-                        </div>
-                      </th>
-                    );
-                  })}
-                  <th className="p-3 text-center font-bold bg-purple-50 sticky right-0 bg-purple-50 z-10">Total RH</th>
-                </tr>
-              </thead>
-              <tbody>
-                {regsFiltrados.filter(r => r.incidencia).map(({ empleado, incidencia }) => {
-                  // 🔥 NUEVO: Determinar si este empleado tiene diferencias
-                  const tieneDiferencias = columnas.some(c => {
-                    const vSup = Number(incidencia[c.campo] || 0);
-                    const vRH = Number(valoresRH[empleado.id]?.[c.campo] || 0);
-                    return vSup !== vRH;
-                  });
-                  
-                  return (
-                    <tr key={empleado.id} className={`border-b border-slate-100 hover:bg-slate-50 ${tieneDiferencias ? 'bg-amber-50/30' : ''}`}>
-                      <td className="p-3 sticky left-0 bg-white z-10">
-                        <div className="font-semibold text-xs flex items-center gap-1">
-                          {empleado.nombre_completo}
-                          {tieneDiferencias && <span className="text-[9px] bg-amber-100 text-amber-800 px-1 rounded">⚡</span>}
-                        </div>
-                        <div className="text-[10px] text-slate-500">#{empleado.numero_empleado}</div>
-                      </td>
-                      <td className="p-3 text-xs"><span className="bg-slate-100 px-1.5 py-0.5 rounded">{empleado.departamentos?.nombre || "Sin Depto"}</span></td>
-                      <td className="p-3 text-xs"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{empleado.puestos?.nombre || "Sin Puesto"}</span></td>
-                      {columnas.map(c => {
-                        const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                        const inputStep = tipoDatoCol === 'entero' ? "1" : "0.01";
-                        const vSup = Number(incidencia[c.campo] ?? 0);
-                        const vRH = Number(valoresRH[empleado.id]?.[c.campo] ?? 0);
-                        const diff = vRH - vSup;
-                        
-                        return (
-                          <td key={c.campo} className={`p-2 text-center ${diff !== 0 ? 'bg-amber-50/50' : ''}`}>
-                            {/* 🔥 NUEVO: Vista comparativa */}
-                            {vistaComparativa && (
-                              <div className="text-[10px] text-blue-600 font-semibold mb-1 bg-blue-50 rounded px-1 py-0.5 border border-blue-200">
-                                👷 {formatearValor(vSup, tipoDatoCol)}
-                              </div>
-                            )}
-                            <input 
-                              type="number" 
-                              step={inputStep}
-                              value={vRH} 
-                              onChange={(e) => setValoresRH(prev => ({ ...prev, [empleado.id]: { ...prev[empleado.id], [c.campo]: e.target.value } }))} 
-                              className={`w-24 border rounded px-2 py-1 text-xs text-center font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${diff !== 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`} 
-                            />
-                            {diff !== 0 && (
-                              <div className={`text-[9px] font-bold mt-0.5 ${diff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                {diff > 0 ? '▲' : '▼'} {formatearValor(Math.abs(diff), tipoDatoCol)}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="p-3 text-center bg-purple-50/50 font-bold text-purple-900 sticky right-0 bg-purple-50 z-10">
-                        {formatearValor(columnas.reduce((a, c) => a + Number(valoresRH[empleado.id]?.[c.campo] || 0), 0), tipoDatoRubro)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot className="bg-slate-800 text-white sticky bottom-0">
-                {vistaComparativa && (
-                  <tr className="bg-blue-900">
-                    <td colSpan={3} className="p-2 text-xs font-bold text-blue-200">👷 TOTAL SUPERVISOR</td>
-                    {columnas.map(c => {
-                      const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                      return (<td key={c.campo} className="p-2 text-center text-xs font-bold text-blue-200">{formatearValor(totalesComparativos.sup[c.campo], tipoDatoCol)}</td>);
-                    })}
-                    <td className="p-2 text-center text-xs font-bold text-blue-200">{formatearValor(totalesComparativos.totalSup, tipoDatoRubro)}</td>
-                  </tr>
-                )}
-                <tr>
-                  <td colSpan={3} className="p-3 font-bold sticky left-0 bg-slate-800 z-10">
-                    🔍 TOTALES RH ({regsFiltrados.filter(r => r.incidencia).length})
-                  </td>
-                  {columnas.map(c => {
-                    const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                    return (<td key={c.campo} className="p-3 text-center font-bold">{formatearValor(totales.tpc[c.campo], tipoDatoCol)}</td>);
-                  })}
-                  <td className="p-3 text-center font-black text-xl text-yellow-300 sticky right-0 bg-slate-800 z-10">{formatearValor(totales.tg, tipoDatoRubro)}</td>
-                </tr>
-                {vistaComparativa && (
-                  <tr className="bg-slate-900">
-                    <td colSpan={3} className="p-2 text-xs font-bold text-slate-300">📊 DIFERENCIA (RH - Supervisor)</td>
-                    {columnas.map(c => {
-                      const tipoDatoCol = tiposDatoColumnas[c.campo] || tipoDatoRubro;
-                      const d = totalesComparativos.diff[c.campo];
-                      return (
-                        <td key={c.campo} className={`p-2 text-center text-xs font-bold ${d > 0 ? 'text-emerald-400' : d < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-                          {d !== 0 ? (d > 0 ? '+' : '') : '—'}{d !== 0 ? formatearValor(Math.abs(d), tipoDatoCol) : ''}
-                        </td>
-                      );
-                    })}
-                    <td className={`p-2 text-center text-xs font-bold ${totalesComparativos.diffTotal > 0 ? 'text-emerald-400' : totalesComparativos.diffTotal < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-                      {totalesComparativos.diffTotal !== 0 ? (totalesComparativos.diffTotal > 0 ? '+' : '') + formatearValor(Math.abs(totalesComparativos.diffTotal), tipoDatoRubro) : '—'}
-                    </td>
-                  </tr>
-                )}
-              </tfoot>
-            </table>
-          )}
-        </div>
-
-        <div className="border-t px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-between items-center">
-          <div className="text-xs text-slate-600 flex items-center gap-3">
-            <span><strong>{regsFiltrados.filter(r => r.incidencia).length}</strong> empleados visibles</span>
-            {conteoDiferencias.conDif > 0 && (
-              <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">
-                ⚡ {conteoDiferencias.conDif} con ajustes
-              </span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancelar</button>
-            <button onClick={guardar} disabled={guardando} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
-              {guardando ? "⏳ Guardando..." : `💾 Guardar ${config.titulo}`}
-            </button>
+            <button onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-100 transition">❌ Cancelar</button>
+            <button onClick={guardarCambios} className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md transition flex items-center gap-2">💾 Guardar Cambios</button>
           </div>
         </div>
       </div>

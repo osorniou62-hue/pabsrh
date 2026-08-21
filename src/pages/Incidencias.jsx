@@ -36,6 +36,26 @@ const formatearMoneda = (valor) => {
 
 const ITEMS_POR_PAGINA = 50;
 
+// 🔥 CLASIFICACIÓN DE RUBROS
+const clasificarRubro = (campo) => {
+  const n = normalizar(campo);
+  if (/bono|apoyo|gratificacion|comision|prima/.test(n)) return 'bonos';
+  if (/descuento|deduccion|adeudo|prestamo|infonavit|imss|sancion|falta/.test(n)) return 'deducciones';
+  if (/aguinaldo|ptu/.test(n)) return 'aguinaldo';
+  if (/horas? ?extra/.test(n)) return 'horas_extra';
+  if (/sueldo|salario|neto|total/.test(n)) return 'percepciones';
+  return 'otros';
+};
+
+const configRubros = {
+  bonos: { titulo: "Bonos", icono: "💰", color: "emerald", bgLight: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+  deducciones: { titulo: "Deducciones", icono: "💸", color: "red", bgLight: "bg-red-50", text: "text-red-700", border: "border-red-200" },
+  aguinaldo: { titulo: "Aguinaldo/PTU", icono: "🎁", color: "amber", bgLight: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
+  horas_extra: { titulo: "Horas Extra", icono: "⏰", color: "blue", bgLight: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" },
+  percepciones: { titulo: "Percepciones", icono: "💵", color: "indigo", bgLight: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200" },
+  otros: { titulo: "Otros", icono: "📋", color: "slate", bgLight: "bg-slate-50", text: "text-slate-700", border: "border-slate-200" },
+};
+
 export default function Incidencias() {
   const [empleados, setEmpleados] = useState([]);
   const [incidencias, setIncidencias] = useState([]);
@@ -54,7 +74,7 @@ export default function Incidencias() {
   const [paginaActual, setPaginaActual] = useState(1);
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
-  const [modalSegmento, setModalSegmento] = useState({ abierto: false, tipo: null, titulo: "", icono: "", color: "" });
+  const [modalRubro, setModalRubro] = useState({ abierto: false, rubro: null });
 
   const [modalCaptura, setModalCaptura] = useState({ abierto: false, empleado: null });
   const [modalRevision, setModalRevision] = useState({ abierto: false, registro: null });
@@ -86,6 +106,7 @@ export default function Incidencias() {
             campo: campoFinal,
             etiqueta: formatearNombreColumna(campoFinal),
             permite_supervisor: permisosSupervisor[campoFinal] || false,
+            rubro: clasificarRubro(campoFinal),
           });
         }
       }
@@ -106,12 +127,26 @@ export default function Incidencias() {
 
   const columnasSupervisor = useMemo(() => columnasActivas.filter(c => c.permite_supervisor), [columnasActivas]);
 
-  const segmentosMonetarios = useMemo(() => {
-    const bonos = columnasActivas.filter(c => esCampoMonetario(c.campo) && !esDeduccion(c.campo) && !normalizar(c.campo).includes('sueldo') && !normalizar(c.campo).includes('neto') && !normalizar(c.campo).includes('total'));
-    const deducciones = columnasActivas.filter(c => esCampoMonetario(c.campo) && esDeduccion(c.campo));
-    const percepciones = columnasActivas.filter(c => esCampoMonetario(c.campo) && !esDeduccion(c.campo) && (normalizar(c.campo).includes('sueldo') || normalizar(c.campo).includes('neto') || normalizar(c.campo).includes('total')));
-    return { bonos, deducciones, percepciones };
+  // 🔥 AGRUPAR COLUMNAS POR RUBRO
+  const columnasPorRubro = useMemo(() => {
+    const agrupado = {};
+    Object.keys(configRubros).forEach(r => { agrupado[r] = []; });
+    columnasActivas.forEach(col => {
+      const rubro = col.rubro || 'otros';
+      if (!agrupado[rubro]) agrupado[rubro] = [];
+      agrupado[rubro].push(col);
+    });
+    // Filtrar rubros vacíos
+    Object.keys(agrupado).forEach(r => {
+      if (agrupado[r].length === 0) delete agrupado[r];
+    });
+    return agrupado;
   }, [columnasActivas]);
+
+  // 🔥 RUBROS CON DATOS (para mostrar en la tabla y botones)
+  const rubrosActivos = useMemo(() => {
+    return Object.keys(columnasPorRubro).filter(r => columnasPorRubro[r].length > 0);
+  }, [columnasPorRubro]);
 
   useEffect(() => {
     const cargarTodo = async () => {
@@ -262,7 +297,8 @@ export default function Incidencias() {
     finally { setGuardando(false); }
   };
 
-  const guardarAjustesSegmento = async (ajustes) => {
+  // 🔥 NUEVO: Guardar ajustes de un rubro específico
+  const guardarAjustesRubro = async (rubro, ajustes) => {
     setGuardando(true);
     try {
       let errores = 0;
@@ -277,7 +313,7 @@ export default function Incidencias() {
       }
       const { data } = await supabase.from("incidencias").select("*").eq("periodo_id", periodoId);
       setIncidencias(data || []);
-      setModalSegmento({ abierto: false, tipo: null, titulo: "", icono: "", color: "" });
+      setModalRubro({ abierto: false, rubro: null });
     } catch (err) {
       alert("Error: " + err.message);
     } finally {
@@ -325,40 +361,20 @@ export default function Incidencias() {
     });
   }, [registros, busqueda, departamentoFiltro, puestoFiltro, estadoFiltro]);
 
-  // 🔥 NUEVO: Totales por segmento (respetando filtros activos)
-  const totalesPorSegmento = useMemo(() => {
-    const calcular = (columnas) => {
-      return columnas.reduce((total, col) => {
-        const sumaEmpleados = registrosFiltrados.reduce((acc, r) => {
-          if (r.incidencia) {
-            return acc + Number(r.incidencia[col.campo] || 0);
-          }
-          return acc;
-        }, 0);
-        return total + sumaEmpleados;
-      }, 0);
-    };
-
-    return {
-      bonos: calcular(segmentosMonetarios.bonos),
-      deducciones: calcular(segmentosMonetarios.deducciones),
-      percepciones: calcular(segmentosMonetarios.percepciones),
-    };
-  }, [registrosFiltrados, segmentosMonetarios]);
-
-  // 🔥 NUEVO: Totales por columna monetaria (para el footer de la tabla)
-  const totalesPorColumna = useMemo(() => {
+  // 🔥 TOTALES POR RUBRO (para la tabla y botones)
+  const totalesPorRubro = useMemo(() => {
     const totales = {};
-    columnasActivas.forEach(col => {
-      if (esCampoMonetario(col.campo)) {
-        totales[col.campo] = registrosFiltrados.reduce((acc, r) => {
-          if (r.incidencia) return acc + Number(r.incidencia[col.campo] || 0);
-          return acc;
-        }, 0);
-      }
+    rubrosActivos.forEach(rubro => {
+      const columnas = columnasPorRubro[rubro];
+      const total = registrosFiltrados.reduce((acc, r) => {
+        if (!r.incidencia) return acc;
+        const sumaRubro = columnas.reduce((suma, col) => suma + Number(r.incidencia[col.campo] || 0), 0);
+        return acc + sumaRubro;
+      }, 0);
+      totales[rubro] = total;
     });
     return totales;
-  }, [registrosFiltrados, columnasActivas]);
+  }, [registrosFiltrados, columnasPorRubro, rubrosActivos]);
 
   const totalPaginas = Math.ceil(registrosFiltrados.length / ITEMS_POR_PAGINA);
   const registrosPaginados = useMemo(() => {
@@ -420,13 +436,8 @@ export default function Incidencias() {
 
   const periodoActual = periodos.find(p => p.id === periodoId);
 
-  const abrirSegmento = (tipo) => {
-    const config = {
-      bonos: { titulo: "Gestión de Bonos", icono: "💰", color: "emerald" },
-      deducciones: { titulo: "Gestión de Deducciones", icono: "💸", color: "red" },
-      percepciones: { titulo: "Gestión de Percepciones", icono: "💵", color: "blue" },
-    };
-    setModalSegmento({ abierto: true, tipo, ...config[tipo] });
+  const abrirRubro = (rubro) => {
+    setModalRubro({ abierto: true, rubro });
   };
 
   return (
@@ -492,9 +503,8 @@ export default function Incidencias() {
           <KpiModerno titulo="Rechazados" valor={kpis.rechazados} icono="❌" color="red" />
         </div>
 
-        {/* TABS + BOTONES DE SEGMENTOS CON TOTALES */}
+        {/* TABS + BOTONES DE RUBROS COMPACTOS */}
         <div className="space-y-3">
-          {/* Fila 1: Tabs Supervisor/RH */}
           <div className="flex gap-2 flex-wrap">
             <button onClick={() => setVistaActual("supervisor")} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border-2 ${vistaActual === "supervisor" ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/30" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"}`}>
               <span className="text-base">👷</span><span>Supervisor</span>
@@ -504,74 +514,44 @@ export default function Incidencias() {
             </button>
           </div>
 
-          {/* 🔥 Fila 2: BOTONES DE SEGMENTOS CON TOTALES (solo para RH) */}
-          {vistaActual === "rrhh" && (segmentosMonetarios.bonos.length > 0 || segmentosMonetarios.deducciones.length > 0 || segmentosMonetarios.percepciones.length > 0) && (
+          {/* 🔥 BOTONES COMPACTOS DE RUBROS (solo para RH) */}
+          {vistaActual === "rrhh" && rubrosActivos.length > 0 && (
             <div className="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-2xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                   <span>💼</span> Gestión por Rubro
                   <span className="text-[10px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-normal">
-                    Totales calculados sobre {registrosFiltrados.length} empleados filtrados
+                    Click para gestionar
                   </span>
                 </h3>
                 {(departamentoFiltro !== "TODOS" || puestoFiltro !== "TODOS") && (
                   <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-semibold">
-                    🔍 Filtros activos: {departamentoFiltro !== "TODOS" ? departamentoFiltro : ""} {puestoFiltro !== "TODOS" ? `→ ${puestoFiltro}` : ""}
+                    🔍 {departamentoFiltro !== "TODOS" ? departamentoFiltro : ""} {puestoFiltro !== "TODOS" ? `→ ${puestoFiltro}` : ""}
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {segmentosMonetarios.bonos.length > 0 && (
-                  <button onClick={() => abrirSegmento("bonos")} className="group bg-white hover:bg-emerald-50 border-2 border-emerald-200 hover:border-emerald-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-2xl">💰</span>
-                      <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                        {segmentosMonetarios.bonos.length} campos
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Bonos</div>
-                    <div className="text-2xl font-black text-emerald-700 mt-1">
-                      {formatearMoneda(totalesPorSegmento.bonos)}
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-emerald-600 transition">
-                      Click para gestionar →
-                    </div>
-                  </button>
-                )}
-                {segmentosMonetarios.deducciones.length > 0 && (
-                  <button onClick={() => abrirSegmento("deducciones")} className="group bg-white hover:bg-red-50 border-2 border-red-200 hover:border-red-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-2xl">💸</span>
-                      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
-                        {segmentosMonetarios.deducciones.length} campos
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Deducciones</div>
-                    <div className="text-2xl font-black text-red-700 mt-1">
-                      {formatearMoneda(totalesPorSegmento.deducciones)}
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-red-600 transition">
-                      Click para gestionar →
-                    </div>
-                  </button>
-                )}
-                {segmentosMonetarios.percepciones.length > 0 && (
-                  <button onClick={() => abrirSegmento("percepciones")} className="group bg-white hover:bg-blue-50 border-2 border-blue-200 hover:border-blue-400 rounded-xl p-4 text-left transition-all shadow-sm hover:shadow-md">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-2xl">💵</span>
-                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">
-                        {segmentosMonetarios.percepciones.length} campos
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-500 font-semibold uppercase">Total Percepciones</div>
-                    <div className="text-2xl font-black text-blue-700 mt-1">
-                      {formatearMoneda(totalesPorSegmento.percepciones)}
-                    </div>
-                    <div className="text-[10px] text-slate-400 mt-1 group-hover:text-blue-600 transition">
-                      Click para gestionar →
-                    </div>
-                  </button>
-                )}
+              <div className="flex flex-wrap gap-2">
+                {rubrosActivos.map(rubro => {
+                  const config = configRubros[rubro];
+                  const total = totalesPorRubro[rubro] || 0;
+                  const numColumnas = columnasPorRubro[rubro].length;
+                  return (
+                    <button
+                      key={rubro}
+                      onClick={() => abrirRubro(rubro)}
+                      className={`group ${config.bgLight} hover:shadow-md border-2 ${config.border} rounded-xl px-4 py-2.5 text-left transition-all flex items-center gap-3`}
+                    >
+                      <span className="text-2xl">{config.icono}</span>
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-semibold uppercase">{config.titulo}</div>
+                        <div className={`text-lg font-black ${config.text}`}>
+                          {formatearMoneda(total)}
+                        </div>
+                        <div className="text-[9px] text-slate-400">{numColumnas} campos</div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -598,7 +578,6 @@ export default function Incidencias() {
             </div>
           </div>
 
-          {/* Chips de Departamento */}
           <div>
             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
               <span>🏢</span> Filtrar por Departamento
@@ -622,7 +601,6 @@ export default function Incidencias() {
             </div>
           </div>
 
-          {/* Chips de Puesto */}
           {departamentoFiltro !== "TODOS" && (
             <div>
               <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
@@ -644,7 +622,7 @@ export default function Incidencias() {
           )}
         </div>
 
-        {/* TABLA PRINCIPAL */}
+        {/* 🔥 TABLA PRINCIPAL CON COLUMNAS RESUMEN POR RUBRO */}
         <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col ${pantallaCompleta ? "h-[calc(100vh-120px)]" : "max-h-[75vh]"}`}>
           <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
             <div className="flex items-center gap-3">
@@ -665,14 +643,25 @@ export default function Incidencias() {
                   <th className="p-4 font-bold text-slate-700">🏢 Departamento</th>
                   <th className="p-4 font-bold text-slate-700">💼 Puesto</th>
                   <th className="p-4 font-bold text-slate-700">Estado</th>
-                  {columnasActivas.map(col => (
-                    <th key={col.campo} className={`p-4 text-right font-bold ${esCampoMonetario(col.campo) ? 'bg-emerald-50 text-emerald-900' : col.permite_supervisor ? 'bg-blue-50 text-blue-900' : 'bg-slate-50 text-slate-700'}`}>
-                      <div className="flex items-center justify-end gap-1">
-                        {col.etiqueta}
-                        {col.permite_supervisor && <span className="text-[9px] bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded-full">👷</span>}
-                      </div>
-                    </th>
-                  ))}
+                  
+                  {/* 🔥 COLUMNAS RESUMEN POR RUBRO */}
+                  {rubrosActivos.map(rubro => {
+                    const config = configRubros[rubro];
+                    return (
+                      <th key={rubro} className={`p-4 text-right font-bold ${config.bgLight} ${config.text}`}>
+                        <button
+                          onClick={() => vistaActual === "rrhh" && abrirRubro(rubro)}
+                          className={`flex items-center justify-end gap-1 w-full ${vistaActual === "rrhh" ? 'cursor-pointer hover:underline' : 'cursor-default'}`}
+                          title={vistaActual === "rrhh" ? `Gestionar ${config.titulo}` : ''}
+                        >
+                          <span>{config.icono}</span>
+                          <span>{config.titulo}</span>
+                          {vistaActual === "rrhh" && <span className="text-[9px]">⚙️</span>}
+                        </button>
+                      </th>
+                    );
+                  })}
+                  
                   {vistaActual === "rrhh" && <th className="p-4 font-bold text-slate-700">💬 Obs.</th>}
                   <th className="p-4 font-bold text-slate-700 text-center sticky right-0 bg-slate-50 z-40 border-l border-slate-200 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.08)]">Acción</th>
                 </tr>
@@ -737,12 +726,23 @@ export default function Incidencias() {
                               {estadoConfig.icono} {estadoConfig.label}
                             </span>
                           </td>
-                          {columnasActivas.map(col => {
-                            const val = incidencia?.[col.campo];
-                            const esMonet = esCampoMonetario(col.campo);
-                            const displayVal = val !== null && val !== undefined && val !== "" ? (esMonet ? `$${Number(val).toFixed(2)}` : val) : <span className="text-slate-300">—</span>;
-                            return (<td key={col.campo} className={`p-4 text-right ${esMonet ? 'text-emerald-700 font-semibold' : 'text-slate-700'}`}>{displayVal}</td>);
+                          
+                          {/* 🔥 COLUMNAS RESUMEN POR RUBRO (suma de todas las columnas del rubro) */}
+                          {rubrosActivos.map(rubro => {
+                            const config = configRubros[rubro];
+                            const columnas = columnasPorRubro[rubro];
+                            const totalRubro = columns => {
+                              if (!incidencia) return 0;
+                              return columns.reduce((suma, col) => suma + Number(incidencia[col.campo] || 0), 0);
+                            };
+                            const total = totalRubro(columnas);
+                            return (
+                              <td key={rubro} className={`p-4 text-right font-bold ${config.text}`}>
+                                {incidencia ? formatearMoneda(total) : <span className="text-slate-300">—</span>}
+                              </td>
+                            );
                           })}
+                          
                           {vistaActual === "rrhh" && (
                             <td className="p-4 max-w-[150px]">
                               <div className="truncate text-[11px] text-slate-600" title={incidencia?.comentarios_rrhh || ""}>
@@ -768,18 +768,18 @@ export default function Incidencias() {
                 )}
               </tbody>
               
-              {/* 🔥 NUEVO: FOOTER CON TOTALES POR COLUMNA */}
-              {columnasActivas.some(c => esCampoMonetario(c.campo)) && registrosFiltrados.length > 0 && (
+              {/* FOOTER CON TOTALES POR RUBRO */}
+              {rubrosActivos.length > 0 && registrosFiltrados.length > 0 && (
                 <tfoot className="bg-slate-800 text-white sticky bottom-0 z-20 border-t-2 border-slate-600">
                   <tr>
                     <td colSpan={5} className="p-3 font-bold text-sm text-right">
                       TOTALES ({registrosFiltrados.length} empleados)
                     </td>
-                    {columnasActivas.map(col => {
-                      const esMonet = esCampoMonetario(col.campo);
+                    {rubrosActivos.map(rubro => {
+                      const config = configRubros[rubro];
                       return (
-                        <td key={col.campo} className={`p-3 text-right font-bold ${esMonet ? 'text-yellow-300' : ''}`}>
-                          {esMonet ? formatearMoneda(totalesPorColumna[col.campo] || 0) : ""}
+                        <td key={rubro} className={`p-3 text-right font-bold text-yellow-300`}>
+                          {formatearMoneda(totalesPorRubro[rubro] || 0)}
                         </td>
                       );
                     })}
@@ -808,19 +808,16 @@ export default function Incidencias() {
         <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="fixed bottom-6 right-6 bg-slate-800 hover:bg-slate-900 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl transition-all z-40 opacity-80 hover:opacity-100 hover:scale-110 animate-fade-in" title="Volver arriba">↑</button>
       )}
 
-      {/* 🔥 MODAL DE SEGMENTOS CON FILTROS POR DEPARTAMENTO Y PUESTO */}
-      {modalSegmento.abierto && (
-        <ModalSegmento
-          tipo={modalSegmento.tipo}
-          titulo={modalSegmento.titulo}
-          icono={modalSegmento.icono}
-          color={modalSegmento.color}
-          columnas={modalSegmento.tipo === "bonos" ? segmentosMonetarios.bonos : modalSegmento.tipo === "deducciones" ? segmentosMonetarios.deducciones : segmentosMonetarios.percepciones}
+      {/* 🔥 MODAL DE GESTIÓN DE RUBRO */}
+      {modalRubro.abierto && modalRubro.rubro && (
+        <ModalRubro
+          rubro={modalRubro.rubro}
+          columnas={columnasPorRubro[modalRubro.rubro]}
           registros={registros}
           todosLosEmpleados={empleados}
           guardando={guardando}
-          onGuardar={guardarAjustesSegmento}
-          onCerrar={() => setModalSegmento({ abierto: false, tipo: null, titulo: "", icono: "", color: "" })}
+          onGuardar={(ajustes) => guardarAjustesRubro(modalRubro.rubro, ajustes)}
+          onCerrar={() => setModalRubro({ abierto: false, rubro: null })}
         />
       )}
 
@@ -895,9 +892,9 @@ export default function Incidencias() {
   );
 }
 
-// 🔥 NUEVO: MODAL DE SEGMENTOS CON FILTROS POR DEPARTAMENTO Y PUESTO
-function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
-  // 🔥 Filtros internos del modal
+// 🔥 MODAL DE GESTIÓN DE RUBRO (Bonos, Deducciones, etc.)
+function ModalRubro({ rubro, columnas, registros, todosLosEmpleados, guardando, onGuardar, onCerrar }) {
+  const config = configRubros[rubro];
   const [filtroDepto, setFiltroDepto] = useState("TODOS");
   const [filtroPuesto, setFiltroPuesto] = useState("TODOS");
   const [busquedaInterna, setBusquedaInterna] = useState("");
@@ -915,18 +912,10 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
     return init;
   });
 
-  const colorClasses = {
-    emerald: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-800", btn: "bg-emerald-600 hover:bg-emerald-700" },
-    red: { bg: "bg-red-50", border: "border-red-200", text: "text-red-800", btn: "bg-red-600 hover:bg-red-700" },
-    blue: { bg: "bg-blue-50", border: "border-blue-200", text: "text-blue-800", btn: "bg-blue-600 hover:bg-blue-700" },
-  }[color];
-
-  // 🔥 Departamentos únicos
   const departamentosUnicos = useMemo(() => {
     return ["TODOS", ...new Set(todosLosEmpleados.map(e => e.departamentos?.nombre).filter(Boolean))].sort();
   }, [todosLosEmpleados]);
 
-  // 🔥 Puestos filtrados por departamento
   const puestosUnicos = useMemo(() => {
     const empleadosFiltradosPorDepto = filtroDepto === "TODOS" 
       ? todosLosEmpleados 
@@ -934,7 +923,6 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
     return ["TODOS", ...new Set(empleadosFiltradosPorDepto.map(e => e.puestos?.nombre).filter(Boolean))].sort();
   }, [todosLosEmpleados, filtroDepto]);
 
-  // 🔥 Registros filtrados dentro del modal
   const registrosFiltradosModal = useMemo(() => {
     const texto = busquedaInterna.toLowerCase().trim();
     return registros.filter(r => {
@@ -947,7 +935,6 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
     });
   }, [registros, filtroDepto, filtroPuesto, busquedaInterna]);
 
-  // 🔥 Totales del modal (sobre registros filtrados)
   const totales = useMemo(() => {
     const totalesPorCampo = {};
     let totalGeneral = 0;
@@ -995,35 +982,31 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full max-h-[95vh] flex flex-col">
-        {/* Header */}
-        <div className={`${colorClasses.bg} border-b ${colorClasses.border} px-6 py-4 rounded-t-2xl`}>
+        <div className={`${config.bgLight} border-b ${config.border} px-6 py-4 rounded-t-2xl`}>
           <div className="flex justify-between items-start">
             <div>
-              <h3 className={`text-xl font-bold ${colorClasses.text} flex items-center gap-2`}>
-                <span className="text-2xl">{icono}</span> {titulo}
+              <h3 className={`text-xl font-bold ${config.text} flex items-center gap-2`}>
+                <span className="text-2xl">{config.icono}</span> Gestión de {config.titulo}
               </h3>
               <p className="text-xs text-slate-600 mt-1">
-                Revisa los valores del supervisor y ajusta los montos de RH. Filtra por departamento o puesto para gestión segmentada.
+                Revisa los valores del supervisor y ajusta los montos de RH.
               </p>
             </div>
             <button onClick={onCerrar} className="text-slate-400 hover:text-slate-700 font-bold text-2xl">✕</button>
           </div>
 
-          {/* 🔥 FILTROS DEL MODAL */}
           <div className="mt-4 space-y-3">
-            {/* Fila 1: Búsqueda */}
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
               <input 
                 type="text" 
-                placeholder="Buscar empleado dentro de este segmento..." 
+                placeholder="Buscar empleado..." 
                 value={busquedaInterna}
                 onChange={(e) => setBusquedaInterna(e.target.value)}
                 className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white" 
               />
             </div>
 
-            {/* Fila 2: Chips de Departamento */}
             <div>
               <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
                 <span>🏢</span> Departamento
@@ -1044,22 +1027,17 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
                       key={depto}
                       onClick={() => { setFiltroDepto(depto); setFiltroPuesto("TODOS"); }}
                       className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border ${
-                        activo 
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" 
-                          : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"
+                        activo ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"
                       }`}
                     >
                       {depto === "TODOS" ? "🌐 Todos" : depto}
-                      <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
-                        {count}
-                      </span>
+                      <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Fila 3: Chips de Puesto (solo si hay depto seleccionado) */}
             {filtroDepto !== "TODOS" && (
               <div>
                 <div className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
@@ -1076,15 +1054,11 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
                         key={puesto}
                         onClick={() => setFiltroPuesto(puesto)}
                         className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border ${
-                          activo 
-                            ? "bg-blue-600 text-white border-blue-600 shadow-sm" 
-                            : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50"
+                          activo ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50"
                         }`}
                       >
                         {puesto === "TODOS" ? "🌐 Todos" : puesto}
-                        <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>
-                          {count}
-                        </span>
+                        <span className={`ml-1 px-1 py-0.5 rounded-full text-[9px] ${activo ? "bg-white/20" : "bg-slate-100"}`}>{count}</span>
                       </button>
                     );
                   })}
@@ -1094,13 +1068,11 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
           </div>
         </div>
 
-        {/* Tabla de gestión */}
         <div className="flex-1 overflow-auto bg-white">
           {registrosFiltradosModal.filter(r => r.incidencia).length === 0 ? (
             <div className="p-12 text-center">
               <div className="text-6xl mb-3">📭</div>
               <div className="text-slate-500 font-semibold">No hay registros con incidencias en este filtro</div>
-              <div className="text-xs text-slate-400 mt-1">Ajusta los filtros o cambia de departamento</div>
             </div>
           ) : (
             <table className="w-full text-xs">
@@ -1114,11 +1086,10 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
                       <div className="text-xs">{col.etiqueta}</div>
                       <button
                         onClick={() => {
-                          const valor = prompt(`Aplicar valor a TODOS los empleados filtrados (${registrosFiltradosModal.filter(r => r.incidencia).length}) para "${col.etiqueta}":`, "0");
+                          const valor = prompt(`Aplicar valor a TODOS los empleados filtrados para "${col.etiqueta}":`, "0");
                           if (valor !== null) aplicarATodos(col.campo, Number(valor) || 0);
                         }}
                         className="text-[9px] text-blue-600 hover:text-blue-800 underline mt-0.5"
-                        title="Aplicar este valor a todos los empleados filtrados"
                       >
                         aplicar a todos
                       </button>
@@ -1135,14 +1106,10 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
                       <div className="text-[10px] text-slate-500">#{empleado.numero_empleado}</div>
                     </td>
                     <td className="p-3 text-slate-600 text-xs">
-                      <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
-                        {empleado.departamentos?.nombre || "N/A"}
-                      </span>
+                      <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">{empleado.departamentos?.nombre || "N/A"}</span>
                     </td>
                     <td className="p-3 text-slate-600 text-xs">
-                      <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
-                        {empleado.puestos?.nombre || "N/A"}
-                      </span>
+                      <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{empleado.puestos?.nombre || "N/A"}</span>
                     </td>
                     {columnas.map(col => {
                       const valSupervisor = incidencia[col.campo] ?? 0;
@@ -1196,15 +1163,14 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
           )}
         </div>
 
-        {/* Footer */}
         <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 rounded-b-2xl flex justify-between items-center">
           <div className="text-xs text-slate-600">
-            <strong>{registrosFiltradosModal.filter(r => r.incidencia).length}</strong> de <strong>{registros.filter(r => r.incidencia).length}</strong> empleados visibles · <strong>{columnas.length}</strong> campos
+            <strong>{registrosFiltradosModal.filter(r => r.incidencia).length}</strong> de <strong>{registros.filter(r => r.incidencia).length}</strong> empleados visibles
           </div>
           <div className="flex gap-2">
             <button onClick={onCerrar} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100">Cancelar</button>
-            <button onClick={handleGuardar} disabled={guardando} className={`${colorClasses.btn} text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center gap-2`}>
-              {guardando ? "⏳ Guardando..." : `💾 Guardar ${titulo}`}
+            <button onClick={handleGuardar} disabled={guardando} className={`bg-${config.color}-600 hover:bg-${config.color}-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center gap-2`}>
+              {guardando ? "⏳ Guardando..." : `💾 Guardar ${config.titulo}`}
             </button>
           </div>
         </div>
@@ -1213,7 +1179,6 @@ function ModalSegmento({ tipo, titulo, icono, color, columnas, registros, todosL
   );
 }
 
-// KPI MODERNO
 function KpiModerno({ titulo, valor, icono, color }) {
   const colores = {
     blue: { bg: "bg-blue-50", text: "text-blue-600" },
@@ -1235,7 +1200,6 @@ function KpiModerno({ titulo, valor, icono, color }) {
   );
 }
 
-// MODAL CAPTURA SUPERVISOR
 function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   const [valores, setValores] = useState(() => {
     const init = {};
@@ -1265,7 +1229,7 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
               ))}
             </div>
           ) : (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 text-center">⚠️ RH no ha habilitado campos para captura. Solicita permisos.</div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800 text-center">⚠️ RH no ha habilitado campos para captura.</div>
           )}
         </div>
         <div className="border-t px-6 py-4 flex justify-end gap-2 bg-slate-50 rounded-b-2xl">
@@ -1277,7 +1241,6 @@ function ModalCaptura({ empleado, columnas, guardando, onGuardar, onCerrar }) {
   );
 }
 
-// MODAL REVISIÓN RH
 function ModalRevision({ registro, columnas, guardando, onGuardar, onCerrar }) {
   const { empleado, incidencia } = registro;
   const [valores, setValores] = useState(() => {

@@ -34,7 +34,7 @@ export default function Vacaciones() {
     nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
 
-  // 🔥 NUEVO: Estado para el recibo de vacaciones
+  // 🔥 Estado para el recibo de vacaciones
   const [reciboData, setReciboData] = useState(null);
 
   useEffect(() => {
@@ -66,10 +66,10 @@ export default function Vacaciones() {
 
   const cargarEmpleados = async () => {
     try {
-      // 🔥 AGREGADO: 'empresa' y 'salario_diario' (ajusta los nombres si en tu BD son diferentes)
+      // 🔥 Asegúrate de que tu tabla 'empleados' tenga las columnas: empresa, salario_diario, salario_complemento
       const { data, error } = await supabase
         .from("empleados")
-        .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo, empresa, salario_diario")
+        .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo, empresa, salario_diario, salario_complemento")
         .eq("activo", true);
 
       if (error) { console.error("Error cargando empleados:", error); setEmpleados([]); return; }
@@ -172,20 +172,23 @@ export default function Vacaciones() {
     return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
   };
 
-  // 🔥 NUEVO: Generar datos del recibo
+  // 🔥 Generar datos del recibo oficial
   const generarRecibo = (empleado, diasSolicitados, fechaInicio, fechaFin) => {
     const antiguedad = calcularAntiguedad(empleado.fecha_ingreso);
     const resumen = obtenerResumenEmpleado(empleado.id, empleado.fecha_ingreso);
+    const diasSol = Number(diasSolicitados) || 0;
     
     setReciboData({
       empleado,
       antiguedad,
       resumen,
-      diasSolicitados: Number(diasSolicitados) || 0,
+      diasSolicitados: diasSol,
       fechaInicio: fechaInicio || "Por definir",
       fechaFin: fechaFin || "Por definir",
-      diasPendientesDespues: resumen.diasRemanentes - (Number(diasSolicitados) || 0),
-      fechaEmision: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' })
+      diasPendientesDespues: Math.max(0, resumen.diasRemanentes - diasSol),
+      fechaEmision: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' }),
+      montoVacaciones: empleado.salario_diario ? (diasSol * Number(empleado.salario_diario)) : 0,
+      montoComplemento: empleado.salario_complemento ? (diasSol * Number(empleado.salario_complemento)) : 0
     });
   };
 
@@ -246,12 +249,14 @@ export default function Vacaciones() {
     return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
   });
 
+  const formatearMoneda = (valor) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valor || 0);
+
   return (
     <Layout>
-      <div className="space-y-6 print:hidden"> {/* 🔥 Ocultar todo al imprimir excepto el recibo */}
+      <div className="space-y-6 print:hidden">
         <div className="mb-4">
           <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
-          <p className="text-slate-500">Gestión global, importación masiva, kardex y generación de recibos</p>
+          <p className="text-slate-500">Gestión global, importación masiva, kardex y generación de recibos oficiales</p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
@@ -487,7 +492,7 @@ export default function Vacaciones() {
                 <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{modalKardexEmpleado.resumen.diasRemanentes}</strong></div>
               </div>
 
-              {/* 🔥 NUEVO: Botón para generar recibo desde el Kardex */}
+              {/* 🔥 Generar Recibo desde el Kardex */}
               <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
                 <h4 className="font-bold text-blue-900 text-sm mb-3">📄 Generar Recibo de Solicitud/Aprobación</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
@@ -549,12 +554,11 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 NUEVO: MODAL DE RECIBO OFICIAL (Optimizado para Impresión) */}
+        {/* 🔥 MODAL DE RECIBO OFICIAL (Optimizado para Impresión) */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
               
-              {/* Encabezado del Recibo */}
               <div className="text-center border-b-2 border-slate-800 pb-4 mb-6">
                 <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide">
                   {reciboData.empleado.empresa || "EMPRESA"}
@@ -563,7 +567,6 @@ export default function Vacaciones() {
                 <p className="text-xs text-slate-500 mt-1">Fecha de emisión: {reciboData.fechaEmision}</p>
               </div>
 
-              {/* Datos del Colaborador */}
               <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
                 <div>
                   <p className="text-slate-500 text-xs uppercase font-bold">Nombre del Colaborador</p>
@@ -583,7 +586,6 @@ export default function Vacaciones() {
                 </div>
               </div>
 
-              {/* Tabla de Cálculo de Días */}
               <div className="mb-6">
                 <h3 className="text-sm font-bold text-slate-800 mb-2 uppercase">Desglose de Días de Vacaciones</h3>
                 <table className="w-full text-sm border border-slate-300">
@@ -618,7 +620,38 @@ export default function Vacaciones() {
                 </table>
               </div>
 
-              {/* Periodo Solicitado */}
+              {/* 🔥 Cálculo de Pago (Basado en tu Excel) */}
+              {(reciboData.montoVacaciones > 0 || reciboData.montoComplemento > 0) && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-bold text-slate-800 mb-2 uppercase">Cálculo Económico Estimado</h3>
+                  <table className="w-full text-sm border border-slate-300">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="p-2 border border-slate-300 text-left">Concepto</th>
+                        <th className="p-2 border border-slate-300 text-center">Base Diaria</th>
+                        <th className="p-2 border border-slate-300 text-center">Monto Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reciboData.montoVacaciones > 0 && (
+                        <tr>
+                          <td className="p-2 border border-slate-300">Pago de Vacaciones (Salario Fiscal)</td>
+                          <td className="p-2 border border-slate-300 text-center">{formatearMoneda(reciboData.empleado.salario_diario)}</td>
+                          <td className="p-2 border border-slate-300 text-center font-bold">{formatearMoneda(reciboData.montoVacaciones)}</td>
+                        </tr>
+                      )}
+                      {reciboData.montoComplemento > 0 && (
+                        <tr>
+                          <td className="p-2 border border-slate-300">Pago de Vacaciones (Complemento)</td>
+                          <td className="p-2 border border-slate-300 text-center">{formatearMoneda(reciboData.empleado.salario_complemento)}</td>
+                          <td className="p-2 border border-slate-300 text-center font-bold">{formatearMoneda(reciboData.montoComplemento)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <div className="mb-8 p-4 bg-slate-50 border border-slate-200 rounded-lg">
                 <p className="text-sm text-slate-800">
                   <strong>Periodo solicitado:</strong> Del <span className="font-bold underline">{reciboData.fechaInicio}</span> al <span className="font-bold underline">{reciboData.fechaFin}</span>
@@ -629,7 +662,6 @@ export default function Vacaciones() {
                 </p>
               </div>
 
-              {/* Firmas */}
               <div className="grid grid-cols-3 gap-8 mt-12 text-center text-xs">
                 <div>
                   <div className="border-t border-slate-800 pt-2 mt-8">
@@ -651,7 +683,6 @@ export default function Vacaciones() {
                 </div>
               </div>
 
-              {/* Botones de Acción (Ocultos al imprimir) */}
               <div className="mt-8 flex justify-end gap-3 print:hidden">
                 <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">
                   Cerrar
@@ -672,7 +703,7 @@ export default function Vacaciones() {
         @media print {
           body * { visibility: hidden; }
           .print\\:static, .print\\:static * { visibility: visible; }
-          .print\\:static { position: absolute; left: 0; top: 0; width: 100%; }
+          .print\\:static { position: absolute; left: 0; top: 0; width: 100%; background: white; }
         }
       `}</style>
     </Layout>

@@ -29,11 +29,6 @@ export default function Vacaciones() {
     nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
 
-  const [form, setForm] = useState({
-    empleado_id: "", fecha_inicio: "", fecha_fin: "", dias_solicitados: "",
-    nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
-  });
-
   const [reciboData, setReciboData] = useState(null);
 
   useEffect(() => {
@@ -241,15 +236,6 @@ export default function Vacaciones() {
     }
   };
 
-  const guardarVacaciones = async () => {
-    if (!form.empleado_id || !form.dias_solicitados) return alert("Completa los campos requeridos");
-    const { error } = await supabase.from("vacaciones").insert([{ ...form, estatus: "PENDIENTE" }]);
-    if (!error) {
-      setForm({ empleado_id: "", fecha_inicio: "", fecha_fin: "", dias_solicitados: "", nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "" });
-      await cargarVacaciones();
-    }
-  };
-
   const cambiarEstatusVacacion = async (vacacion, nuevoEstatus) => {
     if (!window.confirm(`¿Cambiar a ${nuevoEstatus}?`)) return;
     await supabase.from("vacaciones").update({ estatus: nuevoEstatus }).eq("id", vacacion.id);
@@ -266,14 +252,14 @@ export default function Vacaciones() {
       <div className="space-y-6 print:hidden">
         <div className="mb-4">
           <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
-          <p className="text-slate-500">Gestión global, importación masiva, kardex y generación de recibos</p>
+          <p className="text-slate-500">Gestión global, importación masiva y generación de recibos</p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
-          <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="⏳" color="text-amber-600" />
+          <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="" color="text-amber-600" />
           <KpiCard titulo="Aprobadas" valor={vacaciones.filter(v => v.estatus === "APROBADO").length} icono="✅" color="text-green-600" />
           <KpiCard titulo="Rechazadas" valor={vacaciones.filter(v => v.estatus === "RECHAZADO").length} icono="❌" color="text-red-600" />
-          <KpiCard titulo="Días Totales Descontados" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
+          <KpiCard titulo="Días Totales Descontados" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="️" color="text-blue-600" />
         </div>
 
         <div className="bg-slate-800 text-white rounded-2xl p-6 shadow-xl">
@@ -299,7 +285,7 @@ export default function Vacaciones() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold mb-3 text-slate-800"> Importar Archivo de Vacaciones (Excel)</h2>
+          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones (Excel)</h2>
           {!modoRevision ? (
             <input type="file" accept=".xlsx,.xls,.csv" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
           ) : (
@@ -366,8 +352,9 @@ export default function Vacaciones() {
           {busquedaActiva && <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">Limpiar filtro</button>}
         </div>
 
+        {/* TABLA PRINCIPAL CON BOTÓN KARDEX */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">👥 Balance de Vacaciones</h2>
+          <h2 className="text-xl font-bold mb-4"> Listado de Empleados - Vacaciones</h2>
           <div className="space-y-4">
             {Object.keys(empleadosAgrupados).length === 0 ? (
               <p className="text-center text-gray-500 py-8">No se encontraron empleados.</p>
@@ -408,7 +395,12 @@ export default function Vacaciones() {
                                       <span className={`font-bold px-2 py-1 rounded-full text-xs ${resumen.diasRemanentes < 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-800"}`}>{resumen.diasRemanentes}</span>
                                     </td>
                                     <td className="p-3 text-center">
-                                      <button onClick={() => setModalKardexEmpleado({ empleado: emp, antiguedad, resumen })} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">📜 Kardex</button>
+                                      <button 
+                                        onClick={() => setModalKardexEmpleado({ empleado: emp, antiguedad, resumen })} 
+                                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"
+                                      >
+                                        📋 Kardex
+                                      </button>
                                     </td>
                                   </tr>
                                 );
@@ -425,26 +417,7 @@ export default function Vacaciones() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">➕ Nueva Solicitud Manual</h2>
-          <div className="grid md:grid-cols-3 gap-4">
-            <select value={form.empleado_id} onChange={(e) => setForm({ ...form, empleado_id: e.target.value })} className="border rounded-xl p-3">
-              <option value="">Seleccionar empleado</option>
-              {empleados.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre_completo}</option>)}
-            </select>
-            <input type="number" placeholder="Días Solicitados" value={form.dias_solicitados} onChange={(e) => setForm({ ...form, dias_solicitados: e.target.value })} className="border rounded-xl p-3" />
-            <input type="text" placeholder="Nómina Impactada" value={form.nomina_impactada} onChange={(e) => setForm({ ...form, nomina_impactada: e.target.value })} className="border rounded-xl p-3" />
-            <select value={form.tipo_vacaciones} onChange={(e) => setForm({ ...form, tipo_vacaciones: e.target.value })} className="border rounded-xl p-3">
-              <option value="TOMADAS_Y_PAGADAS">✅ Pagadas y Tomadas</option>
-              <option value="PAGADAS_NO_TOMADAS">💰 Pagadas no Tomadas</option>
-            </select>
-            <input type="date" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} className="border rounded-xl p-3" />
-            <input type="date" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} className="border rounded-xl p-3" />
-            <input type="text" placeholder="Observaciones" value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} className="border rounded-xl p-3 md:col-span-3" />
-          </div>
-          <button onClick={guardarVacaciones} className="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-medium">Guardar Solicitud Pendiente</button>
-        </div>
-
+        {/* HISTORIAL DE SOLICITUDES */}
         <div className="bg-white rounded-2xl shadow-lg overflow-x-auto p-6">
           <h2 className="text-xl font-bold mb-4">📋 Historial de Solicitudes</h2>
           <table className="w-full text-sm">
@@ -486,12 +459,12 @@ export default function Vacaciones() {
           </table>
         </div>
 
-        {/* MODAL KARDEX */}
+        {/* MODAL KARDEX - Simplificado */}
         {modalKardexEmpleado && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 print:hidden">
             <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4 border-b pb-3">
-                <h3 className="text-xl font-bold"> Kardex: {modalKardexEmpleado.empleado.nombre_completo}</h3>
+                <h3 className="text-xl font-bold">📋 Kardex: {modalKardexEmpleado.empleado.nombre_completo}</h3>
                 <button onClick={() => setModalKardexEmpleado(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
               </div>
               
@@ -502,8 +475,9 @@ export default function Vacaciones() {
                 <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{modalKardexEmpleado.resumen.diasRemanentes}</strong></div>
               </div>
 
+              {/* Generar Recibo desde el Kardex */}
               <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                <h4 className="font-bold text-blue-900 text-sm mb-3">📄 Generar Recibo de Solicitud/Aprobación</h4>
+                <h4 className="font-bold text-blue-900 text-sm mb-3">📄 Generar Recibo de Vacaciones</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
                   <input type="number" id="reciboDias" placeholder="Días a tomar" className="border rounded p-2 bg-white" />
                   <input type="date" id="reciboInicio" className="border rounded p-2 bg-white" />
@@ -523,6 +497,7 @@ export default function Vacaciones() {
                 </div>
               </div>
 
+              {/* Agregar Registro Histórico */}
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
                 <h4 className="font-bold text-blue-900 text-sm mb-3">➕ Agregar Registro Histórico</h4>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
@@ -539,6 +514,7 @@ export default function Vacaciones() {
                 <button onClick={agregarDesdeKardex} className="mt-3 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold w-full md:w-auto">Guardar en Kardex</button>
               </div>
 
+              {/* Historial Aprobado */}
               <h4 className="font-bold mb-2 text-sm">Historial Aprobado</h4>
               <div className="max-h-48 overflow-y-auto border rounded-xl">
                 {modalKardexEmpleado.resumen.solicitudesAprobadas.length === 0 ? (
@@ -563,7 +539,7 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 MODAL DE RECIBO OFICIAL - Formato Exacto PAB/SHERGON */}
+        {/* MODAL DE RECIBO OFICIAL */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">

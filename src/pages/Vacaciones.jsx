@@ -34,7 +34,6 @@ export default function Vacaciones() {
     nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
 
-  // 🔥 Estado para el recibo de vacaciones
   const [reciboData, setReciboData] = useState(null);
 
   useEffect(() => {
@@ -66,7 +65,6 @@ export default function Vacaciones() {
 
   const cargarEmpleados = async () => {
     try {
-      // 🔥 Asegúrate de que tu tabla 'empleados' tenga las columnas: empresa, salario_diario, salario_complemento
       const { data, error } = await supabase
         .from("empleados")
         .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo, empresa, salario_diario, salario_complemento")
@@ -172,23 +170,37 @@ export default function Vacaciones() {
     return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
   };
 
-  // 🔥 Generar datos del recibo oficial
   const generarRecibo = (empleado, diasSolicitados, fechaInicio, fechaFin) => {
     const antiguedad = calcularAntiguedad(empleado.fecha_ingreso);
     const resumen = obtenerResumenEmpleado(empleado.id, empleado.fecha_ingreso);
     const diasSol = Number(diasSolicitados) || 0;
+    
+    const fechaInicioDate = new Date(fechaInicio);
+    const fechaFinDate = new Date(fechaFin);
+    const fechaRegresoDate = new Date(fechaFinDate);
+    fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
     
     setReciboData({
       empleado,
       antiguedad,
       resumen,
       diasSolicitados: diasSol,
-      fechaInicio: fechaInicio || "Por definir",
-      fechaFin: fechaFin || "Por definir",
+      fechaInicio,
+      fechaFin,
+      fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       diasPendientesDespues: Math.max(0, resumen.diasRemanentes - diasSol),
-      fechaEmision: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' }),
-      montoVacaciones: empleado.salario_diario ? (diasSol * Number(empleado.salario_diario)) : 0,
-      montoComplemento: empleado.salario_complemento ? (diasSol * Number(empleado.salario_complemento)) : 0
+      fechaEmision: new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }),
+      periodoInicio: fechaInicioDate.getFullYear(),
+      periodoFin: fechaFinDate.getFullYear(),
+      mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
+      mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
+      diaInicio: fechaInicioDate.getDate(),
+      diaFin: fechaFinDate.getDate(),
+      anoInicio: fechaInicioDate.getFullYear(),
+      anoFin: fechaFinDate.getFullYear(),
+      diaRegreso: fechaRegresoDate.getDate(),
+      mesRegreso: fechaRegresoDate.toLocaleString('es-MX', { month: 'long' }),
+      anoRegreso: fechaRegresoDate.getFullYear()
     });
   };
 
@@ -249,14 +261,12 @@ export default function Vacaciones() {
     return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
   });
 
-  const formatearMoneda = (valor) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valor || 0);
-
   return (
     <Layout>
       <div className="space-y-6 print:hidden">
         <div className="mb-4">
           <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
-          <p className="text-slate-500">Gestión global, importación masiva, kardex y generación de recibos oficiales</p>
+          <p className="text-slate-500">Gestión global, importación masiva, kardex y generación de recibos</p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
@@ -289,7 +299,7 @@ export default function Vacaciones() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones (Excel)</h2>
+          <h2 className="text-lg font-bold mb-3 text-slate-800"> Importar Archivo de Vacaciones (Excel)</h2>
           {!modoRevision ? (
             <input type="file" accept=".xlsx,.xls,.csv" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
           ) : (
@@ -481,7 +491,7 @@ export default function Vacaciones() {
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 print:hidden">
             <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4 border-b pb-3">
-                <h3 className="text-xl font-bold">📜 Kardex: {modalKardexEmpleado.empleado.nombre_completo}</h3>
+                <h3 className="text-xl font-bold"> Kardex: {modalKardexEmpleado.empleado.nombre_completo}</h3>
                 <button onClick={() => setModalKardexEmpleado(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
               </div>
               
@@ -492,7 +502,6 @@ export default function Vacaciones() {
                 <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{modalKardexEmpleado.resumen.diasRemanentes}</strong></div>
               </div>
 
-              {/* 🔥 Generar Recibo desde el Kardex */}
               <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
                 <h4 className="font-bold text-blue-900 text-sm mb-3">📄 Generar Recibo de Solicitud/Aprobación</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
@@ -504,7 +513,7 @@ export default function Vacaciones() {
                       const dias = document.getElementById('reciboDias').value;
                       const inicio = document.getElementById('reciboInicio').value;
                       const fin = document.getElementById('reciboFin').value;
-                      if(!dias) return alert("Ingresa al menos los días a tomar");
+                      if(!dias || !inicio || !fin) return alert("Ingresa días y fechas");
                       generarRecibo(modalKardexEmpleado.empleado, dias, inicio, fin);
                     }}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1"
@@ -554,140 +563,229 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 MODAL DE RECIBO OFICIAL (Optimizado para Impresión) */}
+        {/* 🔥 MODAL DE RECIBO OFICIAL - Formato Exacto PAB/SHERGON */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] print:static print:bg-white print:p-0">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
               
-              <div className="text-center border-b-2 border-slate-800 pb-4 mb-6">
-                <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide">
-                  {reciboData.empleado.empresa || "EMPRESA"}
-                </h1>
-                <h2 className="text-lg font-bold text-slate-700 mt-2">SOLICITUD Y APROBACIÓN DE VACACIONES</h2>
-                <p className="text-xs text-slate-500 mt-1">Fecha de emisión: {reciboData.fechaEmision}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
-                <div>
-                  <p className="text-slate-500 text-xs uppercase font-bold">Nombre del Colaborador</p>
-                  <p className="font-bold text-slate-900 border-b border-slate-300 pb-1">{reciboData.empleado.nombre_completo}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500 text-xs uppercase font-bold">Número de Empleado</p>
-                  <p className="font-bold text-slate-900 border-b border-slate-300 pb-1">{reciboData.empleado.numero_empleado}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500 text-xs uppercase font-bold">Departamento / Puesto</p>
-                  <p className="font-bold text-slate-900 border-b border-slate-300 pb-1">{reciboData.empleado.departamento} / {reciboData.empleado.puesto}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500 text-xs uppercase font-bold">Fecha de Ingreso</p>
-                  <p className="font-bold text-slate-900 border-b border-slate-300 pb-1">{reciboData.empleado.fecha_ingreso || "N/A"}</p>
-                </div>
-              </div>
-
-              <div className="mb-6">
-                <h3 className="text-sm font-bold text-slate-800 mb-2 uppercase">Desglose de Días de Vacaciones</h3>
-                <table className="w-full text-sm border border-slate-300">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="p-2 border border-slate-300 text-left">Concepto</th>
-                      <th className="p-2 border border-slate-300 text-center">Días</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="p-2 border border-slate-300">Antigüedad reconocida</td>
-                      <td className="p-2 border border-slate-300 text-center font-bold">{reciboData.antiguedad.texto}</td>
-                    </tr>
-                    <tr>
-                      <td className="p-2 border border-slate-300">Días que corresponden por ley/reglamento</td>
-                      <td className="p-2 border border-slate-300 text-center font-bold text-blue-700">{reciboData.resumen.diasCorrespondientes}</td>
-                    </tr>
-                    <tr>
-                      <td className="p-2 border border-slate-300">Días tomados anteriormente</td>
-                      <td className="p-2 border border-slate-300 text-center font-bold text-amber-700">- {reciboData.resumen.diasTomados}</td>
-                    </tr>
-                    <tr className="bg-blue-50">
-                      <td className="p-2 border border-slate-300 font-bold">Días solicitados en este periodo</td>
-                      <td className="p-2 border border-slate-300 text-center font-bold text-blue-800">{reciboData.diasSolicitados}</td>
-                    </tr>
-                    <tr className="bg-emerald-50">
-                      <td className="p-2 border border-slate-300 font-bold">Días pendientes después de este periodo</td>
-                      <td className="p-2 border border-slate-300 text-center font-bold text-emerald-800">{reciboData.diasPendientesDespues}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* 🔥 Cálculo de Pago (Basado en tu Excel) */}
-              {(reciboData.montoVacaciones > 0 || reciboData.montoComplemento > 0) && (
-                <div className="mb-6">
-                  <h3 className="text-sm font-bold text-slate-800 mb-2 uppercase">Cálculo Económico Estimado</h3>
-                  <table className="w-full text-sm border border-slate-300">
-                    <thead className="bg-slate-100">
-                      <tr>
-                        <th className="p-2 border border-slate-300 text-left">Concepto</th>
-                        <th className="p-2 border border-slate-300 text-center">Base Diaria</th>
-                        <th className="p-2 border border-slate-300 text-center">Monto Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reciboData.montoVacaciones > 0 && (
-                        <tr>
-                          <td className="p-2 border border-slate-300">Pago de Vacaciones (Salario Fiscal)</td>
-                          <td className="p-2 border border-slate-300 text-center">{formatearMoneda(reciboData.empleado.salario_diario)}</td>
-                          <td className="p-2 border border-slate-300 text-center font-bold">{formatearMoneda(reciboData.montoVacaciones)}</td>
-                        </tr>
-                      )}
-                      {reciboData.montoComplemento > 0 && (
-                        <tr>
-                          <td className="p-2 border border-slate-300">Pago de Vacaciones (Complemento)</td>
-                          <td className="p-2 border border-slate-300 text-center">{formatearMoneda(reciboData.empleado.salario_complemento)}</td>
-                          <td className="p-2 border border-slate-300 text-center font-bold">{formatearMoneda(reciboData.montoComplemento)}</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <div className="mb-8 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                <p className="text-sm text-slate-800">
-                  <strong>Periodo solicitado:</strong> Del <span className="font-bold underline">{reciboData.fechaInicio}</span> al <span className="font-bold underline">{reciboData.fechaFin}</span>
-                  {reciboData.fechaInicio === "Por definir" && " (Fechas por definir)"}
-                </p>
-                <p className="text-sm text-slate-800 mt-2">
-                  <strong>Modalidad:</strong> {formKardex.tipo_vacaciones || "TOMADAS Y PAGADAS"}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-8 mt-12 text-center text-xs">
-                <div>
-                  <div className="border-t border-slate-800 pt-2 mt-8">
-                    <p className="font-bold text-slate-900">EL COLABORADOR</p>
-                    <p className="text-slate-500">Nombre y Firma</p>
+              {/* DATOS DE CAPTURA */}
+              <div className="border-2 border-black p-4 mb-6">
+                <h3 className="font-bold text-sm mb-3 uppercase">DATOS DE CAPTURA</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold">NOMBRE:</p>
+                    <p className="font-bold bg-blue-50 p-1">{reciboData.empleado.nombre_completo}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold"># PROVEEDOR:</p>
+                    <p className="font-bold bg-yellow-200 p-1">{reciboData.empleado.numero_empleado}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha Ingreso:</p>
+                    <p className="bg-blue-50 p-1 text-center">{reciboData.empleado.fecha_ingreso || "N/A"}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="text-xs font-bold">Años de Servicio:</p>
+                      <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.antiguedad.anosCumplidos}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold">Días pendientes:</p>
+                      <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasRemanentes}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Días que Corresponden:</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasCorrespondientes}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Días a Disfrutar:</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha en Inicial Vacaciones:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha en Final Vacaciones:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Día que Inicia Labores:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.fechaRegreso}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha Elaboración del Reporte:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.fechaEmision}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold">Observaciones:</p>
+                    <p className="bg-blue-50 p-1 min-h-[2rem]">&nbsp;</p>
                   </div>
                 </div>
-                <div>
-                  <div className="border-t border-slate-800 pt-2 mt-8">
-                    <p className="font-bold text-slate-900">JEFE INMEDIATO</p>
-                    <p className="text-slate-500">Nombre y Firma</p>
+                <div className="mt-2 text-xs text-right">
+                  <p className="font-bold">Nota.- Click en el Icono de la Impresora</p>
+                  <p>Lista nada mas para imprimirse</p>
+                  <p>media Hoja, o si no click Icono</p>
+                  <p>ver Vista preliminar</p>
+                </div>
+              </div>
+
+              {/* FORMATO PRINCIPAL */}
+              <div className="border-2 border-black p-6">
+                <div className="text-center mb-4">
+                  <h1 className="text-xl font-black uppercase">PLÁSTICOS AMBIENTALES DEL BAJIO</h1>
+                  <h2 className="text-lg font-bold mt-2">SOLICITUD Y AUTORIZACION DE</h2>
+                  <h2 className="text-lg font-bold">VACACIONES</h2>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold">Nombre de la Empresa: <span className="font-normal">Plástico Ambientales del Bajío S.A. de C.V.</span></p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Área y/ p Departamento:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.empleado.departamento || ""}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">No de Empleado:</p>
+                    <p className="bg-blue-50 p-1 text-center">{reciboData.empleado.numero_empleado}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Nombre del Empleado:</p>
+                    <p className="bg-blue-50 p-1 font-bold">{reciboData.empleado.nombre_completo}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha de Ingeso:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.empleado.fecha_ingreso || "N/A"}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <p className="text-xs font-bold">Años de Servicio:</p>
+                      <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.antiguedad.anosCumplidos}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold">AÑOS</p>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className="border-t border-slate-800 pt-2 mt-8">
-                    <p className="font-bold text-slate-900">RECURSOS HUMANOS</p>
-                    <p className="text-slate-500">Nombre y Firma</p>
+
+                <div className="grid grid-cols-3 gap-4 text-sm mb-4 border-t border-b border-black py-2">
+                  <div>
+                    <p className="text-xs font-bold">Días que corresponden:</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasCorrespondientes}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Días a disfrutar :</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Días Pendientes:</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasRemanentes}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold">Período a Disfrutar:</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <p className="text-xs">del Año de</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.periodoInicio}</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.periodoFin}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <p className="text-xs">al Año</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">&nbsp;</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">&nbsp;</p>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-xs font-bold mb-2">Días que Inician sus Vacaciones</p>
+                  <div className="grid grid-cols-6 gap-2 mb-2">
+                    <p className="text-xs text-right">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diaInicio}</p>
+                    <p className="text-xs">de</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.mesInicio}</p>
+                    <p className="text-xs">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.anoInicio}</p>
+                  </div>
+                  <div className="grid grid-cols-6 gap-2">
+                    <p className="text-xs text-right">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diaFin}</p>
+                    <p className="text-xs">de</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.mesFin}</p>
+                    <p className="text-xs">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.anoFin}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <p className="text-xs font-bold">FECHA EN QUE DEBERÁ DE PRESENTARSE A TRABAJAR:</p>
+                  </div>
+                  <div>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.fechaRegreso}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <p className="text-xs font-bold">OBSERVACIONES:</p>
+                  </div>
+                  <div>
+                    <p className="bg-blue-50 p-1">0</p>
+                  </div>
+                </div>
+
+                <div className="border-t-2 border-black pt-4 mt-6">
+                  <p className="text-xs font-bold mb-4">
+                    POR EL PRESENTE EXPRESO MI CONFORMIDAD DE SOLICITAR Y GOZAR MIS VACACIONES DE ACUERDO A LO QUE ESTABLECE EL 
+                    ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO, CONSIDERANDO LOS SIGUIENTES DATOS:
+                  </p>
+                  
+                  <div className="grid grid-cols-5 gap-2 mb-8">
+                    <div className="col-span-1">&nbsp;</div>
+                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().getDate()}</div>
+                    <div className="bg-blue-50 p-1 text-center font-bold">A</div>
+                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().toLocaleString('es-MX', {month: 'long'})}</div>
+                    <div className="bg-blue-50 p-1 text-center font-bold">DE</div>
+                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().getFullYear()}</div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-4 text-center text-xs mt-8">
+                    <div>
+                      <p className="bg-blue-50 p-2 mb-2 font-bold">{reciboData.empleado.nombre_completo}</p>
+                      <p className="font-bold">Firma de Conformidad<br/>del Empleado</p>
+                    </div>
+                    <div>
+                      <p className="border-b border-black h-12 mb-2">&nbsp;</p>
+                      <p className="font-bold">Firma de Autorización<br/>Líder</p>
+                    </div>
+                    <div>
+                      <p className="border-b border-black h-12 mb-2">&nbsp;</p>
+                      <p className="font-bold">Firma de Autorización<br/>Encargado</p>
+                    </div>
+                    <div>
+                      <p className="border-b border-black h-12 mb-2">&nbsp;</p>
+                      <p className="font-bold">Vo. Bo.<br/>Capital Humano</p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end gap-3 print:hidden">
-                <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">
+              <div className="mt-6 flex justify-end gap-3 print:hidden">
+                <button 
+                  onClick={() => setReciboData(null)} 
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold"
+                >
                   Cerrar
                 </button>
-                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2">
+                <button 
+                  onClick={() => window.print()} 
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                >
                   🖨️ Imprimir / Guardar como PDF
                 </button>
               </div>
@@ -698,12 +796,12 @@ export default function Vacaciones() {
 
       </div>
       
-      {/* 🔥 Estilos específicos para impresión */}
       <style>{`
         @media print {
           body * { visibility: hidden; }
           .print\\:static, .print\\:static * { visibility: visible; }
           .print\\:static { position: absolute; left: 0; top: 0; width: 100%; background: white; }
+          @page { margin: 1cm; size: letter landscape; }
         }
       `}</style>
     </Layout>

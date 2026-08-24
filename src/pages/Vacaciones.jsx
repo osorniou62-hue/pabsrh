@@ -4,13 +4,11 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// 🔥 NORMALIZADOR DE NOMBRES (para comparar sin importar mayúsculas, acentos o espacios)
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
 };
 
-// 🔥 CALCULADOR DE ANTIGÜEDAD
 const calcularAntiguedad = (fechaIngresoStr) => {
   if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
   try {
@@ -25,23 +23,27 @@ const calcularAntiguedad = (fechaIngresoStr) => {
   }
 };
 
-// 🔥 PARSER DE FECHAS ROBUSTO (maneja dd/mm/yyyy, dd/mmm/yy, números de Excel, y errores de dedo como 1407/2026)
+// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (maneja formatos Excel, errores de dedo y textos)
 const parsearFechaCSV = (valor) => {
   if (!valor) return null;
-  if (typeof valor === 'number') {
-    const fecha = new Date((valor - 25569) * 86400 * 1000);
+  
+  // Manejar fechas en formato número de Excel (ej: 46007)
+  const numVal = parseFloat(valor);
+  if (!isNaN(numVal) && numVal > 10000) {
+    const fecha = new Date((numVal - 25569) * 86400 * 1000);
     if (!isNaN(fecha.getTime())) return fecha.toISOString().split('T')[0];
   }
+
   let str = String(valor).trim();
-  if (str === '-' || str.toLowerCase().includes('pagad') || str.includes('#¡REF!') || str === '') return null;
+  if (str === '-' || str.toUpperCase().includes('PAGAD') || str.includes('#¡REF!') || str === '') return null;
   
-  // Corregir errores de dedo comunes (ej: "1407/2026" -> "14/07/2026")
-  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3');
-  
+  // Corregir errores de dedo comunes (ej: "1407/2026" -> "14/07/2026", "10//07" -> "10/07")
+  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3').replace(/\/+/g, '/');
+
   const matchSlash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4,5})$/);
   if (matchSlash) {
     let [, dia, mes, anio] = matchSlash;
-    if (anio.length > 4) anio = anio.slice(-4); // Tomar últimos 4 dígitos si hay error
+    if (anio.length > 4) anio = anio.slice(-4);
     if (anio.length === 2) anio = '20' + anio;
     return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
   }
@@ -53,13 +55,6 @@ const parsearFechaCSV = (valor) => {
     const mesNum = meses[mes.toLowerCase()];
     if (anio.length === 2) anio = '20' + anio;
     if (mesNum) return `${anio}-${mesNum}-${dia.padStart(2, '0')}`;
-  }
-  
-  const matchGuion = str.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
-  if (matchGuion) {
-    let [, dia, mes, anio] = matchGuion;
-    if (anio.length === 2) anio = '20' + anio;
-    return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
   }
   
   return null;
@@ -132,7 +127,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Excepción vacaciones:", err); setVacaciones([]); }
   };
 
-  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO
+  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO (Maneja el CSV desordenado)
   const procesarArchivoExcel = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -146,19 +141,31 @@ export default function Vacaciones() {
       try {
         const workbook = XLSX.read(e.target.result, { type: "binary", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        // Leer como matriz de arrays para manejar filas desordenadas
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         
+        // Buscar la fila de encabezados para saber dónde empiezan los datos reales
+        let startIndex = 0;
+        for (let i = 0; i < rows.length; i++) {
+          if (String(rows[i][4]).toUpperCase().includes('NOMBRE DEL TRABAJADOR')) {
+            startIndex = i + 1;
+            break;
+          }
+        }
+
         let empleadosProcesados = 0;
-        let vacacionesActualizadas = 0;
         let vacacionesCreadas = 0;
+        let vacacionesActualizadas = 0;
         let errores = 0;
 
-        for (let i = 0; i < rows.length; i++) {
-          const fila = rows[i];
-          const numEmp = String(fila['N°'] || fila['N'] || fila['NUMERO'] || '').trim();
-          const nombreEmp = String(fila['NOMBRE DEL TRABAJADOR'] || fila['NOMBRE'] || '').trim();
+        for (let i = startIndex; i < rows.length; i++) {
+          const row = rows[i];
+          const numEmp = String(row[0] || '').trim();
+          const nombreEmp = String(row[4] || '').trim();
           
+          // Saltar filas vacías o duplicados del encabezado
           if (!numEmp && !nombreEmp) continue;
+          if (nombreEmp.toUpperCase() === 'NOMBRE DEL TRABAJADOR') continue;
 
           const empleadoMatch = empleados.find(emp => 
             String(emp.numero_empleado) === numEmp || 
@@ -168,40 +175,35 @@ export default function Vacaciones() {
           if (!empleadoMatch) { errores++; continue; }
           empleadosProcesados++;
 
-          const keys = Object.keys(fila);
-          const bloquesVacaciones = [];
-          
-          // 🔥 Buscar bloques repetidos de vacaciones: DÍAS, INICIO, TERMINO, REGRESO LAB
-          for (let j = 0; j < keys.length; j++) {
-            const key = keys[j];
-            if (/^DÍAS$/i.test(key) || /^DIAS$/i.test(key)) {
-              if (j + 3 < keys.length) {
-                const keyInicio = keys[j + 1];
-                const keyTermino = keys[j + 2];
-                const keyRegreso = keys[j + 3];
-                
-                if (/INICIO/i.test(keyInicio) && /TERMINO|FIN/i.test(keyTermino) && /REGRESO/i.test(keyRegreso)) {
-                  const dias = Number(fila[key]) || 0;
-                  const fechaInicio = parsearFechaCSV(fila[keyInicio]);
-                  const fechaFin = parsearFechaCSV(fila[keyTermino]);
-                  
-                  if (dias > 0 && fechaInicio) {
-                    const tipoVac = String(fila[keyRegreso] || '').toUpperCase().includes('PAGAD') ? 'PAGADAS_NO_TOMADAS' : 'TOMADAS_Y_PAGADAS';
-                    bloquesVacaciones.push({
-                      dias_solicitados: dias,
-                      fecha_inicio: fechaInicio,
-                      fecha_fin: fechaFin || fechaInicio,
-                      estatus: "APROBADO",
-                      tipo_vacaciones: tipoVac,
-                      observaciones: "Importado desde CSV histórico"
-                    });
-                  }
-                }
+          // 🔥 Extraer bloques de vacaciones (cada bloque son 4 columnas: Días, Inicio, Termino, Regreso)
+          // Comienzan aproximadamente en la columna 20
+          const vacBlocks = [];
+          for (let j = 20; j < row.length - 3; j += 4) {
+            const dias = parseInt(row[j]);
+            const inicio = String(row[j+1]).trim();
+            const termino = String(row[j+2]).trim();
+            const regreso = String(row[j+3]).trim();
+
+            if (!isNaN(dias) && dias > 0 && inicio && inicio !== '-' && !inicio.toUpperCase().includes('PAGAD')) {
+              const isPagadas = regreso.toUpperCase().includes('PAGAD');
+              const fechaInicioParsed = parsearFechaCSV(inicio);
+              const fechaFinParsed = parsearFechaCSV(termino) || fechaInicioParsed;
+              
+              if (fechaInicioParsed) {
+                vacBlocks.push({
+                  dias_solicitados: dias,
+                  fecha_inicio: fechaInicioParsed,
+                  fecha_fin: fechaFinParsed,
+                  tipo_vacaciones: isPagadas ? 'PAGADAS_NO_TOMADAS' : 'TOMADAS_Y_PAGADAS',
+                  estatus: 'APROBADO',
+                  observaciones: 'Importado desde CSV histórico'
+                });
               }
             }
           }
 
-          for (const bloque of bloquesVacaciones) {
+          // Guardar cada bloque de vacaciones en la base de datos
+          for (const bloque of vacBlocks) {
             try {
               const { data: existente } = await supabase
                 .from("vacaciones")
@@ -392,6 +394,22 @@ export default function Vacaciones() {
     }
   };
 
+  // 🔥 NUEVO: Función para mostrar un ejemplo de recibo
+  const verEjemploRecibo = () => {
+    setEmpresaRecibo("PAB");
+    setReciboData({
+      empleado: { nombre_completo: "JUAN PÉREZ EJEMPLO", numero_empleado: "00000", fecha_ingreso: "2020-01-15" },
+      diasSolicitados: 6,
+      fechaInicio: "2026-08-10",
+      fechaFin: "2026-08-15",
+      fechaRegreso: "lunes, 17 de agosto de 2026",
+      diaInicio: 10, mesInicio: "agosto", anoInicio: 2026,
+      diaFin: 15, mesFin: "agosto", anoFin: 2026,
+      antiguedad: { anosCumplidos: 6, texto: "6 año(s)" },
+      resumen: { diasCorrespondientes: 22, diasRemanentes: 16 }
+    });
+  };
+
   const guardarNuevaSolicitud = async () => {
     if (!formSolicitud.fechaInicio || !formSolicitud.fechaFin || !formSolicitud.dias) {
       alert("Completa todos los campos obligatorios");
@@ -527,28 +545,73 @@ export default function Vacaciones() {
           <KpiCard titulo="Días Totales" valor={totalDias} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* BUSCADOR DE EMPLEADOS */}
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">🔎 Buscar Empleado</h2>
-          <div className="relative">
-            <input 
-              type="text" 
-              placeholder="Escribe el nombre o número de empleado..." 
-              value={busquedaTexto}
-              onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
-              onFocus={() => setMostrarSugerencias(true)}
-              className="w-full border-2 border-slate-200 rounded-xl p-3 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-            />
-            {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
-              <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
-                {sugerenciasEmpleados.map((emp) => (
-                  <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
-                    <span className="font-medium">{emp.nombre_completo}</span>
-                    <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
-                  </li>
+        {/* REGLAS GLOBALES */}
+        <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
+          <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">⚙️</span>
+              <div className="text-left">
+                <h2 className="text-base font-bold">Reglas Globales por Antigüedad</h2>
+                <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas</p>
+              </div>
+            </div>
+            <span className="text-xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+          </button>
+          {reglasExpandidas && (
+            <div className="px-6 py-4 border-t border-slate-700 space-y-3">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="text-xs text-slate-300 block mb-1">Año de Antigüedad</label>
+                  <select value={anoReglaInput} onChange={(e) => { setAnoReglaInput(Number(e.target.value)); setDiasReglaInput(reglasGlobales[Number(e.target.value)] ?? ""); }} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-40">
+                    {Array.from({ length: 51 }, (_, i) => <option key={i} value={i}>{i === 0 ? "Año 0 (< 1 año)" : `Año ${i}`}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300 block mb-1">Días Correspondientes</label>
+                  <input type="number" value={diasReglaInput} onChange={(e) => setDiasReglaInput(e.target.value)} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-32" />
+                </div>
+                <button onClick={guardarReglaGlobal} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold">Guardar Regla</button>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
+                {Object.entries(reglasGlobales).sort(([a], [b]) => Number(a) - Number(b)).map(([ano, dias]) => (
+                  <span key={ano} className="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600">Año {ano}: <strong>{dias} días</strong></span>
                 ))}
-              </ul>
-            )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 🔥 BUSCADOR Y EJEMPLO DE RECIBO (Movido aquí abajo) */}
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">🔎 Búsqueda y Acciones</h2>
+          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div className="relative flex-1 w-full">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input 
+                type="text" 
+                placeholder="Buscar empleado por nombre o número..." 
+                value={busquedaTexto}
+                onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
+                onFocus={() => setMostrarSugerencias(true)}
+                className="w-full pl-10 pr-3 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
+                <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
+                  {sugerenciasEmpleados.map((emp) => (
+                    <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
+                      <span className="font-medium">{emp.nombre_completo}</span>
+                      <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button 
+              onClick={verEjemploRecibo}
+              className="whitespace-nowrap bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition"
+            >
+              📄 Ver Ejemplo de Recibo
+            </button>
           </div>
           {busquedaActiva && (
             <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
@@ -557,7 +620,7 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* IMPORTACIÓN HISTÓRICA ROBUSTA */}
+        {/* IMPORTACIÓN HISTÓRICA */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <h2 className="text-xl font-bold mb-4">📥 Importar Histórico de Vacaciones (CSV)</h2>
           {!modoImportacion ? (
@@ -591,42 +654,6 @@ export default function Vacaciones() {
                   </button>
                 </div>
               ) : null}
-            </div>
-          )}
-        </div>
-
-        {/* REGLAS GLOBALES */}
-        <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
-          <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
-            <div className="flex items-center gap-3">
-              <span className="text-lg">⚙️</span>
-              <div className="text-left">
-                <h2 className="text-base font-bold">Reglas Globales por Antigüedad</h2>
-                <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas</p>
-              </div>
-            </div>
-            <span className="text-xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
-          </button>
-          {reglasExpandidas && (
-            <div className="px-6 py-4 border-t border-slate-700 space-y-3">
-              <div className="flex flex-wrap gap-3 items-end">
-                <div>
-                  <label className="text-xs text-slate-300 block mb-1">Año de Antigüedad</label>
-                  <select value={anoReglaInput} onChange={(e) => { setAnoReglaInput(Number(e.target.value)); setDiasReglaInput(reglasGlobales[Number(e.target.value)] ?? ""); }} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-40">
-                    {Array.from({ length: 51 }, (_, i) => <option key={i} value={i}>{i === 0 ? "Año 0 (< 1 año)" : `Año ${i}`}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-300 block mb-1">Días Correspondientes</label>
-                  <input type="number" value={diasReglaInput} onChange={(e) => setDiasReglaInput(e.target.value)} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-32" />
-                </div>
-                <button onClick={guardarReglaGlobal} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold">Guardar Regla</button>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
-                {Object.entries(reglasGlobales).sort(([a], [b]) => Number(a) - Number(b)).map(([ano, dias]) => (
-                  <span key={ano} className="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600">Año {ano}: <strong>{dias} días</strong></span>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -697,7 +724,7 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* 🔥 MODAL KARDEX COMPLETO CON FUNCIONALIDAD RH */}
+        {/* MODAL KARDEX COMPLETO */}
         {kardexData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-y-auto p-6">
@@ -799,7 +826,7 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 MODAL CREAR/EDITAR SOLICITUD */}
+        {/* MODAL CREAR/EDITAR SOLICITUD */}
         {formSolicitud.abierto && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
@@ -837,7 +864,7 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* MODAL RECIBO */}
+        {/* MODAL RECIBO (Sirve tanto para históricos como para el ejemplo) */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">

@@ -9,6 +9,13 @@ const normalizarNombre = (texto) => {
   return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
 };
 
+const calcularAntiguedad = (fechaIngresoStr) => {
+  if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
+  const dias = Math.floor((new Date() - new Date(fechaIngresoStr)) / (1000 * 60 * 60 * 24));
+  const anos = Math.floor(dias / 365);
+  return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
+};
+
 export default function Vacaciones() {
   const [empleados, setEmpleados] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
@@ -20,12 +27,15 @@ export default function Vacaciones() {
   const [diasReglaInput, setDiasReglaInput] = useState("");
   const [reglasExpandidas, setReglasExpandidas] = useState(false);
 
-  const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
-  const [mapaColumnas, setMapaColumnas] = useState({});
-  
+  // 🔥 IMPORTACIÓN
   const [archivoVacaciones, setArchivoVacaciones] = useState(null);
   const [datosImportados, setDatosImportados] = useState([]);
   const [modoRevision, setModoRevision] = useState(false);
+
+  // 🔥 KARDEX Y RECIBOS
+  const [kardexData, setKardexData] = useState(null);
+  const [reciboData, setReciboData] = useState(null);
+  const [empresaRecibo, setEmpresaRecibo] = useState("PAB");
 
   const [busquedaTexto, setBusquedaTexto] = useState("");
   const [empleadoSeleccionadoId, setEmpleadoSeleccionadoId] = useState("");
@@ -33,21 +43,8 @@ export default function Vacaciones() {
   const [busquedaActiva, setBusquedaActiva] = useState(false);
   const [deptoExpandido, setDeptoExpandido] = useState({});
 
-  // 🔥 NUEVO: Estado para el Kardex de RH
-  const [kardexData, setKardexData] = useState(null);
-  
-  // 🔥 NUEVO: Estado para el recibo y selección de empresa
-  const [reciboData, setReciboData] = useState(null);
-  const [empresaRecibo, setEmpresaRecibo] = useState("PAB");
-
-  const [formKardex, setFormKardex] = useState({
-    fecha_inicio: "", fecha_fin: "", dias_solicitados: "",
-    nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
-  });
-
   useEffect(() => {
     const inicializar = async () => {
-      await cargarConfiguracionMapeo();
       await cargarReglasGlobales();
       await cargarCatalogos();
       await cargarEmpleados();
@@ -55,17 +52,6 @@ export default function Vacaciones() {
     };
     inicializar();
   }, []);
-
-  const cargarConfiguracionMapeo = async () => {
-    try {
-      const { data } = await supabase.from("configuracion_tablas").select("configuracion").eq("clave", "config_mapeo_columnas_dinamico").maybeSingle();
-      if (data?.configuracion) setConfiguracionMapeo(data.configuracion);
-      else {
-        const local = localStorage.getItem("config_mapeo_columnas_dinamico");
-        if (local) setConfiguracionMapeo(JSON.parse(local));
-      }
-    } catch (err) { console.error("Error cargando mapeo:", err); }
-  };
 
   const cargarReglasGlobales = async () => {
     const { data, error } = await supabase.from("regla_vacaciones").select("*");
@@ -96,62 +82,121 @@ export default function Vacaciones() {
     try {
       const { data: emps, error: errorEmps } = await supabase.from("empleados").select("*").eq("activo", true).order("nombre_completo");
       if (errorEmps) { console.error("Error cargando empleados:", errorEmps); setEmpleados([]); return; }
-
-      if (emps && emps.length > 0 && configuracionMapeo?.asignacion) {
-        const columnasReales = Object.keys(emps[0]);
-        const nuevoMapa = {};
-        Object.values(configuracionMapeo.asignacion).forEach(info => {
-          const nombreBuscado = info.esManual ? info.campoManual : info.campoDestino;
-          if (!nombreBuscado) return;
-          const nombreNormalizado = nombreBuscado.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (columnasReales.includes(nombreBuscado)) { nuevoMapa[nombreBuscado] = nombreBuscado; return; }
-          const coincidencia = columnasReales.find(colReal => colReal.toLowerCase().replace(/[^a-z0-9]/g, "") === nombreNormalizado);
-          if (coincidencia) { nuevoMapa[nombreBuscado] = coincidencia; } 
-          else {
-            const parcial = columnasReales.find(colReal => {
-              const colNorm = colReal.toLowerCase().replace(/[^a-z0-9]/g, "");
-              return colNorm.includes(nombreNormalizado) || nombreNormalizado.includes(colNorm);
-            });
-            nuevoMapa[nombreBuscado] = parcial || nombreBuscado;
-          }
-        });
-        setMapaColumnas(nuevoMapa);
-      }
-
-      let empleadosProcesados = (emps || []).map(emp => {
-        let deptoObj = emp.departamento_id ? departamentosLista.find(d => d.id === emp.departamento_id) : null;
-        if (!deptoObj && emp.departamento) deptoObj = { nombre: emp.departamento };
-        let puestoObj = emp.puesto_id ? puestosLista.find(p => p.id === emp.puesto_id) : null;
-        if (!puestoObj && emp.puesto) puestoObj = { nombre: emp.puesto };
-        return { ...emp, departamentos: deptoObj, puestos: puestoObj };
-      });
-      setEmpleados(empleadosProcesados);
+      setEmpleados(emps || []);
     } catch (err) { console.error("Excepción en cargarEmpleados:", err); setEmpleados([]); }
   };
 
   const cargarVacaciones = async () => {
     try {
-      const { data, error } = await supabase.from("vacaciones").select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)").order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("vacaciones").select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso, empresa)").order("created_at", { ascending: false });
       if (!error) setVacaciones(data || []);
     } catch (err) { console.error("Error cargando vacaciones:", err); }
   };
 
-  const calcularAntiguedad = (fechaIngresoStr) => {
-    if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
-    const dias = Math.floor((new Date() - new Date(fechaIngresoStr)) / (1000 * 60 * 60 * 24));
-    const anos = Math.floor(dias / 365);
-    return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
+  // 🔥 LÓGICA DE IMPORTACIÓN DE CSV HISTÓRICO
+  const procesarArchivoExcel = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setArchivoVacaciones(file);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: "binary", cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        
+        const registrosVacaciones = [];
+        
+        rows.forEach((fila, index) => {
+          const keys = Object.keys(fila);
+          // Identificar empleado
+          const numKey = keys.find(k => /n[^a-z]*o|numero/i.test(k));
+          const nombreKey = keys.find(k => /nombre|trabajador/i.test(k));
+          const numEmp = numKey ? String(fila[numKey]).trim() : "";
+          const nombreEmp = nombreKey ? String(fila[nombreKey]).trim() : "";
+          
+          const empleadoMatch = empleados.find(emp => 
+            String(emp.numero_empleado) === numEmp || 
+            normalizarNombre(emp.nombre_completo) === normalizarNombre(nombreEmp)
+          );
+
+          if (!empleadoMatch) return;
+
+          // Buscar datos de vacaciones en la fila (maneja el formato ancho del CSV)
+          const inicioKey = keys.find(k => /inicio|fecha/i.test(k) && !/alta/i.test(k));
+          const finKey = keys.find(k => /termino|fin/i.test(k));
+          const diasKey = keys.find(k => /d[ií]as/i.test(k) && !/pendiente/i.test(k));
+
+          if (inicioKey && diasKey) {
+            let fechaInicio = fila[inicioKey];
+            let fechaFin = finKey ? fila[finKey] : fechaInicio;
+            
+            // Convertir fechas de Excel si es necesario
+            if (typeof fechaInicio === 'number') {
+              const d = new Date((fechaInicio - 25569) * 86400 * 1000);
+              fechaInicio = d.toISOString().split('T')[0];
+            }
+            if (typeof fechaFin === 'number') {
+              const d = new Date((fechaFin - 25569) * 86400 * 1000);
+              fechaFin = d.toISOString().split('T')[0];
+            }
+
+            // Si hay múltiples bloques en la misma fila, el usuario podrá agregarlos manualmente desde el Kardex.
+            // Aquí importamos el primer bloque válido encontrado como histórico "APROBADO".
+            registrosVacaciones.push({
+              id_fila: index,
+              empleado_id: empleadoMatch.id,
+              nombre_encontrado: empleadoMatch.nombre_completo,
+              numero_encontrado: empleadoMatch.numero_empleado,
+              estatus_match: "✅ Vinculado",
+              datos_vacaciones: {
+                fecha_inicio: fechaInicio,
+                fecha_fin: fechaFin,
+                dias_solicitados: Number(fila[diasKey]) || 0,
+                estatus: "APROBADO", // Histórico
+                tipo_vacaciones: "TOMADAS_Y_PAGADAS",
+                observaciones: "Importación histórica desde CSV"
+              }
+            });
+          }
+        });
+
+        setDatosImportados(registrosVacaciones);
+        setModoRevision(true);
+        alert(`✅ Se procesaron ${rows.length} filas.\n✅ Se encontraron ${registrosVacaciones.length} registros de vacaciones válidos para importar.`);
+      } catch (error) {
+        console.error(error);
+        alert("Error al leer el archivo: " + error.message);
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
-  const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
-    const anos = calcularAntiguedad(fechaIngresoStr).anosCumplidos;
-    const diasCorrespondientes = Number(reglasGlobales[anos] || 0);
-    const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(empleadoId) && v.estatus === "APROBADO");
-    const diasTomados = solicitudesAprobadas.reduce((acc, curr) => acc + Number(curr.dias_solicitados || 0), 0);
-    return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
+  const guardarImportacionRevisada = async () => {
+    const datosValidos = datosImportados.filter(d => d.empleado_id);
+    if (datosValidos.length === 0) { alert("⚠️ No hay datos vinculados."); return; }
+    if (!window.confirm(`¿Guardar ${datosValidos.length} registros históricos en la base de datos?`)) return;
+    
+    let errores = 0;
+    for (const item of datosValidos) {
+      const { error } = await supabase.from("vacaciones").insert([{ 
+        empleado_id: item.empleado_id, 
+        ...item.datos_vacaciones 
+      }]);
+      if (error) errores++;
+    }
+    
+    if (errores === 0) {
+      alert("✅ Importación histórica guardada exitosamente.");
+      setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null);
+      await cargarVacaciones();
+    } else { 
+      alert(`⚠️ Se guardaron algunos, pero hubo ${errores} errores.`); 
+    }
   };
 
-  // 🔥 FUNCIÓN: Abrir Kardex de RH para un empleado
+  // 🔥 LÓGICA DE KARDEX Y APROBACIÓN
   const abrirKardexRH = (emp) => {
     const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
     const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
@@ -159,27 +204,24 @@ export default function Vacaciones() {
     setKardexData({ empleado: emp, resumen, solicitudesPendientes, solicitudesAprobadas });
   };
 
-  // 🔥 FUNCIÓN: Aprobar solicitud y abrir recibo
   const aprobarYGenerarRecibo = async (vacacionId, empresa) => {
     try {
       const { data: vacacionData, error } = await supabase
         .from("vacaciones")
         .update({ estatus: "APROBADO" })
         .eq("id", vacacionId)
-        .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)")
+        .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso, empresa)")
         .single();
 
       if (error) throw error;
-
-      await cargarVacaciones(); // Recargar lista
+      await cargarVacaciones();
       
-      // Preparar datos para el recibo
       const fechaInicioDate = new Date(vacionData.fecha_inicio);
       const fechaFinDate = new Date(vacionData.fecha_fin);
       const fechaRegresoDate = new Date(fechaFinDate);
       fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
 
-      setEmpresaRecibo(empresa); // Guardar la empresa seleccionada
+      setEmpresaRecibo(empresa);
       setReciboData({
         empleado: vacacionData.empleados,
         diasSolicitados: vacacionData.dias_solicitados,
@@ -195,8 +237,7 @@ export default function Vacaciones() {
         antiguedad: calcularAntiguedad(vacionData.empleados.fecha_ingreso),
         resumen: obtenerResumenEmpleado(vacionData.empleado_id, vacacionData.empleados.fecha_ingreso)
       });
-      
-      setKardexData(null); // Cerrar modal de kardex
+      setKardexData(null);
     } catch (err) {
       alert("Error al aprobar: " + err.message);
     }
@@ -208,8 +249,6 @@ export default function Vacaciones() {
       await supabase.from("vacaciones").update({ estatus: "RECHAZADO" }).eq("id", vacacionId);
       await cargarVacaciones();
       if (kardexData) {
-        // Actualizar el kardex en pantalla
-        const emp = kardexData.empleado;
         setKardexData({
           ...kardexData,
           solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId)
@@ -220,19 +259,26 @@ export default function Vacaciones() {
     }
   };
 
+  const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
+    const anos = calcularAntiguedad(fechaIngresoStr).anosCumplidos;
+    const diasCorrespondientes = Number(reglasGlobales[anos] || 0);
+    const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(empleadoId) && v.estatus === "APROBADO");
+    const diasTomados = solicitudesAprobadas.reduce((acc, curr) => acc + Number(curr.dias_solicitados || 0), 0);
+    return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
+  };
+
   const empleadosAgrupados = useMemo(() => {
     if (!Array.isArray(empleados)) return {};
-    const filtrados = empleados.filter(e => !busquedaActiva || String(e.id) === String(empleadoSeleccionadoId));
     const agrupado = {};
-    filtrados.forEach(emp => {
-      const depto = emp.departamentos?.nombre || "Sin Departamento";
-      const puesto = emp.puestos?.nombre || "Sin Puesto";
+    empleados.forEach(emp => {
+      const depto = emp.departamento || "Sin Departamento";
+      const puesto = emp.puesto || "Sin Puesto";
       if (!agrupado[depto]) agrupado[depto] = {};
       if (!agrupado[depto][puesto]) agrupado[depto][puesto] = [];
       agrupado[depto][puesto].push(emp);
     });
     return agrupado;
-  }, [empleados, busquedaActiva, empleadoSeleccionadoId]);
+  }, [empleados]);
 
   const toggleDepto = (depto) => setDeptoExpandido(prev => ({ ...prev, [depto]: !prev[depto] }));
 
@@ -246,12 +292,6 @@ export default function Vacaciones() {
     }
   };
 
-  const sugerenciasEmpleados = empleados.filter(emp => {
-    const q = busquedaTexto.toLowerCase();
-    return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
-  });
-
-  // 🔥 Lógica dinámica del nombre de la empresa en el recibo
   const esPAB = (empresaRecibo || 'PAB') === 'PAB';
   const nombreEmpresaCorto = esPAB ? "PLÁSTICOS AMBIENTALES DEL BAJIO" : "SHERGON";
   const nombreEmpresaLargo = esPAB ? "PLÁSTICOS AMBIENTALES DEL BAJÍO S.A. DE C.V." : "SHERGON S.A. DE C.V.";
@@ -262,7 +302,7 @@ export default function Vacaciones() {
         <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones (RH)</h1>
-            <p className="text-slate-500">Gestión, aprobación de solicitudes y generación de recibos</p>
+            <p className="text-slate-500">Gestión, aprobación de solicitudes, importación histórica y generación de recibos</p>
           </div>
           <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
             🔄 Recargar Datos
@@ -276,14 +316,52 @@ export default function Vacaciones() {
           <KpiCard titulo="Días Totales" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {empleados.length === 0 && (
-          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center">
-            <h3 className="text-xl font-bold text-amber-800 mb-2">⚠️ No hay empleados registrados</h3>
-            <p className="text-amber-700 mb-4">Asegúrate de haber importado la nómina desde el módulo de Empleados.</p>
-          </div>
-        )}
+        {/* 🔥 SECCIÓN DE IMPORTACIÓN HISTÓRICA */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Información Histórica (CSV)</h2>
+          {!modoRevision ? (
+            <div>
+              <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para importar los periodos de vacaciones históricos como "APROBADOS".</p>
+              <input type="file" accept=".csv,.xlsx,.xls" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-amber-50 p-3 rounded-lg border border-amber-200">
+                <span className="text-sm text-amber-800 font-semibold">📝 Modo Revisión: {datosImportados.length} registros encontrados</span>
+                <div className="flex gap-2">
+                  <button onClick={() => { setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null); }} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1">Cancelar</button>
+                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">💾 Guardar Histórico en BD</button>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-96 border rounded-xl">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-100 sticky top-0 z-10">
+                    <tr>
+                      <th className="p-3 border-b">Estado</th>
+                      <th className="p-3 border-b">Empleado</th>
+                      <th className="p-3 border-b">Inicio</th>
+                      <th className="p-3 border-b">Fin</th>
+                      <th className="p-3 border-b">Días</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {datosImportados.map((fila) => (
+                      <tr key={fila.id_fila} className="border-b hover:bg-slate-50">
+                        <td className="p-3"><span className="text-[10px] font-bold px-2 py-1 rounded bg-green-100 text-green-700">{fila.estatus_match}</span></td>
+                        <td className="p-3 font-medium">{fila.nombre_encontrado} <span className="text-gray-400">({fila.numero_encontrado})</span></td>
+                        <td className="p-3">{fila.datos_vacaciones.fecha_inicio}</td>
+                        <td className="p-3">{fila.datos_vacaciones.fecha_fin}</td>
+                        <td className="p-3 font-bold">{fila.datos_vacaciones.dias_solicitados}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
 
-        {/* Reglas Globales (Colapsable) */}
+        {/* REGLAS GLOBALES (Colapsable) */}
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
           <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
@@ -319,7 +397,7 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* Tabla de Empleados con Botón de Kardex */}
+        {/* TABLA DE EMPLEADOS CON BOTÓN KARDEX */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <h2 className="text-xl font-bold mb-4">📋 Listado de Empleados</h2>
           <div className="space-y-4">
@@ -391,12 +469,11 @@ export default function Vacaciones() {
               <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <div>
                   <h3 className="text-xl font-bold text-slate-800">📋 Kardex de Empleado</h3>
-                  <p className="text-sm text-slate-600">{kardexData.empleado.nombre_completo} | {kardexData.empleado.puestos?.nombre} | {kardexData.empleado.departamentos?.nombre}</p>
+                  <p className="text-sm text-slate-600">{kardexData.empleado.nombre_completo} | {kardexData.empleado.puesto} | {kardexData.empleado.departamento}</p>
                 </div>
                 <button onClick={() => setKardexData(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
               </div>
 
-              {/* Resumen de Días */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div><span className="text-gray-500 text-xs block">Antigüedad</span><strong>{kardexData.antiguedad.texto}</strong></div>
                 <div><span className="text-gray-500 text-xs block">Días por Ley</span><strong className="text-blue-600">{kardexData.resumen.diasCorrespondientes}</strong></div>
@@ -404,7 +481,6 @@ export default function Vacaciones() {
                 <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{kardexData.resumen.diasRemanentes}</strong></div>
               </div>
 
-              {/* Solicitudes Pendientes */}
               <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">⏳ Solicitudes Pendientes</h4>
               {kardexData.solicitudesPendientes.length === 0 ? (
                 <p className="text-sm text-slate-500 mb-6 bg-slate-50 p-3 rounded-lg">No hay solicitudes pendientes para este empleado.</p>
@@ -450,7 +526,6 @@ export default function Vacaciones() {
                 </div>
               )}
 
-              {/* Historial Aprobado */}
               <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">✅ Historial Aprobado</h4>
               {kardexData.solicitudesAprobadas.length === 0 ? (
                 <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">Sin historial de vacaciones aprobadas.</p>
@@ -470,7 +545,7 @@ export default function Vacaciones() {
                                 const fechaFinDate = new Date(item.fecha_fin);
                                 const fechaRegresoDate = new Date(fechaFinDate);
                                 fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
-                                setEmpresaRecibo("PAB"); // Default al ver histórico
+                                setEmpresaRecibo("PAB");
                                 setReciboData({
                                   empleado: kardexData.empleado,
                                   diasSolicitados: item.dias_solicitados,
@@ -508,7 +583,6 @@ export default function Vacaciones() {
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
               
-              {/* Selector de Empresa (Oculto al imprimir) */}
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg print:hidden">
                 <label className="text-xs font-bold text-blue-800 block mb-1">🏢 Seleccionar Empresa para el Recibo:</label>
                 <select 
@@ -582,7 +656,7 @@ export default function Vacaciones() {
                   </div>
                   <div>
                     <p className="text-xs font-bold">Área y/ p Departamento:</p>
-                    <p className="bg-blue-50 p-1">{reciboData.empleado.departamentos?.nombre || ""}</p>
+                    <p className="bg-blue-50 p-1">{reciboData.empleado.departamento || ""}</p>
                   </div>
                   <div>
                     <p className="text-xs font-bold">No de Empleado:</p>

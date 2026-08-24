@@ -23,11 +23,10 @@ const calcularAntiguedad = (fechaIngresoStr) => {
   }
 };
 
-// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (maneja formatos Excel, errores de dedo y textos)
+// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (Detecta y omite fechas imposibles como 31/11/2025)
 const parsearFechaCSV = (valor) => {
   if (!valor) return null;
   
-  // Manejar fechas en formato número de Excel (ej: 46007)
   const numVal = parseFloat(valor);
   if (!isNaN(numVal) && numVal > 10000) {
     const fecha = new Date((numVal - 25569) * 86400 * 1000);
@@ -37,7 +36,6 @@ const parsearFechaCSV = (valor) => {
   let str = String(valor).trim();
   if (str === '-' || str.toUpperCase().includes('PAGAD') || str.includes('#¡REF!') || str === '') return null;
   
-  // Corregir errores de dedo comunes (ej: "1407/2026" -> "14/07/2026", "10//07" -> "10/07")
   str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3').replace(/\/+/g, '/');
 
   const matchSlash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4,5})$/);
@@ -45,7 +43,18 @@ const parsearFechaCSV = (valor) => {
     let [, dia, mes, anio] = matchSlash;
     if (anio.length > 4) anio = anio.slice(-4);
     if (anio.length === 2) anio = '20' + anio;
-    return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+    
+    const fechaStr = `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+    const fechaPrueba = new Date(fechaStr);
+    
+    // Validar que la fecha sea real y que el mes/día coincidan (evita 31/11/2025)
+    if (isNaN(fechaPrueba.getTime()) || 
+        fechaPrueba.getDate() !== parseInt(dia) || 
+        (fechaPrueba.getMonth() + 1) !== parseInt(mes)) {
+      return null; 
+    }
+    
+    return fechaStr;
   }
   
   const meses = { 'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06', 'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12' };
@@ -54,7 +63,16 @@ const parsearFechaCSV = (valor) => {
     let [, dia, mes, anio] = matchMes;
     const mesNum = meses[mes.toLowerCase()];
     if (anio.length === 2) anio = '20' + anio;
-    if (mesNum) return `${anio}-${mesNum}-${dia.padStart(2, '0')}`;
+    if (mesNum) {
+      const fechaStr = `${anio}-${mesNum}-${dia.padStart(2, '0')}`;
+      const fechaPrueba = new Date(fechaStr);
+      if (isNaN(fechaPrueba.getTime()) || 
+          fechaPrueba.getDate() !== parseInt(dia) || 
+          (fechaPrueba.getMonth() + 1) !== parseInt(mesNum)) {
+        return null;
+      }
+      return fechaStr;
+    }
   }
   
   return null;
@@ -127,7 +145,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Excepción vacaciones:", err); setVacaciones([]); }
   };
 
-  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO (Maneja el CSV desordenado)
+  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO
   const procesarArchivoExcel = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -141,10 +159,8 @@ export default function Vacaciones() {
       try {
         const workbook = XLSX.read(e.target.result, { type: "binary", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Leer como matriz de arrays para manejar filas desordenadas
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         
-        // Buscar la fila de encabezados para saber dónde empiezan los datos reales
         let startIndex = 0;
         for (let i = 0; i < rows.length; i++) {
           if (String(rows[i][4]).toUpperCase().includes('NOMBRE DEL TRABAJADOR')) {
@@ -157,13 +173,13 @@ export default function Vacaciones() {
         let vacacionesCreadas = 0;
         let vacacionesActualizadas = 0;
         let errores = 0;
+        let fechasOmitidas = 0;
 
         for (let i = startIndex; i < rows.length; i++) {
           const row = rows[i];
           const numEmp = String(row[0] || '').trim();
           const nombreEmp = String(row[4] || '').trim();
           
-          // Saltar filas vacías o duplicados del encabezado
           if (!numEmp && !nombreEmp) continue;
           if (nombreEmp.toUpperCase() === 'NOMBRE DEL TRABAJADOR') continue;
 
@@ -175,8 +191,6 @@ export default function Vacaciones() {
           if (!empleadoMatch) { errores++; continue; }
           empleadosProcesados++;
 
-          // 🔥 Extraer bloques de vacaciones (cada bloque son 4 columnas: Días, Inicio, Termino, Regreso)
-          // Comienzan aproximadamente en la columna 20
           const vacBlocks = [];
           for (let j = 20; j < row.length - 3; j += 4) {
             const dias = parseInt(row[j]);
@@ -198,11 +212,13 @@ export default function Vacaciones() {
                   estatus: 'APROBADO',
                   observaciones: 'Importado desde CSV histórico'
                 });
+              } else {
+                fechasOmitidas++;
+                console.warn(`Fecha inválida omitida para ${nombreEmp}: ${inicio}`);
               }
             }
           }
 
-          // Guardar cada bloque de vacaciones en la base de datos
           for (const bloque of vacBlocks) {
             try {
               const { data: existente } = await supabase
@@ -228,7 +244,13 @@ export default function Vacaciones() {
           }
         }
 
-        setResultadosImportacion({ empleadosProcesados, vacacionesActualizadas, vacacionesCreadas, errores });
+        setResultadosImportacion({ 
+          empleadosProcesados, 
+          vacacionesActualizadas, 
+          vacacionesCreadas, 
+          errores,
+          fechasOmitidas
+        });
         setProgresoImportacion(100);
         await cargarVacaciones();
       } catch (error) {
@@ -394,22 +416,6 @@ export default function Vacaciones() {
     }
   };
 
-  // 🔥 NUEVO: Función para mostrar un ejemplo de recibo
-  const verEjemploRecibo = () => {
-    setEmpresaRecibo("PAB");
-    setReciboData({
-      empleado: { nombre_completo: "JUAN PÉREZ EJEMPLO", numero_empleado: "00000", fecha_ingreso: "2020-01-15" },
-      diasSolicitados: 6,
-      fechaInicio: "2026-08-10",
-      fechaFin: "2026-08-15",
-      fechaRegreso: "lunes, 17 de agosto de 2026",
-      diaInicio: 10, mesInicio: "agosto", anoInicio: 2026,
-      diaFin: 15, mesFin: "agosto", anoFin: 2026,
-      antiguedad: { anosCumplidos: 6, texto: "6 año(s)" },
-      resumen: { diasCorrespondientes: 22, diasRemanentes: 16 }
-    });
-  };
-
   const guardarNuevaSolicitud = async () => {
     if (!formSolicitud.fechaInicio || !formSolicitud.fechaFin || !formSolicitud.dias) {
       alert("Completa todos los campos obligatorios");
@@ -545,7 +551,97 @@ export default function Vacaciones() {
           <KpiCard titulo="Días Totales" valor={totalDias} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* REGLAS GLOBALES */}
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">🔎 Búsqueda y Acciones</h2>
+          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div className="relative flex-1 w-full">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input 
+                type="text" 
+                placeholder="Buscar empleado por nombre o número..." 
+                value={busquedaTexto}
+                onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
+                onFocus={() => setMostrarSugerencias(true)}
+                className="w-full pl-10 pr-3 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
+                <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
+                  {sugerenciasEmpleados.map((emp) => (
+                    <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
+                      <span className="font-medium">{emp.nombre_completo}</span>
+                      <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button 
+              onClick={() => {
+                setEmpresaRecibo("PAB");
+                setReciboData({
+                  empleado: { nombre_completo: "JUAN PÉREZ EJEMPLO", numero_empleado: "00000", fecha_ingreso: "2020-01-15" },
+                  diasSolicitados: 6,
+                  fechaInicio: "2026-08-10",
+                  fechaFin: "2026-08-15",
+                  fechaRegreso: "lunes, 17 de agosto de 2026",
+                  diaInicio: 10, mesInicio: "agosto", anoInicio: 2026,
+                  diaFin: 15, mesFin: "agosto", anoFin: 2026,
+                  antiguedad: { anosCumplidos: 6, texto: "6 año(s)" },
+                  resumen: { diasCorrespondientes: 22, diasRemanentes: 16 }
+                });
+              }}
+              className="whitespace-nowrap bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition"
+            >
+              📄 Ver Ejemplo de Recibo
+            </button>
+          </div>
+          {busquedaActiva && (
+            <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
+              Limpiar filtro
+            </button>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">📥 Importar Histórico de Vacaciones (CSV)</h2>
+          {!modoImportacion ? (
+            <div>
+              <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para actualizar el historial. El sistema detectará automáticamente múltiples bloques de vacaciones por empleado y omitirá fechas inválidas.</p>
+              <input type="file" accept=".csv,.xlsx,.xls" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {progresoImportacion < 100 ? (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-slate-700 font-semibold">Procesando archivo...</span>
+                    <span className="text-sm text-slate-700 font-bold">{progresoImportacion}%</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-3">
+                    <div className="bg-blue-600 h-3 rounded-full transition-all duration-300" style={{ width: `${progresoImportacion}%` }}></div>
+                  </div>
+                </div>
+              ) : resultadosImportacion ? (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <h3 className="font-bold text-green-800 mb-2">✅ Importación Completada</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div><span className="text-slate-600">Empleados:</span><strong className="block">{resultadosImportacion.empleadosProcesados}</strong></div>
+                    <div><span className="text-slate-600">Actualizados:</span><strong className="text-blue-600 block">{resultadosImportacion.vacacionesActualizadas}</strong></div>
+                    <div><span className="text-slate-600">Creados:</span><strong className="text-green-600 block">{resultadosImportacion.vacacionesCreadas}</strong></div>
+                    <div>
+                      <span className="text-slate-600">Fechas inválidas omitidas:</span>
+                      <strong className="text-amber-600 block">{resultadosImportacion.fechasOmitidas || 0}</strong>
+                    </div>
+                  </div>
+                  <button onClick={() => { setModoImportacion(false); setArchivoVacaciones(null); setResultadosImportacion(null); }} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">
+                    Cerrar
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
           <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
@@ -581,84 +677,6 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* 🔥 BUSCADOR Y EJEMPLO DE RECIBO (Movido aquí abajo) */}
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">🔎 Búsqueda y Acciones</h2>
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div className="relative flex-1 w-full">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-              <input 
-                type="text" 
-                placeholder="Buscar empleado por nombre o número..." 
-                value={busquedaTexto}
-                onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
-                onFocus={() => setMostrarSugerencias(true)}
-                className="w-full pl-10 pr-3 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
-                <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
-                  {sugerenciasEmpleados.map((emp) => (
-                    <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
-                      <span className="font-medium">{emp.nombre_completo}</span>
-                      <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <button 
-              onClick={verEjemploRecibo}
-              className="whitespace-nowrap bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition"
-            >
-              📄 Ver Ejemplo de Recibo
-            </button>
-          </div>
-          {busquedaActiva && (
-            <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
-              Limpiar filtro
-            </button>
-          )}
-        </div>
-
-        {/* IMPORTACIÓN HISTÓRICA */}
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">📥 Importar Histórico de Vacaciones (CSV)</h2>
-          {!modoImportacion ? (
-            <div>
-              <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para actualizar el historial. El sistema detectará automáticamente múltiples bloques de vacaciones por empleado.</p>
-              <input type="file" accept=".csv,.xlsx,.xls" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {progresoImportacion < 100 ? (
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm text-slate-700 font-semibold">Procesando archivo...</span>
-                    <span className="text-sm text-slate-700 font-bold">{progresoImportacion}%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-3">
-                    <div className="bg-blue-600 h-3 rounded-full transition-all duration-300" style={{ width: `${progresoImportacion}%` }}></div>
-                  </div>
-                </div>
-              ) : resultadosImportacion ? (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <h3 className="font-bold text-green-800 mb-2">✅ Importación Completada</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div><span className="text-slate-600">Empleados:</span><strong className="block">{resultadosImportacion.empleadosProcesados}</strong></div>
-                    <div><span className="text-slate-600">Actualizados:</span><strong className="text-blue-600 block">{resultadosImportacion.vacacionesActualizadas}</strong></div>
-                    <div><span className="text-slate-600">Creados:</span><strong className="text-green-600 block">{resultadosImportacion.vacacionesCreadas}</strong></div>
-                    <div><span className="text-slate-600">Errores/Saltos:</span><strong className="text-red-600 block">{resultadosImportacion.errores}</strong></div>
-                  </div>
-                  <button onClick={() => { setModoImportacion(false); setArchivoVacaciones(null); setResultadosImportacion(null); }} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">
-                    Cerrar
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        {/* LISTADO DE EMPLEADOS */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <h2 className="text-xl font-bold mb-4">📋 Listado de Empleados</h2>
           {Object.keys(empleadosAgrupadosFiltrados).length === 0 ? (
@@ -724,7 +742,6 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* MODAL KARDEX COMPLETO */}
         {kardexData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-y-auto p-6">
@@ -826,7 +843,6 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* MODAL CREAR/EDITAR SOLICITUD */}
         {formSolicitud.abierto && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
@@ -864,10 +880,9 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* MODAL RECIBO (Sirve tanto para históricos como para el ejemplo) */}
         {reciboData && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-4 print:shadow-none print:max-h-none print:w-full print:p-0">
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg print:hidden">
                 <label className="text-xs font-bold text-blue-800 block mb-1">🏢 Seleccionar Empresa:</label>
                 <select value={empresaRecibo} onChange={(e) => setEmpresaRecibo(e.target.value)} className="w-full md:w-1/2 border rounded p-2 text-sm bg-white">
@@ -877,46 +892,191 @@ export default function Vacaciones() {
               </div>
 
               <div className="border-2 border-black p-4 mb-6">
-                <h3 className="font-bold text-sm mb-3 uppercase">DATOS DE CAPTURA</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="col-span-2"><p className="text-xs font-bold">NOMBRE:</p><p className="font-bold bg-blue-50 p-1">{reciboData.empleado?.nombre_completo || "N/A"}</p></div>
-                  <div className="col-span-2"><p className="text-xs font-bold"># EMPLEADO:</p><p className="font-bold bg-yellow-200 p-1">{reciboData.empleado?.numero_empleado || "N/A"}</p></div>
-                  <div><p className="text-xs font-bold">Fecha Ingreso:</p><p className="bg-blue-50 p-1 text-center">{reciboData.empleado?.fecha_ingreso || "N/A"}</p></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><p className="text-xs font-bold">Años de Servicio:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.antiguedad?.anosCumplidos || 0}</p></div>
-                    <div><p className="text-xs font-bold">Días pendientes:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen?.diasRemanentes || 0}</p></div>
+                <h3 className="font-bold text-sm mb-3 text-center">DATOS DE CAPTURA</h3>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="col-span-2 flex">
+                    <span className="font-bold w-32">NOMBRE:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.nombre_completo || "N/A"}</span>
                   </div>
-                  <div><p className="text-xs font-bold">Días que Corresponden:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</p></div>
-                  <div><p className="text-xs font-bold">Días a Disfrutar:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados || 0}</p></div>
-                  <div><p className="text-xs font-bold">Fecha Inicial:</p><p className="bg-blue-50 p-1">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</p></div>
-                  <div><p className="text-xs font-bold">Fecha Final:</p><p className="bg-blue-50 p-1">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</p></div>
-                  <div className="col-span-2"><p className="text-xs font-bold">Empresa:</p><p className="font-bold bg-blue-50 p-1">{nombreEmpresaLargo}</p></div>
+                  <div className="col-span-2 flex">
+                    <span className="font-bold w-32"># PROVEEDOR:</span>
+                    <span className="bg-yellow-300 flex-1 px-2 py-0.5 font-bold">{reciboData.empleado?.numero_empleado || "N/A"}</span>
+                  </div>
+                  <div className="col-span-2 flex">
+                    <span className="font-bold w-32">Fecha Ingreso:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.fecha_ingreso || "N/A"}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Años de Servicio:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.antiguedad?.anosCumplidos || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Días pendientes:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.resumen?.diasRemanentes || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Días que Corresponden:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.resumen?.diasCorrespondientes || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Días a Disfrutar:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.diasSolicitados || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Fecha en Inicial Vacaciones</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Fecha en Final Vacaciones</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Día que Inicia Labores:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.fechaRegreso}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-32">Fecha Elaboración del Reporte:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                  </div>
+                  <div className="col-span-2 flex">
+                    <span className="font-bold w-32">Observaciones:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">&nbsp;</span>
+                  </div>
+                </div>
+                <div className="mt-2 text-right">
+                  <p className="text-xs"><strong>Nota.-</strong> Clic en el Icono de la Impresora</p>
+                  <p className="text-xs">Lista nada mas para imprimirse</p>
+                  <p className="text-xs">media Hoja, o si no clic Icono</p>
+                  <p className="text-xs">ver Vista preliminar</p>
                 </div>
               </div>
 
-              <div className="border-2 border-black p-6">
+              <div className="border-2 border-black p-4">
                 <div className="text-center mb-4">
-                  <h1 className="text-xl font-black uppercase">{nombreEmpresaCorto}</h1>
-                  <h2 className="text-lg font-bold mt-2">SOLICITUD Y AUTORIZACION DE</h2>
-                  <h2 className="text-lg font-bold">VACACIONES</h2>
+                  <div className="text-4xl font-bold text-green-600 mb-2">pab</div>
+                  <h1 className="text-lg font-black uppercase">PLÁSTICOS AMBIENTALES DEL BAJIO</h1>
+                  <h2 className="text-base font-bold">SOLICITUD Y AUTORIZACION DE</h2>
+                  <h2 className="text-base font-bold">VACACIONES</h2>
                 </div>
-                <div className="grid grid-cols-3 gap-4 text-sm mb-4 border-t border-b border-black py-2">
-                  <div><p className="text-xs font-bold">Días corresponden:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</p></div>
-                  <div><p className="text-xs font-bold">Días a disfrutar:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados || 0}</p></div>
-                  <div><p className="text-xs font-bold">Días Pendientes:</p><p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen?.diasRemanentes || 0}</p></div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                  <div className="flex">
+                    <span className="font-bold w-40">Nombre de la Empresa:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">Plástico Ambiental del Bajío S.A. de C.V.</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Área y/ p Departamento:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">&nbsp;</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">No de Empleado:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{String(reciboData.empleado?.numero_empleado || '').padStart(5, '0')}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Nombre del Empleado:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.nombre_completo || "N/A"}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Fecha de Ingreso:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.fecha_ingreso || "N/A"}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Años de Servicio:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-right font-bold">{String(reciboData.antiguedad?.anosCumplidos || 0).padStart(2, '0')} AÑOS</span>
+                  </div>
                 </div>
-                <div className="border-t-2 border-black pt-4 mt-6">
-                  <p className="text-xs font-bold mb-4">POR EL PRESENTE EXPRESO MI CONFORMIDAD DE SOLICITAR Y GOZAR MIS VACACIONES DE ACUERDO A LO QUE ESTABLECE EL ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO.</p>
+
+                <div className="grid grid-cols-3 gap-2 text-xs mb-3 border-t border-b border-black py-2">
+                  <div className="flex">
+                    <span className="font-bold w-40">Días que corresponden:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Días a disfrutar :</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.diasSolicitados || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-bold w-40">Días Pendientes:</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.resumen?.diasRemanentes || 0}</span>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <div className="flex text-xs mb-1">
+                    <span className="font-bold w-40">Período a Disfrutar:</span>
+                  </div>
+                  <div className="flex text-xs mb-2">
+                    <span className="w-20">del Año de</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.anoInicio}</span>
+                    <span className="w-16">al Año</span>
+                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.anoFin}</span>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <p className="text-xs font-bold mb-2">Días que Inician sus Vacaciones</p>
+                  <div className="grid grid-cols-4 gap-2 text-xs mb-1">
+                    <span className="text-right">del</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">{reciboData.diaInicio}</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">de {reciboData.mesInicio}</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">del {reciboData.anoInicio}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <span className="text-right">del</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">{reciboData.diaFin}</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">de {reciboData.mesFin}</span>
+                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">del {reciboData.anoFin}</span>
+                  </div>
+                </div>
+
+                <div className="flex text-xs mb-2">
+                  <span className="font-bold w-96">FECHA EN QUE DEBERÁ DE PRESENTARSE A TRABAJAR:</span>
+                  <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.fechaRegreso}</span>
+                </div>
+
+                <div className="flex text-xs mb-4">
+                  <span className="font-bold w-40">OBSERVACIONES:</span>
+                  <span className="bg-blue-100 flex-1 px-2 py-0.5">0</span>
+                </div>
+
+                <div className="border-t-2 border-black pt-4 mt-4">
+                  <p className="text-xs mb-4">
+                    POR EL PRESENTE EXPRESO MI CONFORMIDAD DE SOLICITAR Y GOZAR MIS VACACIONES DE ACUERDO A LO QUE ESTABLECE EL 
+                    ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO, CONSIDERANDO LOS SIGUIENTES DATOS:
+                  </p>
+                  
+                  <div className="grid grid-cols-4 gap-4 text-xs mt-6 mb-4">
+                    <div className="text-center">
+                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.diaInicio}</span>
+                      <span className="mx-1">A</span>
+                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.mesInicio}</span>
+                      <span className="mx-1">DE</span>
+                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.anoInicio}</span>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-4 gap-4 text-center text-xs mt-8">
-                    <div><p className="bg-blue-50 p-2 mb-2 font-bold">{reciboData.empleado?.nombre_completo || "N/A"}</p><p className="font-bold">Firma del Empleado</p></div>
-                    <div><p className="border-b border-black h-12 mb-2">&nbsp;</p><p className="font-bold">Firma Líder</p></div>
-                    <div><p className="border-b border-black h-12 mb-2">&nbsp;</p><p className="font-bold">Firma Encargado</p></div>
-                    <div><p className="border-b border-black h-12 mb-2">&nbsp;</p><p className="font-bold">Vo. Bo. Capital Humano</p></div>
+                    <div>
+                      <p className="bg-blue-100 px-2 py-1 mb-2 font-bold">{reciboData.empleado?.nombre_completo || "N/A"}</p>
+                      <p className="font-bold">Firma de Conformidad<br/>del Empleado</p>
+                    </div>
+                    <div>
+                      <div className="border-b-2 border-black h-12 mb-2">&nbsp;</div>
+                      <p className="font-bold">Firma de Autorización<br/>Líder</p>
+                    </div>
+                    <div>
+                      <div className="border-b-2 border-black h-12 mb-2">&nbsp;</div>
+                      <p className="font-bold">Firma de Autorización<br/>Encargado</p>
+                    </div>
+                    <div>
+                      <div className="border-b-2 border-black h-12 mb-2">&nbsp;</div>
+                      <p className="font-bold">Vo. Bo.<br/>Capital Humano</p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-6 flex justify-end gap-3 print:hidden">
+              <div className="mt-4 flex justify-end gap-3 print:hidden">
                 <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">Cerrar</button>
                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">🖨️ Imprimir / PDF</button>
               </div>

@@ -4,7 +4,6 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// Funciones auxiliares
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
@@ -34,7 +33,6 @@ const parsearFechaCSV = (valor) => {
   if (matchSlash) {
     let [, dia, mes, anio] = matchSlash;
     if (anio.length === 2) anio = '20' + anio;
-    anio = anio.substring(0, 4);
     return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
   }
   
@@ -103,9 +101,19 @@ export default function Vacaciones() {
 
   const cargarVacaciones = async () => {
     try {
+      console.log("🔄 Cargando vacaciones...");
       const { data, error } = await supabase.from("vacaciones").select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso, empresa)").order("created_at", { ascending: false });
-      if (!error) setVacaciones(data || []);
-    } catch (err) { console.error("Error vacaciones:", err); }
+      if (error) {
+        console.error("Error vacaciones:", error);
+        setVacaciones([]);
+        return;
+      }
+      console.log(`✅ Vacaciones cargadas: ${data?.length || 0} registros`);
+      setVacaciones(data || []);
+    } catch (err) { 
+      console.error("Excepción vacaciones:", err);
+      setVacaciones([]);
+    }
   };
 
   const procesarArchivoExcel = async (event) => {
@@ -132,7 +140,6 @@ export default function Vacaciones() {
           const fila = rows[i];
           const numEmp = fila['N°'] || fila['N'] || fila['NUMERO'] || '';
           const nombreEmp = fila['NOMBRE DEL TRABAJADOR'] || '';
-          const empresaEmp = fila['EMPRESA'] || '';
           
           if (!numEmp && !nombreEmp) continue;
 
@@ -167,8 +174,7 @@ export default function Vacaciones() {
                       fecha_fin: fechaFin || fechaInicio,
                       estatus: "APROBADO",
                       tipo_vacaciones: "TOMADAS_Y_PAGADAS",
-                      observaciones: "Importado desde CSV histórico",
-                      empresa: empresaEmp.includes('PAB') ? 'PAB' : 'SHERGON'
+                      observaciones: "Importado desde CSV histórico"
                     });
                   }
                 }
@@ -208,7 +214,10 @@ export default function Vacaciones() {
 
         setResultadosImportacion({ empleadosProcesados, vacacionesActualizadas, vacacionesCreadas, errores });
         setProgresoImportacion(100);
+        
+        console.log("🔄 Recargando vacaciones después de importación...");
         await cargarVacaciones();
+        
       } catch (error) {
         console.error(error);
         alert("Error al procesar: " + error.message);
@@ -217,11 +226,18 @@ export default function Vacaciones() {
     reader.readAsBinaryString(file);
   };
 
-  const abrirKardexRH = (emp) => {
+  const abrirKardexRH = async (emp) => {
     try {
+      console.log(`📋 Abriendo kardex para: ${emp.nombre_completo}`);
+      // Recargar vacaciones frescas antes de abrir el kardex
+      await cargarVacaciones();
+      
       const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
       const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
       const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "APROBADO");
+      
+      console.log(`Pendientes: ${solicitudesPendientes.length}, Aprobadas: ${solicitudesAprobadas.length}`);
+      
       setKardexData({ 
         empleado: emp, 
         resumen, 
@@ -236,6 +252,7 @@ export default function Vacaciones() {
 
   const aprobarSolicitud = async (vacacionId, empresa) => {
     try {
+      console.log(`✅ Aprobando solicitud ${vacacionId} para empresa ${empresa}`);
       const { data: vacacionData, error } = await supabase
         .from("vacaciones")
         .update({ estatus: "APROBADO", empresa: empresa })
@@ -244,40 +261,51 @@ export default function Vacaciones() {
         .single();
 
       if (error) throw error;
+      
+      // Recargar vacaciones frescas
       await cargarVacaciones();
       
-      if (kardexData) {
+      // Actualizar kardex con datos frescos
+      if (kardexData && vacacionData) {
         const emp = kardexData.empleado;
+        const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
+        const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
+        const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "APROBADO");
+        
         setKardexData({
-          ...kardexData,
-          resumen: obtenerResumenEmpleado(emp.id, emp.fecha_ingreso),
-          solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId),
-          solicitudesAprobadas: [...kardexData.solicitudesAprobadas, vacacionData]
+          empleado: emp,
+          resumen,
+          solicitudesPendientes,
+          solicitudesAprobadas
         });
       }
       
-      const fechaInicioDate = new Date(vacionData.fecha_inicio);
-      const fechaFinDate = new Date(vacionData.fecha_fin);
-      const fechaRegresoDate = new Date(fechaFinDate);
-      fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
+      // Generar recibo automáticamente
+      if (vacacionData) {
+        const fechaInicioDate = new Date(vacionData.fecha_inicio);
+        const fechaFinDate = new Date(vacionData.fecha_fin);
+        const fechaRegresoDate = new Date(fechaFinDate);
+        fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
 
-      setEmpresaRecibo(empresa);
-      setReciboData({
-        empleado: vacacionData.empleados,
-        diasSolicitados: vacacionData.dias_solicitados,
-        fechaInicio: vacacionData.fecha_inicio,
-        fechaFin: vacacionData.fecha_fin,
-        fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-        diaInicio: fechaInicioDate.getDate(),
-        diaFin: fechaFinDate.getDate(),
-        mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
-        mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
-        anoInicio: fechaInicioDate.getFullYear(),
-        anoFin: fechaFinDate.getFullYear(),
-        antiguedad: calcularAntiguedad(vacionData.empleados.fecha_ingreso),
-        resumen: obtenerResumenEmpleado(vacionData.empleado_id, vacacionData.empleados.fecha_ingreso)
-      });
+        setEmpresaRecibo(empresa);
+        setReciboData({
+          empleado: vacacionData.empleados,
+          diasSolicitados: vacacionData.dias_solicitados,
+          fechaInicio: vacacionData.fecha_inicio,
+          fechaFin: vacacionData.fecha_fin,
+          fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+          diaInicio: fechaInicioDate.getDate(),
+          diaFin: fechaFinDate.getDate(),
+          mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
+          mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
+          anoInicio: fechaInicioDate.getFullYear(),
+          anoFin: fechaFinDate.getFullYear(),
+          antiguedad: calcularAntiguedad(vacionData.empleados.fecha_ingreso),
+          resumen: obtenerResumenEmpleado(vacionData.empleado_id, vacacionData.empleados.fecha_ingreso)
+        });
+      }
     } catch (err) {
+      console.error("Error al aprobar:", err);
       alert("Error al aprobar: " + err.message);
     }
   };
@@ -294,12 +322,13 @@ export default function Vacaciones() {
       
       if (kardexData) {
         const emp = kardexData.empleado;
+        const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
+        const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
+        
         setKardexData({
           ...kardexData,
-          resumen: obtenerResumenEmpleado(emp.id, emp.fecha_ingreso),
-          solicitudesPendientes: kardexData.solicitudesPendientes.map(v => 
-            v.id === vacacionId ? { ...v, ...nuevosDatos } : v
-          )
+          resumen,
+          solicitudesPendientes
         });
       }
       alert("✅ Solicitud modificada correctamente.");
@@ -314,9 +343,11 @@ export default function Vacaciones() {
       await supabase.from("vacaciones").update({ estatus: "RECHAZADO" }).eq("id", vacacionId);
       await cargarVacaciones();
       if (kardexData) {
+        const emp = kardexData.empleado;
+        const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
         setKardexData({
           ...kardexData,
-          solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId)
+          solicitudesPendientes
         });
       }
     } catch (err) {
@@ -326,6 +357,7 @@ export default function Vacaciones() {
 
   const verReciboHistorico = (item) => {
     try {
+      console.log("🖨️ Generando recibo histórico:", item);
       const fechaInicioDate = new Date(item.fecha_inicio);
       const fechaFinDate = new Date(item.fecha_fin);
       const fechaRegresoDate = new Date(fechaFinDate);
@@ -444,7 +476,7 @@ export default function Vacaciones() {
             <p className="text-slate-500">Gestión, aprobación de solicitudes, importación histórica y generación de recibos</p>
           </div>
           <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
-             Recargar Datos
+            🔄 Recargar Datos
           </button>
         </div>
 
@@ -773,7 +805,7 @@ export default function Vacaciones() {
                           <td className="p-2 text-center">
                             <button 
                               onClick={() => verReciboHistorico(item)}
-                              className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold"
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-bold"
                             >
                               🖨️ Ver Recibo
                             </button>

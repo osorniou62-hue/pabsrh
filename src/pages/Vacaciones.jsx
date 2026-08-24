@@ -6,23 +6,7 @@ import KpiCard from "../components/KpiCard";
 
 const normalizarNombre = (texto) => {
   if (!texto) return "";
-  return String(texto)
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/ñ/g, "n")
-    .replace(/[.,;:()]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const normalizar = (texto) => {
-  return String(texto || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
+  return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
 };
 
 export default function Vacaciones() {
@@ -35,7 +19,6 @@ export default function Vacaciones() {
   const [anoReglaInput, setAnoReglaInput] = useState(1);
   const [diasReglaInput, setDiasReglaInput] = useState("");
   const [reglasExpandidas, setReglasExpandidas] = useState(false);
-  const [empresaSeleccionada, setEmpresaSeleccionada] = useState("PAB");
 
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [mapaColumnas, setMapaColumnas] = useState({});
@@ -50,15 +33,17 @@ export default function Vacaciones() {
   const [busquedaActiva, setBusquedaActiva] = useState(false);
   const [deptoExpandido, setDeptoExpandido] = useState({});
 
-  const [empleadoKardex, setEmpleadoKardex] = useState(null);
-  const [vistaActual, setVistaActual] = useState("rrhh");
+  // 🔥 NUEVO: Estado para el Kardex de RH
+  const [kardexData, setKardexData] = useState(null);
   
+  // 🔥 NUEVO: Estado para el recibo y selección de empresa
+  const [reciboData, setReciboData] = useState(null);
+  const [empresaRecibo, setEmpresaRecibo] = useState("PAB");
+
   const [formKardex, setFormKardex] = useState({
     fecha_inicio: "", fecha_fin: "", dias_solicitados: "",
     nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "",
   });
-
-  const [reciboData, setReciboData] = useState(null);
 
   useEffect(() => {
     const inicializar = async () => {
@@ -109,40 +94,22 @@ export default function Vacaciones() {
 
   const cargarEmpleados = async () => {
     try {
-      // 🔥 CONSULTA DINÁMICA: Usamos "*" para evitar errores por columnas hardcodeadas que no existan
-      const { data: emps, error: errorEmps } = await supabase
-        .from("empleados")
-        .select("*")
-        .eq("activo", true)
-        .order("nombre_completo");
+      const { data: emps, error: errorEmps } = await supabase.from("empleados").select("*").eq("activo", true).order("nombre_completo");
+      if (errorEmps) { console.error("Error cargando empleados:", errorEmps); setEmpleados([]); return; }
 
-      if (errorEmps) {
-        console.error("Error cargando empleados:", errorEmps);
-        setEmpleados([]);
-        return;
-      }
-
-      // 🔥 MAPEO DINÁMICO DE COLUMNAS (Igual que en Empleados.jsx)
       if (emps && emps.length > 0 && configuracionMapeo?.asignacion) {
         const columnasReales = Object.keys(emps[0]);
         const nuevoMapa = {};
-        
         Object.values(configuracionMapeo.asignacion).forEach(info => {
           const nombreBuscado = info.esManual ? info.campoManual : info.campoDestino;
           if (!nombreBuscado) return;
-          
-          const nombreNormalizado = normalizar(nombreBuscado);
-          if (columnasReales.includes(nombreBuscado)) { 
-            nuevoMapa[nombreBuscado] = nombreBuscado; 
-            return; 
-          }
-          
-          const coincidencia = columnasReales.find(colReal => normalizar(colReal) === nombreNormalizado);
-          if (coincidencia) { 
-            nuevoMapa[nombreBuscado] = coincidencia; 
-          } else {
+          const nombreNormalizado = nombreBuscado.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (columnasReales.includes(nombreBuscado)) { nuevoMapa[nombreBuscado] = nombreBuscado; return; }
+          const coincidencia = columnasReales.find(colReal => colReal.toLowerCase().replace(/[^a-z0-9]/g, "") === nombreNormalizado);
+          if (coincidencia) { nuevoMapa[nombreBuscado] = coincidencia; } 
+          else {
             const parcial = columnasReales.find(colReal => {
-              const colNorm = normalizar(colReal);
+              const colNorm = colReal.toLowerCase().replace(/[^a-z0-9]/g, "");
               return colNorm.includes(nombreNormalizado) || nombreNormalizado.includes(colNorm);
             });
             nuevoMapa[nombreBuscado] = parcial || nombreBuscado;
@@ -152,37 +119,14 @@ export default function Vacaciones() {
       }
 
       let empleadosProcesados = (emps || []).map(emp => {
-        let deptoObj = null;
-        if (emp.departamento_id) deptoObj = departamentosLista.find(d => d.id === emp.departamento_id);
+        let deptoObj = emp.departamento_id ? departamentosLista.find(d => d.id === emp.departamento_id) : null;
         if (!deptoObj && emp.departamento) deptoObj = { nombre: emp.departamento };
-        if (!deptoObj) {
-          const campoDeptoMapeado = mapaColumnas['departamento'] || Object.keys(mapaColumnas).find(k => k.includes('departamento'));
-          if (campoDeptoMapeado && emp[campoDeptoMapeado]) deptoObj = { nombre: emp[campoDeptoMapeado] };
-        }
-        
-        let puestoObj = null;
-        if (emp.puesto_id) puestoObj = puestosLista.find(p => p.id === emp.puesto_id);
+        let puestoObj = emp.puesto_id ? puestosLista.find(p => p.id === emp.puesto_id) : null;
         if (!puestoObj && emp.puesto) puestoObj = { nombre: emp.puesto };
-        if (!puestoObj) {
-          const campoPuestoMapeado = mapaColumnas['puesto'] || Object.keys(mapaColumnas).find(k => k.includes('puesto'));
-          if (campoPuestoMapeado && emp[campoPuestoMapeado]) puestoObj = { nombre: emp[campoPuestoMapeado] };
-        }
-        
         return { ...emp, departamentos: deptoObj, puestos: puestoObj };
       });
-
       setEmpleados(empleadosProcesados);
-      
-      if (empleadosProcesados.length > 0 && !empleadoKardex) {
-        const emp = empleadosProcesados[0];
-        const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
-        const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
-        setEmpleadoKardex({ empleado: emp, antiguedad, resumen });
-      }
-    } catch (err) { 
-      console.error("Excepción en cargarEmpleados:", err); 
-      setEmpleados([]); 
-    }
+    } catch (err) { console.error("Excepción en cargarEmpleados:", err); setEmpleados([]); }
   };
 
   const cargarVacaciones = async () => {
@@ -207,45 +151,78 @@ export default function Vacaciones() {
     return { diasCorrespondientes, diasTomados, diasRemanentes: diasCorrespondientes - diasTomados, solicitudesAprobadas };
   };
 
-  const generarRecibo = (empleado, diasSolicitados, fechaInicio, fechaFin) => {
-    const antiguedad = calcularAntiguedad(empleado.fecha_ingreso);
-    const resumen = obtenerResumenEmpleado(empleado.id, empleado.fecha_ingreso);
-    const diasSol = Number(diasSolicitados) || 0;
-    
-    const fechaInicioDate = new Date(fechaInicio);
-    const fechaFinDate = new Date(fechaFin);
-    const fechaRegresoDate = new Date(fechaFinDate);
-    fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
-    
-    setReciboData({
-      empleado, antiguedad, resumen, diasSolicitados: diasSol,
-      fechaInicio, fechaFin,
-      fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-      diasPendientesDespues: Math.max(0, resumen.diasRemanentes - diasSol),
-      fechaEmision: new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }),
-      periodoInicio: fechaInicioDate.getFullYear(),
-      periodoFin: fechaFinDate.getFullYear(),
-      mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
-      mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
-      diaInicio: fechaInicioDate.getDate(),
-      diaFin: fechaFinDate.getDate(),
-      anoInicio: fechaInicioDate.getFullYear(),
-      anoFin: fechaFinDate.getFullYear()
-    });
+  // 🔥 FUNCIÓN: Abrir Kardex de RH para un empleado
+  const abrirKardexRH = (emp) => {
+    const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
+    const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
+    const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "APROBADO");
+    setKardexData({ empleado: emp, resumen, solicitudesPendientes, solicitudesAprobadas });
+  };
+
+  // 🔥 FUNCIÓN: Aprobar solicitud y abrir recibo
+  const aprobarYGenerarRecibo = async (vacacionId, empresa) => {
+    try {
+      const { data: vacacionData, error } = await supabase
+        .from("vacaciones")
+        .update({ estatus: "APROBADO" })
+        .eq("id", vacacionId)
+        .select("*, empleados (id, nombre_completo, numero_empleado, fecha_ingreso)")
+        .single();
+
+      if (error) throw error;
+
+      await cargarVacaciones(); // Recargar lista
+      
+      // Preparar datos para el recibo
+      const fechaInicioDate = new Date(vacionData.fecha_inicio);
+      const fechaFinDate = new Date(vacionData.fecha_fin);
+      const fechaRegresoDate = new Date(fechaFinDate);
+      fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
+
+      setEmpresaRecibo(empresa); // Guardar la empresa seleccionada
+      setReciboData({
+        empleado: vacacionData.empleados,
+        diasSolicitados: vacacionData.dias_solicitados,
+        fechaInicio: vacacionData.fecha_inicio,
+        fechaFin: vacacionData.fecha_fin,
+        fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+        diaInicio: fechaInicioDate.getDate(),
+        diaFin: fechaFinDate.getDate(),
+        mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
+        mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
+        anoInicio: fechaInicioDate.getFullYear(),
+        anoFin: fechaFinDate.getFullYear(),
+        antiguedad: calcularAntiguedad(vacionData.empleados.fecha_ingreso),
+        resumen: obtenerResumenEmpleado(vacionData.empleado_id, vacacionData.empleados.fecha_ingreso)
+      });
+      
+      setKardexData(null); // Cerrar modal de kardex
+    } catch (err) {
+      alert("Error al aprobar: " + err.message);
+    }
+  };
+
+  const rechazarSolicitud = async (vacacionId) => {
+    if (!window.confirm("¿Rechazar esta solicitud?")) return;
+    try {
+      await supabase.from("vacaciones").update({ estatus: "RECHAZADO" }).eq("id", vacacionId);
+      await cargarVacaciones();
+      if (kardexData) {
+        // Actualizar el kardex en pantalla
+        const emp = kardexData.empleado;
+        setKardexData({
+          ...kardexData,
+          solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId)
+        });
+      }
+    } catch (err) {
+      alert("Error al rechazar: " + err.message);
+    }
   };
 
   const empleadosAgrupados = useMemo(() => {
     if (!Array.isArray(empleados)) return {};
-    
-    const filtrados = empleados.filter(e => {
-      if (vistaActual === 'rrhh' && empresaSeleccionada !== "TODAS") {
-        const empEmpresa = (e.empresa || "").toUpperCase();
-        if (empresaSeleccionada === "PAB" && !empEmpresa.includes("PLASTICO") && !empEmpresa.includes("BAJIO")) return false;
-        if (empresaSeleccionada === "SHERGON" && !empEmpresa.includes("SHERGON")) return false;
-      }
-      return !busquedaActiva || String(e.id) === String(empleadoSeleccionadoId);
-    });
-
+    const filtrados = empleados.filter(e => !busquedaActiva || String(e.id) === String(empleadoSeleccionadoId));
     const agrupado = {};
     filtrados.forEach(emp => {
       const depto = emp.departamentos?.nombre || "Sin Departamento";
@@ -255,7 +232,7 @@ export default function Vacaciones() {
       agrupado[depto][puesto].push(emp);
     });
     return agrupado;
-  }, [empleados, busquedaActiva, empleadoSeleccionadoId, vistaActual, empresaSeleccionada]);
+  }, [empleados, busquedaActiva, empleadoSeleccionadoId]);
 
   const toggleDepto = (depto) => setDeptoExpandido(prev => ({ ...prev, [depto]: !prev[depto] }));
 
@@ -269,69 +246,28 @@ export default function Vacaciones() {
     }
   };
 
-  const agregarDesdeKardex = async () => {
-    if (!empleadoKardex || !formKardex.fecha_inicio || !formKardex.dias_solicitados) return alert("Completa los campos obligatorios");
-    const { error } = await supabase.from("vacaciones").insert([{ empleado_id: empleadoKardex.empleado.id, ...formKardex, estatus: "APROBADO" }]);
-    if (!error) {
-      setFormKardex({ fecha_inicio: "", fecha_fin: "", dias_solicitados: "", nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "" });
-      await cargarVacaciones();
-      const antiguedad = calcularAntiguedad(empleadoKardex.empleado.fecha_ingreso);
-      const resumen = obtenerResumenEmpleado(empleadoKardex.empleado.id, empleadoKardex.empleado.fecha_ingreso);
-      setEmpleadoKardex({ empleado: empleadoKardex.empleado, antiguedad, resumen });
-    }
-  };
-
-  const cambiarEstatusVacacion = async (vacacion, nuevoEstatus) => {
-    if (!window.confirm(`¿Cambiar a ${nuevoEstatus}?`)) return;
-    await supabase.from("vacaciones").update({ estatus: nuevoEstatus }).eq("id", vacacion.id);
-    await cargarVacaciones();
-  };
-
   const sugerenciasEmpleados = empleados.filter(emp => {
     const q = busquedaTexto.toLowerCase();
     return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
   });
 
-  const esSupervisor = vistaActual === 'supervisor';
-  const empEmpresa = (empleadoKardex?.empleado?.empresa || "").toUpperCase();
-  const esShergon = empEmpresa.includes("SHERGON") || (vistaActual === 'rrhh' && empresaSeleccionada === "SHERGON");
-  
-  const nombreEmpresaCorto = esSupervisor ? "EMPRESA" : (esShergon ? "SHERGON" : "PLÁSTICOS AMBIENTALES DEL BAJIO");
-  const nombreEmpresaLargo = esSupervisor ? "NOMBRE DE LA EMPRESA" : (esShergon ? "SHERGON S.A. DE C.V." : "PLÁSTICOS AMBIENTALES DEL BAJÍO S.A. DE C.V.");
+  // 🔥 Lógica dinámica del nombre de la empresa en el recibo
+  const esPAB = (empresaRecibo || 'PAB') === 'PAB';
+  const nombreEmpresaCorto = esPAB ? "PLÁSTICOS AMBIENTALES DEL BAJIO" : "SHERGON";
+  const nombreEmpresaLargo = esPAB ? "PLÁSTICOS AMBIENTALES DEL BAJÍO S.A. DE C.V." : "SHERGON S.A. DE C.V.";
 
   return (
     <Layout>
       <div className="space-y-6 print:hidden">
         <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
-            <p className="text-slate-500">Sincronizado dinámicamente con la base de datos de Empleados</p>
+            <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones (RH)</h1>
+            <p className="text-slate-500">Gestión, aprobación de solicitudes y generación de recibos</p>
           </div>
-          <div className="flex gap-2">
-            <button onClick={() => setVistaActual(vistaActual === 'rrhh' ? 'supervisor' : 'rrhh')} className="text-xs bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-slate-300">
-              👁️ Vista: {vistaActual === 'rrhh' ? 'Recursos Humanos' : 'Supervisor'}
-            </button>
-            <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
-              🔄 Recargar
-            </button>
-          </div>
+          <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
+            🔄 Recargar Datos
+          </button>
         </div>
-
-        {vistaActual === 'rrhh' && (
-          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex flex-wrap items-center gap-4">
-            <span className="text-sm font-bold text-blue-800">🏢 Contexto de Empresa (Exclusivo RH):</span>
-            <select 
-              value={empresaSeleccionada} 
-              onChange={(e) => setEmpresaSeleccionada(e.target.value)}
-              className="border border-blue-300 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-            >
-              <option value="PAB">PLÁSTICOS AMBIENTALES DEL BAJIO (PAB)</option>
-              <option value="SHERGON">SHERGON</option>
-              <option value="TODAS">TODAS LAS EMPRESAS</option>
-            </select>
-            <p className="text-xs text-blue-600 ml-auto">Esta selección filtra la vista y se usa en los recibos. Los supervisores no ven esta opción.</p>
-          </div>
-        )}
 
         <div className="grid md:grid-cols-4 gap-4">
           <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="⏳" color="text-amber-600" />
@@ -347,23 +283,18 @@ export default function Vacaciones() {
           </div>
         )}
 
+        {/* Reglas Globales (Colapsable) */}
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
-          <button 
-            onClick={() => setReglasExpandidas(!reglasExpandidas)}
-            className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-700 transition"
-          >
+          <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
               <span className="text-xl">⚙️</span>
               <div className="text-left">
                 <h2 className="text-lg font-bold">Reglas Globales por Antigüedad</h2>
-                <p className="text-xs text-slate-300">
-                  {Object.keys(reglasGlobales).length} reglas configuradas · Click para {reglasExpandidas ? 'ocultar' : 'editar'}
-                </p>
+                <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas · Click para {reglasExpandidas ? 'ocultar' : 'editar'}</p>
               </div>
             </div>
             <span className="text-2xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
           </button>
-          
           {reglasExpandidas && (
             <div className="px-6 py-4 border-t border-slate-700 space-y-3">
               <div className="flex flex-wrap gap-3 items-end">
@@ -388,6 +319,7 @@ export default function Vacaciones() {
           )}
         </div>
 
+        {/* Tabla de Empleados con Botón de Kardex */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <h2 className="text-xl font-bold mb-4">📋 Listado de Empleados</h2>
           <div className="space-y-4">
@@ -431,14 +363,10 @@ export default function Vacaciones() {
                                     </td>
                                     <td className="p-3 text-center">
                                       <button 
-                                        onClick={() => {
-                                          const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
-                                          const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
-                                          setEmpleadoKardex({ empleado: emp, antiguedad, resumen });
-                                        }} 
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 ${empleadoKardex?.empleado.id === emp.id ? 'bg-blue-600 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
+                                        onClick={() => abrirKardexRH(emp)} 
+                                        className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 bg-indigo-600 text-white hover:bg-indigo-700"
                                       >
-                                        👁️ {empleadoKardex?.empleado.id === emp.id ? 'Seleccionado' : 'Ver'}
+                                        📋 Kardex y Solicitudes
                                       </button>
                                     </td>
                                   </tr>
@@ -456,9 +384,143 @@ export default function Vacaciones() {
           </div>
         </div>
 
+        {/* 🔥 MODAL: KARDEX Y SOLICITUDES DE RH */}
+        {kardexData && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
+              <div className="flex justify-between items-center mb-6 border-b pb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-800">📋 Kardex de Empleado</h3>
+                  <p className="text-sm text-slate-600">{kardexData.empleado.nombre_completo} | {kardexData.empleado.puestos?.nombre} | {kardexData.empleado.departamentos?.nombre}</p>
+                </div>
+                <button onClick={() => setKardexData(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+              </div>
+
+              {/* Resumen de Días */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div><span className="text-gray-500 text-xs block">Antigüedad</span><strong>{kardexData.antiguedad.texto}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Días por Ley</span><strong className="text-blue-600">{kardexData.resumen.diasCorrespondientes}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Descontados</span><strong className="text-amber-600">{kardexData.resumen.diasTomados}</strong></div>
+                <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{kardexData.resumen.diasRemanentes}</strong></div>
+              </div>
+
+              {/* Solicitudes Pendientes */}
+              <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">⏳ Solicitudes Pendientes</h4>
+              {kardexData.solicitudesPendientes.length === 0 ? (
+                <p className="text-sm text-slate-500 mb-6 bg-slate-50 p-3 rounded-lg">No hay solicitudes pendientes para este empleado.</p>
+              ) : (
+                <div className="space-y-3 mb-6">
+                  {kardexData.solicitudesPendientes.map(vac => (
+                    <div key={vac.id} className="border border-amber-200 bg-amber-50 p-4 rounded-xl">
+                      <div className="flex flex-wrap justify-between items-center gap-4 mb-3">
+                        <div className="text-sm">
+                          <span className="font-bold">Solicitado:</span> {vac.dias_solicitados} días 
+                          <span className="mx-2">|</span> 
+                          <span className="font-bold">Periodo:</span> {vac.fecha_inicio} al {vac.fecha_fin}
+                        </div>
+                        <div className="flex gap-2">
+                          <select 
+                            id={`empresa-${vac.id}`} 
+                            defaultValue="PAB"
+                            className="border rounded px-2 py-1 text-xs bg-white"
+                          >
+                            <option value="PAB">Emitir a nombre de: PAB</option>
+                            <option value="SHERGON">Emitir a nombre de: SHERGON</option>
+                          </select>
+                          <button 
+                            onClick={() => {
+                              const empresa = document.getElementById(`empresa-${vac.id}`).value;
+                              aprobarYGenerarRecibo(vac.id, empresa);
+                            }}
+                            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+                          >
+                            ✅ Aprobar y Generar Recibo
+                          </button>
+                          <button 
+                            onClick={() => rechazarSolicitud(vac.id)}
+                            className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+                          >
+                            ❌ Rechazar
+                          </button>
+                        </div>
+                      </div>
+                      {vac.observaciones && <p className="text-xs text-slate-600 bg-white p-2 rounded border"><strong>Obs:</strong> {vac.observaciones}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Historial Aprobado */}
+              <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">✅ Historial Aprobado</h4>
+              {kardexData.solicitudesAprobadas.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">Sin historial de vacaciones aprobadas.</p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto border rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">Fechas</th><th className="p-2">Días</th><th className="p-2">Acción</th></tr></thead>
+                    <tbody>
+                      {kardexData.solicitudesAprobadas.map(item => (
+                        <tr key={item.id} className="border-t">
+                          <td className="p-2">{item.fecha_inicio} al {item.fecha_fin}</td>
+                          <td className="p-2 text-center font-bold">{item.dias_solicitados}</td>
+                          <td className="p-2 text-center">
+                            <button 
+                              onClick={() => {
+                                const fechaInicioDate = new Date(item.fecha_inicio);
+                                const fechaFinDate = new Date(item.fecha_fin);
+                                const fechaRegresoDate = new Date(fechaFinDate);
+                                fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
+                                setEmpresaRecibo("PAB"); // Default al ver histórico
+                                setReciboData({
+                                  empleado: kardexData.empleado,
+                                  diasSolicitados: item.dias_solicitados,
+                                  fechaInicio: item.fecha_inicio,
+                                  fechaFin: item.fecha_fin,
+                                  fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+                                  diaInicio: fechaInicioDate.getDate(),
+                                  diaFin: fechaFinDate.getDate(),
+                                  mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
+                                  mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
+                                  anoInicio: fechaInicioDate.getFullYear(),
+                                  anoFin: fechaFinDate.getFullYear(),
+                                  antiguedad: calcularAntiguedad(kardexData.empleado.fecha_ingreso),
+                                  resumen: obtenerResumenEmpleado(kardexData.empleado.id, kardexData.empleado.fecha_ingreso)
+                                });
+                                setKardexData(null);
+                              }}
+                              className="text-blue-600 hover:text-blue-800 font-bold text-[10px]"
+                            >
+                              🖨️ Ver Recibo
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 🔥 MODAL: RECIBO DE VACACIONES CON SELECTOR DE EMPRESA */}
         {reciboData && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] print:static print:bg-white print:p-0">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
+              
+              {/* Selector de Empresa (Oculto al imprimir) */}
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg print:hidden">
+                <label className="text-xs font-bold text-blue-800 block mb-1">🏢 Seleccionar Empresa para el Recibo:</label>
+                <select 
+                  value={empresaRecibo} 
+                  onChange={(e) => setEmpresaRecibo(e.target.value)}
+                  className="w-full md:w-1/2 border rounded p-2 text-sm bg-white"
+                >
+                  <option value="PAB">PLÁSTICOS AMBIENTALES DEL BAJÍO (PAB)</option>
+                  <option value="SHERGON">SHERGON</option>
+                </select>
+              </div>
+
               <div className="border-2 border-black p-4 mb-6">
                 <h3 className="font-bold text-sm mb-3 uppercase">DATOS DE CAPTURA</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
@@ -492,13 +554,17 @@ export default function Vacaciones() {
                     <p className="text-xs font-bold">Días a Disfrutar:</p>
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados}</p>
                   </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha Inicial Vacaciones:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">Fecha Final Vacaciones:</p>
+                    <p className="bg-blue-50 p-1">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</p>
+                  </div>
                   <div className="col-span-2">
                     <p className="text-xs font-bold">Nombre de la Empresa:</p>
-                    {esSupervisor ? (
-                      <p className="font-bold bg-slate-100 p-1 text-slate-400">[OCULTO PARA SUPERVISORES]</p>
-                    ) : (
-                      <p className="font-bold bg-blue-50 p-1">{nombreEmpresaLargo}</p>
-                    )}
+                    <p className="font-bold bg-blue-50 p-1">{nombreEmpresaLargo}</p>
                   </div>
                 </div>
               </div>
@@ -511,11 +577,9 @@ export default function Vacaciones() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                  {!esSupervisor && (
-                    <div className="col-span-2">
-                      <p className="text-xs font-bold">Nombre de la Empresa: <span className="font-normal">{nombreEmpresaLargo}</span></p>
-                    </div>
-                  )}
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold">Nombre de la Empresa: <span className="font-normal">{nombreEmpresaLargo}</span></p>
+                  </div>
                   <div>
                     <p className="text-xs font-bold">Área y/ p Departamento:</p>
                     <p className="bg-blue-50 p-1">{reciboData.empleado.departamentos?.nombre || ""}</p>
@@ -546,6 +610,26 @@ export default function Vacaciones() {
                   <div>
                     <p className="text-xs font-bold">Días Pendientes:</p>
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasRemanentes}</p>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-xs font-bold mb-2">Días que Inician sus Vacaciones</p>
+                  <div className="grid grid-cols-6 gap-2 mb-2">
+                    <p className="text-xs text-right">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diaInicio}</p>
+                    <p className="text-xs">de</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.mesInicio}</p>
+                    <p className="text-xs">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.anoInicio}</p>
+                  </div>
+                  <div className="grid grid-cols-6 gap-2">
+                    <p className="text-xs text-right">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diaFin}</p>
+                    <p className="text-xs">de</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.mesFin}</p>
+                    <p className="text-xs">del</p>
+                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.anoFin}</p>
                   </div>
                 </div>
 

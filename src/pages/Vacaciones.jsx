@@ -4,17 +4,16 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// 🔥 FUNCIÓN ROBUSTA DE NORMALIZACIÓN (Igual que en Empleados, pero más agresiva con espacios)
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto)
-    .trim() // Elimina espacios al inicio y final (CRÍTICO para el CSV)
+    .trim()
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Quita acentos
-    .replace(/ñ/g, "n")              // ñ -> n
-    .replace(/[.,;:()]/g, "")        // Quita puntos, comas, paréntesis
-    .replace(/\s+/g, " ")            // Espacios múltiples -> uno solo
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ñ/g, "n")
+    .replace(/[.,;:()]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 };
 
@@ -76,12 +75,17 @@ export default function Vacaciones() {
 
   const cargarEmpleados = async () => {
     try {
+      // 🔥 CORREGIDO: Se eliminó 'empresa' del select porque no existe en la tabla
       const { data, error } = await supabase
         .from("empleados")
-        .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo, empresa, salario_diario, salario_complemento")
+        .select("id, nombre_completo, numero_empleado, fecha_ingreso, puesto, departamento, activo, salario_diario, salario_complemento")
         .eq("activo", true);
 
-      if (error) { console.error("Error cargando empleados:", error); setEmpleados([]); return; }
+      if (error) { 
+        console.error("Error cargando empleados:", error); 
+        setEmpleados([]); 
+        return; 
+      }
 
       const datosOrdenados = (data || []).sort((a, b) => {
         const deptoA = (a.departamento || "Sin Departamento").toLowerCase();
@@ -106,7 +110,10 @@ export default function Vacaciones() {
         const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
         setEmpleadoKardex({ empleado: emp, antiguedad, resumen });
       }
-    } catch (err) { console.error("Excepción en cargarEmpleados:", err); setEmpleados([]); }
+    } catch (err) { 
+      console.error("Excepción en cargarEmpleados:", err); 
+      setEmpleados([]); 
+    }
   };
 
   const cargarVacaciones = async () => {
@@ -135,7 +142,6 @@ export default function Vacaciones() {
         
         if (rows.length === 0) { alert("⚠️ El archivo está vacío."); return; }
         
-        // 🔥 ÍNDICE DE BÚSQUEDA OPTIMIZADO (Basado en la estructura de Empleados)
         const indiceEmpleados = new Map();
         empleados.forEach(emp => {
           const nombreNorm = normalizarNombre(emp.nombre_completo);
@@ -147,9 +153,7 @@ export default function Vacaciones() {
         console.log(`🔍 Índice de empleados creado: ${indiceEmpleados.size} entradas`);
 
         const datosProcesados = rows.map((fila, index) => {
-          // 🔥 DETECCIÓN FLEXIBLE DE COLUMNAS DEL CSV "CONTROL GENERAL"
           const clavesFila = Object.keys(fila);
-          
           const numEmpKey = clavesFila.find(k => /n[^a-z]*o|numero|no\.|proveedor/i.test(k));
           const nombreEmpKey = clavesFila.find(k => /nombre|trabajador|colaborador/i.test(k));
           
@@ -175,7 +179,6 @@ export default function Vacaciones() {
               empleadoMatch = porNombreExacto;
               metodoVinculacion = "Por Nombre Exacto";
             } else {
-              // Búsqueda parcial (por si el CSV tiene nombres ligeramente distintos)
               const coincidenciaParcial = empleados.find(emp => {
                 const empNorm = normalizarNombre(emp.nombre_completo);
                 return empNorm.includes(busquedaNorm) || busquedaNorm.includes(empNorm);
@@ -200,7 +203,6 @@ export default function Vacaciones() {
             busqueda_normalizada: normalizarNombre(valorBusquedaNom)
           };
 
-          // Mapeo dinámico de otros campos (días, fechas, etc.)
           if (configuracionMapeo?.asignacion) {
             Object.keys(fila).forEach(keyExcel => {
               const info = configuracionMapeo.asignacion[keyExcel.trim().toUpperCase()];
@@ -211,7 +213,6 @@ export default function Vacaciones() {
             });
           }
 
-          // Fallback manual para columnas comunes del CSV si no hay mapeo configurado
           if (Object.keys(registro.datos_vacaciones).length === 0) {
             const diasKey = clavesFila.find(k => /d[ií]as/i.test(k) && !/pendiente/i.test(k));
             const inicioKey = clavesFila.find(k => /inicio/i.test(k));

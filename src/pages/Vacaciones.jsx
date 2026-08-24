@@ -4,6 +4,19 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
+// 🔥 NUEVA FUNCIÓN: Normalización robusta de nombres para comparación
+const normalizarNombre = (texto) => {
+  if (!texto) return "";
+  return String(texto)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Quita acentos
+    .replace(/ñ/g, "n")              // ñ → n
+    .replace(/[.,;:()]/g, "")        // Quita puntos, comas, paréntesis
+    .replace(/\s+/g, " ")            // Espacios múltiples → uno solo
+    .trim();
+};
+
 export default function Vacaciones() {
   const [empleados, setEmpleados] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
@@ -11,6 +24,9 @@ export default function Vacaciones() {
   
   const [anoReglaInput, setAnoReglaInput] = useState(1);
   const [diasReglaInput, setDiasReglaInput] = useState("");
+  
+  // 🔥 NUEVO: Estado para colapsar/expandir reglas
+  const [reglasExpandidas, setReglasExpandidas] = useState(false);
 
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
   const [archivoVacaciones, setArchivoVacaciones] = useState(null);
@@ -23,7 +39,6 @@ export default function Vacaciones() {
   const [busquedaActiva, setBusquedaActiva] = useState(false);
   const [deptoExpandido, setDeptoExpandido] = useState({});
 
-  // 🔥 KARDEX SIEMPRE VISIBLE - Estado para el empleado seleccionado
   const [empleadoKardex, setEmpleadoKardex] = useState(null);
   
   const [formKardex, setFormKardex] = useState({
@@ -79,7 +94,10 @@ export default function Vacaciones() {
       });
       setEmpleados(datosOrdenados);
       
-      // 🔥 Seleccionar automáticamente el primer empleado para el kardex
+      //  NUEVO: Log para depurar nombres en la BD
+      console.log(" Empleados en BD:", datosOrdenados.length);
+      console.log("📋 Primeros 10 nombres en BD:", datosOrdenados.slice(0, 10).map(e => normalizarNombre(e.nombre_completo)));
+      
       if (datosOrdenados.length > 0 && !empleadoKardex) {
         const emp = datosOrdenados[0];
         const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
@@ -107,16 +125,15 @@ export default function Vacaciones() {
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
         
-        console.log("Filas leídas del CSV:", rows);
-        console.log("Total de filas:", rows.length);
+        console.log("Filas leídas del CSV:", rows.length);
         
         if (rows.length === 0) {
-          alert("⚠️ El archivo CSV está vacío o no tiene datos válidos.");
+          alert("️ El archivo CSV está vacío.");
           return;
         }
         
         if (!configuracionMapeo?.asignacion) { 
-          alert("⚠️ No hay configuración de mapeo cargada. Ve a 'Configuración de Tablas' primero."); 
+          alert("⚠️ No hay configuración de mapeo cargada."); 
           return; 
         }
         
@@ -127,10 +144,20 @@ export default function Vacaciones() {
           }
         });
 
-        console.log("Mapeo configurado:", mapeo);
+        // 🔥 NUEVO: Crear un índice de empleados normalizados para búsqueda rápida
+        const indiceEmpleados = new Map();
+        empleados.forEach(emp => {
+          const nombreNorm = normalizarNombre(emp.nombre_completo);
+          const numeroNorm = String(emp.numero_empleado || "").trim();
+          // Indexar por nombre normalizado
+          if (nombreNorm) indiceEmpleados.set(nombreNorm, emp);
+          // Indexar por número de empleado
+          if (numeroNorm) indiceEmpleados.set("num_" + numeroNorm, emp);
+        });
+        
+        console.log("🔍 Índice de empleados creado:", indiceEmpleados.size, "entradas");
 
         const datosProcesados = rows.map((fila, index) => {
-          // Buscar columnas de número de empleado o nombre
           const numEmpKey = Object.keys(fila).find(k => 
             k.toUpperCase().includes("NUMERO") || 
             k.toUpperCase().includes("NO.") ||
@@ -140,17 +167,38 @@ export default function Vacaciones() {
           
           const nombreEmpKey = Object.keys(fila).find(k => 
             k.toUpperCase().includes("NOMBRE") || 
-            k.toUpperCase().includes("COLABORADOR")
+            k.toUpperCase().includes("COLABORADOR") ||
+            k.toUpperCase().includes("TRABAJADOR")
           );
           
           const valorBusqueda = numEmpKey ? String(fila[numEmpKey]).trim() : (nombreEmpKey ? String(fila[nombreEmpKey]).trim() : "");
           
-          console.log(`Fila ${index}: Buscando "${valorBusqueda}" en columna ${numEmpKey || nombreEmpKey}`);
+          // 🔥 NUEVO: Búsqueda mejorada con normalización
+          let empleadoMatch = null;
           
-          const empleadoMatch = empleados.find(emp => 
-            String(emp.numero_empleado) === valorBusqueda || 
-            emp.nombre_completo.toLowerCase() === valorBusqueda.toLowerCase()
-          );
+          if (valorBusqueda) {
+            // Intento 1: Buscar por número de empleado
+            const porNumero = indiceEmpleados.get("num_" + valorBusqueda);
+            if (porNumero) {
+              empleadoMatch = porNumero;
+            } else {
+              // Intento 2: Buscar por nombre normalizado (coincidencia exacta)
+              const nombreNorm = normalizarNombre(valorBusqueda);
+              const porNombreExacto = indiceEmpleados.get(nombreNorm);
+              if (porNombreExacto) {
+                empleadoMatch = porNombreExacto;
+              } else {
+                // Intento 3: Búsqueda parcial (contiene)
+                const coincidenciaParcial = empleados.find(emp => 
+                  normalizarNombre(emp.nombre_completo).includes(nombreNorm) ||
+                  nombreNorm.includes(normalizarNombre(emp.nombre_completo))
+                );
+                if (coincidenciaParcial) {
+                  empleadoMatch = coincidenciaParcial;
+                }
+              }
+            }
+          }
 
           const registro = {
             id_fila: index, 
@@ -159,7 +207,8 @@ export default function Vacaciones() {
             numero_encontrado: empleadoMatch ? empleadoMatch.numero_empleado : "N/A",
             estatus_match: empleadoMatch ? "✅ Vinculado" : "❌ Sin vincular", 
             datos_vacaciones: {},
-            datos_raw: fila // Guardar datos originales para depuración
+            busqueda_raw: valorBusqueda,
+            busqueda_normalizada: normalizarNombre(valorBusqueda)
           };
 
           Object.keys(fila).forEach(keyExcel => {
@@ -178,19 +227,22 @@ export default function Vacaciones() {
         const vinculados = datosProcesados.filter(d => d.empleado_id);
         const noVinculados = datosProcesados.filter(d => !d.empleado_id);
         
-        console.log("Empleados vinculados:", vinculados.length);
-        console.log("Empleados NO vinculados:", noVinculados.length);
+        console.log("✅ Vinculados:", vinculados.length);
+        console.log("❌ No vinculados:", noVinculados.length);
         
         if (noVinculados.length > 0) {
-          console.log("Ejemplos de no vinculados:", noVinculados.slice(0, 3).map(d => d.datos_raw));
+          console.log("📋 Ejemplos de no vinculados (buscado → normalizado):");
+          noVinculados.slice(0, 5).forEach(d => {
+            console.log(`  "${d.busqueda_raw}" → "${d.busqueda_normalizada}"`);
+          });
         }
 
         setDatosImportados(datosProcesados);
         setModoRevision(true);
-        alert(`✅ Se procesaron ${datosProcesados.length} filas.\n✅ Vinculados: ${vinculados.length}\n❌ Sin vincular: ${noVinculados.length}\n\nRevisa la consola (F12) para más detalles.`);
+        alert(`✅ Se procesaron ${datosProcesados.length} filas.\n✅ Vinculados: ${vinculados.length}\n❌ Sin vincular: ${noVinculados.length}`);
       } catch (error) { 
         console.error("Error al procesar archivo:", error); 
-        alert("Error al leer el archivo Excel: " + error.message); 
+        alert("Error al leer el archivo: " + error.message); 
       }
     };
     reader.readAsBinaryString(file);
@@ -242,12 +294,8 @@ export default function Vacaciones() {
     fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
     
     setReciboData({
-      empleado,
-      antiguedad,
-      resumen,
-      diasSolicitados: diasSol,
-      fechaInicio,
-      fechaFin,
+      empleado, antiguedad, resumen, diasSolicitados: diasSol,
+      fechaInicio, fechaFin,
       fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       diasPendientesDespues: Math.max(0, resumen.diasRemanentes - diasSol),
       fechaEmision: new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }),
@@ -258,10 +306,7 @@ export default function Vacaciones() {
       diaInicio: fechaInicioDate.getDate(),
       diaFin: fechaFinDate.getDate(),
       anoInicio: fechaInicioDate.getFullYear(),
-      anoFin: fechaFinDate.getFullYear(),
-      diaRegreso: fechaRegresoDate.getDate(),
-      mesRegreso: fechaRegresoDate.toLocaleString('es-MX', { month: 'long' }),
-      anoRegreso: fechaRegresoDate.getFullYear()
+      anoFin: fechaFinDate.getFullYear()
     });
   };
 
@@ -297,7 +342,6 @@ export default function Vacaciones() {
     if (!error) {
       setFormKardex({ fecha_inicio: "", fecha_fin: "", dias_solicitados: "", nomina_impactada: "", tipo_vacaciones: "TOMADAS_Y_PAGADAS", observaciones: "" });
       await cargarVacaciones();
-      // Actualizar el kardex con los nuevos datos
       const antiguedad = calcularAntiguedad(empleadoKardex.empleado.fecha_ingreso);
       const resumen = obtenerResumenEmpleado(empleadoKardex.empleado.id, empleadoKardex.empleado.fecha_ingreso);
       setEmpleadoKardex({ empleado: empleadoKardex.empleado, antiguedad, resumen });
@@ -308,7 +352,6 @@ export default function Vacaciones() {
     if (!window.confirm(`¿Cambiar a ${nuevoEstatus}?`)) return;
     await supabase.from("vacaciones").update({ estatus: nuevoEstatus }).eq("id", vacacion.id);
     await cargarVacaciones();
-    // Actualizar kardex si es el empleado actual
     if (empleadoKardex && String(vacacion.empleado_id) === String(empleadoKardex.empleado.id)) {
       const antiguedad = calcularAntiguedad(empleadoKardex.empleado.fecha_ingreso);
       const resumen = obtenerResumenEmpleado(empleadoKardex.empleado.id, empleadoKardex.empleado.fecha_ingreso);
@@ -321,8 +364,6 @@ export default function Vacaciones() {
     return (emp.nombre_completo || "").toLowerCase().includes(q) || (emp.numero_empleado || "").toString().toLowerCase().includes(q);
   });
 
-  const formatearMoneda = (valor) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valor || 0);
-
   return (
     <Layout>
       <div className="space-y-6 print:hidden">
@@ -332,36 +373,56 @@ export default function Vacaciones() {
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
-          <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="" color="text-amber-600" />
+          <KpiCard titulo="Pendientes" valor={vacaciones.filter(v => v.estatus === "PENDIENTE").length} icono="⏳" color="text-amber-600" />
           <KpiCard titulo="Aprobadas" valor={vacaciones.filter(v => v.estatus === "APROBADO").length} icono="✅" color="text-green-600" />
           <KpiCard titulo="Rechazadas" valor={vacaciones.filter(v => v.estatus === "RECHAZADO").length} icono="❌" color="text-red-600" />
-          <KpiCard titulo="Días Totales Descontados" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="️" color="text-blue-600" />
+          <KpiCard titulo="Días Totales" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
         </div>
 
-        <div className="bg-slate-800 text-white rounded-2xl p-6 shadow-xl">
-          <h2 className="text-lg font-bold mb-3">⚙️ Reglas Globales por Antigüedad</h2>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="text-xs text-slate-300 block mb-1">Año de Antigüedad</label>
-              <select value={anoReglaInput} onChange={(e) => { setAnoReglaInput(Number(e.target.value)); setDiasReglaInput(reglasGlobales[Number(e.target.value)] ?? ""); }} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-40">
-                {Array.from({ length: 51 }, (_, i) => <option key={i} value={i}>{i === 0 ? "Año 0 (< 1 año)" : `Año ${i}`}</option>)}
-              </select>
+        {/* 🔥 REGLAS GLOBALES DESPLEGABLES */}
+        <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
+          <button 
+            onClick={() => setReglasExpandidas(!reglasExpandidas)}
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-700 transition"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl">⚙️</span>
+              <div className="text-left">
+                <h2 className="text-lg font-bold">Reglas Globales por Antigüedad</h2>
+                <p className="text-xs text-slate-300">
+                  {Object.keys(reglasGlobales).length} reglas configuradas · Click para {reglasExpandidas ? 'ocultar' : 'editar'}
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-300 block mb-1">Días Correspondientes</label>
-              <input type="number" value={diasReglaInput} onChange={(e) => setDiasReglaInput(e.target.value)} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-32" />
+            <span className="text-2xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+          </button>
+          
+          {reglasExpandidas && (
+            <div className="px-6 py-4 border-t border-slate-700 space-y-3">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="text-xs text-slate-300 block mb-1">Año de Antigüedad</label>
+                  <select value={anoReglaInput} onChange={(e) => { setAnoReglaInput(Number(e.target.value)); setDiasReglaInput(reglasGlobales[Number(e.target.value)] ?? ""); }} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-40">
+                    {Array.from({ length: 51 }, (_, i) => <option key={i} value={i}>{i === 0 ? "Año 0 (< 1 año)" : `Año ${i}`}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300 block mb-1">Días Correspondientes</label>
+                  <input type="number" value={diasReglaInput} onChange={(e) => setDiasReglaInput(e.target.value)} className="bg-slate-700 border border-slate-600 rounded-lg p-2 text-sm w-32" />
+                </div>
+                <button onClick={guardarReglaGlobal} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold">Guardar Regla</button>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
+                {Object.entries(reglasGlobales).sort(([a], [b]) => Number(a) - Number(b)).map(([ano, dias]) => (
+                  <span key={ano} className="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600">Año {ano}: <strong>{dias} días</strong></span>
+                ))}
+              </div>
             </div>
-            <button onClick={guardarReglaGlobal} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold">Guardar Regla</button>
-            <div className="flex-1 flex flex-wrap gap-2 pt-2 border-t border-slate-700 mt-2 w-full">
-              {Object.entries(reglasGlobales).sort(([a], [b]) => Number(a) - Number(b)).map(([ano, dias]) => (
-                <span key={ano} className="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600">Año {ano}: <strong>{dias} días</strong></span>
-              ))}
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones (Excel)</h2>
+          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Archivo de Vacaciones</h2>
           {!modoRevision ? (
             <input type="file" accept=".xlsx,.xls,.csv" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
           ) : (
@@ -370,7 +431,7 @@ export default function Vacaciones() {
                 <span className="text-sm text-amber-800 font-semibold">📝 Modo Revisión: {datosImportados.length} filas</span>
                 <div className="flex gap-2">
                   <button onClick={() => { setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null); }} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1">Cancelar</button>
-                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm"> Guardar en BD</button>
+                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">💾 Guardar en BD</button>
                 </div>
               </div>
               <div className="overflow-x-auto max-h-96 border rounded-xl">
@@ -401,7 +462,7 @@ export default function Vacaciones() {
                             )}
                           </td>
                         ))}
-                        {!fila.empleado_id && <td colSpan="10" className="p-3 text-red-600 text-xs">⚠️ No se encontró el empleado. Verifica que el número o nombre coincida con la base de datos.</td>}
+                        {!fila.empleado_id && <td colSpan="10" className="p-3 text-red-600 text-xs">⚠️ No se encontró el empleado. Buscado: "{fila.busqueda_raw}"</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -413,7 +474,7 @@ export default function Vacaciones() {
 
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
           <div className="relative flex-1">
-            <input type="text" placeholder=" Buscar empleado..." value={busquedaTexto} onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }} onFocus={() => setMostrarSugerencias(true)} className="w-full border rounded-xl p-3 bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
+            <input type="text" placeholder="🔎 Buscar empleado..." value={busquedaTexto} onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }} onFocus={() => setMostrarSugerencias(true)} className="w-full border rounded-xl p-3 bg-white focus:ring-2 focus:ring-blue-500 outline-none" />
             {mostrarSugerencias && busquedaTexto.trim() !== "" && (
               <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-48 overflow-y-auto">
                 {sugerenciasEmpleados.map((emp) => (
@@ -422,7 +483,6 @@ export default function Vacaciones() {
                     setEmpleadoSeleccionadoId(emp.id); 
                     setMostrarSugerencias(false); 
                     setBusquedaActiva(true);
-                    // Actualizar kardex con el empleado seleccionado
                     const antiguedad = calcularAntiguedad(emp.fecha_ingreso);
                     const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
                     setEmpleadoKardex({ empleado: emp, antiguedad, resumen });
@@ -437,13 +497,10 @@ export default function Vacaciones() {
           {busquedaActiva && <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">Limpiar filtro</button>}
         </div>
 
-        {/* LAYOUT CON KARDEX SIEMPRE VISIBLE */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* COLUMNA IZQUIERDA: Lista de Empleados */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-2xl shadow-lg p-6">
-              <h2 className="text-xl font-bold mb-4"> Listado de Empleados</h2>
+              <h2 className="text-xl font-bold mb-4">📋 Listado de Empleados</h2>
               <div className="space-y-4">
                 {Object.keys(empleadosAgrupados).length === 0 ? (
                   <p className="text-center text-gray-500 py-8">No se encontraron empleados.</p>
@@ -510,7 +567,6 @@ export default function Vacaciones() {
               </div>
             </div>
 
-            {/* HISTORIAL DE SOLICITUDES */}
             <div className="bg-white rounded-2xl shadow-lg overflow-x-auto p-6">
               <h2 className="text-xl font-bold mb-4">📋 Historial de Solicitudes</h2>
               <table className="w-full text-sm">
@@ -532,7 +588,7 @@ export default function Vacaciones() {
                       <td className="p-3 text-center font-bold">{v.dias_solicitados}</td>
                       <td className="p-3 text-center text-xs">
                         <span className={`px-2 py-1 rounded-full font-bold ${v.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
-                          {v.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? " Pagadas No Tomadas" : "✅ Tomadas"}
+                          {v.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas No Tomadas" : "✅ Tomadas"}
                         </span>
                       </td>
                       <td className="p-3 text-center">
@@ -553,12 +609,11 @@ export default function Vacaciones() {
             </div>
           </div>
 
-          {/* COLUMNA DERECHA: KARDEX SIEMPRE VISIBLE */}
           <div className="lg:col-span-1">
             {empleadoKardex ? (
               <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-6">
                 <div className="flex justify-between items-center mb-4 border-b pb-3">
-                  <h3 className="text-lg font-bold">📋 Kardex</h3>
+                  <h3 className="text-lg font-bold"> Kardex</h3>
                   <button onClick={() => setEmpleadoKardex(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
                 </div>
                 
@@ -575,7 +630,6 @@ export default function Vacaciones() {
                   <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{empleadoKardex.resumen.diasRemanentes}</strong></div>
                 </div>
 
-                {/* Generar Recibo */}
                 <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
                   <h4 className="font-bold text-blue-900 text-sm mb-3">📄 Generar Recibo</h4>
                   <div className="space-y-2 text-xs">
@@ -590,14 +644,13 @@ export default function Vacaciones() {
                         if(!dias || !inicio || !fin) return alert("Ingresa días y fechas");
                         generarRecibo(empleadoKardex.empleado, dias, inicio, fin);
                       }}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1"
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold"
                     >
                       🖨️ Generar Recibo
                     </button>
                   </div>
                 </div>
 
-                {/* Agregar Registro Histórico */}
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
                   <h4 className="font-bold text-blue-900 text-sm mb-3">➕ Agregar Registro</h4>
                   <div className="space-y-2 text-xs">
@@ -614,7 +667,6 @@ export default function Vacaciones() {
                   </div>
                 </div>
 
-                {/* Historial Aprobado */}
                 <h4 className="font-bold mb-2 text-sm">Historial Aprobado</h4>
                 <div className="max-h-64 overflow-y-auto border rounded-xl">
                   {empleadoKardex.resumen.solicitudesAprobadas.length === 0 ? (
@@ -627,7 +679,7 @@ export default function Vacaciones() {
                           <tr key={item.id} className="border-t">
                             <td className="p-2 text-[10px]">{item.fecha_inicio} al {item.fecha_fin}</td>
                             <td className="p-2 text-center font-bold">{item.dias_solicitados}</td>
-                            <td className="p-2 text-center text-[10px]">{item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas No Tomadas" : "✅ Tomadas"}</td>
+                            <td className="p-2 text-center text-[10px]">{item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰" : "✅"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -639,18 +691,15 @@ export default function Vacaciones() {
               <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-6 text-center">
                 <div className="text-6xl mb-4">👆</div>
                 <h3 className="text-lg font-bold text-slate-700 mb-2">Selecciona un Empleado</h3>
-                <p className="text-sm text-slate-500">Haz clic en "👁️ Ver" en cualquier empleado de la lista para ver su kardex aquí.</p>
+                <p className="text-sm text-slate-500">Haz clic en "👁️ Ver" en cualquier empleado.</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* MODAL DE RECIBO OFICIAL */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
-              
-              {/* DATOS DE CAPTURA */}
               <div className="border-2 border-black p-4 mb-6">
                 <h3 className="font-bold text-sm mb-3 uppercase">DATOS DE CAPTURA</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
@@ -685,35 +734,20 @@ export default function Vacaciones() {
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold">Fecha en Inicial Vacaciones:</p>
+                    <p className="text-xs font-bold">Fecha Inicial Vacaciones:</p>
                     <p className="bg-blue-50 p-1">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold">Fecha en Final Vacaciones:</p>
+                    <p className="text-xs font-bold">Fecha Final Vacaciones:</p>
                     <p className="bg-blue-50 p-1">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold">Día que Inicia Labores:</p>
-                    <p className="bg-blue-50 p-1">{reciboData.fechaRegreso}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold">Fecha Elaboración del Reporte:</p>
-                    <p className="bg-blue-50 p-1">{reciboData.fechaEmision}</p>
                   </div>
                   <div className="col-span-2">
                     <p className="text-xs font-bold">Observaciones:</p>
                     <p className="bg-blue-50 p-1 min-h-[2rem]">&nbsp;</p>
                   </div>
                 </div>
-                <div className="mt-2 text-xs text-right">
-                  <p className="font-bold">Nota.- Click en el Icono de la Impresora</p>
-                  <p>Lista nada mas para imprimirse</p>
-                  <p>media Hoja, o si no click Icono</p>
-                  <p>ver Vista preliminar</p>
-                </div>
               </div>
 
-              {/* FORMATO PRINCIPAL */}
               <div className="border-2 border-black p-6">
                 <div className="text-center mb-4">
                   <h1 className="text-xl font-black uppercase">PLÁSTICOS AMBIENTALES DEL BAJIO</h1>
@@ -738,17 +772,8 @@ export default function Vacaciones() {
                     <p className="bg-blue-50 p-1 font-bold">{reciboData.empleado.nombre_completo}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold">Fecha de Ingeso:</p>
+                    <p className="text-xs font-bold">Fecha de Ingreso:</p>
                     <p className="bg-blue-50 p-1">{reciboData.empleado.fecha_ingreso || "N/A"}</p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <p className="text-xs font-bold">Años de Servicio:</p>
-                      <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.antiguedad.anosCumplidos}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold">AÑOS</p>
-                    </div>
                   </div>
                 </div>
 
@@ -758,28 +783,12 @@ export default function Vacaciones() {
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasCorrespondientes}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold">Días a disfrutar :</p>
+                    <p className="text-xs font-bold">Días a disfrutar:</p>
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.diasSolicitados}</p>
                   </div>
                   <div>
                     <p className="text-xs font-bold">Días Pendientes:</p>
                     <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.resumen.diasRemanentes}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                  <div className="col-span-2">
-                    <p className="text-xs font-bold">Período a Disfrutar:</p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <p className="text-xs">del Año de</p>
-                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.periodoInicio}</p>
-                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.periodoFin}</p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <p className="text-xs">al Año</p>
-                    <p className="bg-blue-50 p-1 text-center font-bold">&nbsp;</p>
-                    <p className="bg-blue-50 p-1 text-center font-bold">&nbsp;</p>
                   </div>
                 </div>
 
@@ -803,39 +812,12 @@ export default function Vacaciones() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <p className="text-xs font-bold">FECHA EN QUE DEBERÁ DE PRESENTARSE A TRABAJAR:</p>
-                  </div>
-                  <div>
-                    <p className="bg-blue-50 p-1 text-center font-bold">{reciboData.fechaRegreso}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <p className="text-xs font-bold">OBSERVACIONES:</p>
-                  </div>
-                  <div>
-                    <p className="bg-blue-50 p-1">0</p>
-                  </div>
-                </div>
-
                 <div className="border-t-2 border-black pt-4 mt-6">
                   <p className="text-xs font-bold mb-4">
                     POR EL PRESENTE EXPRESO MI CONFORMIDAD DE SOLICITAR Y GOZAR MIS VACACIONES DE ACUERDO A LO QUE ESTABLECE EL 
-                    ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO, CONSIDERANDO LOS SIGUIENTES DATOS:
+                    ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO.
                   </p>
                   
-                  <div className="grid grid-cols-5 gap-2 mb-8">
-                    <div className="col-span-1">&nbsp;</div>
-                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().getDate()}</div>
-                    <div className="bg-blue-50 p-1 text-center font-bold">A</div>
-                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().toLocaleString('es-MX', {month: 'long'})}</div>
-                    <div className="bg-blue-50 p-1 text-center font-bold">DE</div>
-                    <div className="bg-blue-50 p-1 text-center font-bold">{new Date().getFullYear()}</div>
-                  </div>
-
                   <div className="grid grid-cols-4 gap-4 text-center text-xs mt-8">
                     <div>
                       <p className="bg-blue-50 p-2 mb-2 font-bold">{reciboData.empleado.nombre_completo}</p>
@@ -858,24 +840,12 @@ export default function Vacaciones() {
               </div>
 
               <div className="mt-6 flex justify-end gap-3 print:hidden">
-                <button 
-                  onClick={() => setReciboData(null)} 
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold"
-                >
-                  Cerrar
-                </button>
-                <button 
-                  onClick={() => window.print()} 
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
-                >
-                  ️ Imprimir / Guardar como PDF
-                </button>
+                <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">Cerrar</button>
+                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">🖨️ Imprimir / PDF</button>
               </div>
-
             </div>
           </div>
         )}
-
       </div>
       
       <style>{`

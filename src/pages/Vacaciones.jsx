@@ -16,12 +16,52 @@ const calcularAntiguedad = (fechaIngresoStr) => {
   return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
 };
 
+// 🔥 Parser robusto para fechas del CSV (maneja formatos: dd/mm/yyyy, dd-mmm-yyyy, números de Excel)
+const parsearFechaCSV = (valor) => {
+  if (!valor) return null;
+  
+  // Si es número de Excel
+  if (typeof valor === 'number') {
+    const fecha = new Date((valor - 25569) * 86400 * 1000);
+    return fecha.toISOString().split('T')[0];
+  }
+  
+  const str = String(valor).trim();
+  
+  // Formato dd/mm/yyyy o dd/mm/yy
+  const matchSlash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (matchSlash) {
+    let [, dia, mes, anio] = matchSlash;
+    if (anio.length === 2) anio = '20' + anio;
+    return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+  }
+  
+  // Formato dd-mmm-yyyy (ej: 03/feb/26)
+  const meses = { 'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06', 'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12' };
+  const matchMes = str.match(/^(\d{1,2})[\/\-]([a-z]{3})[\/\-](\d{2,4})$/i);
+  if (matchMes) {
+    let [, dia, mes, anio] = matchMes;
+    const mesNum = meses[mes.toLowerCase()];
+    if (anio.length === 2) anio = '20' + anio;
+    if (mesNum) return `${anio}-${mesNum}-${dia.padStart(2, '0')}`;
+  }
+  
+  // Formato dd-mmm-yy con guiones (ej: 19-mar-26)
+  const matchGuion = str.match(/^(\d{1,2})[\/\-]([a-z]{3})[\/\-](\d{2,4})$/i);
+  if (matchGuion) {
+    let [, dia, mes, anio] = matchGuion;
+    const mesNum = meses[mes.toLowerCase()];
+    if (anio.length === 2) anio = '20' + anio;
+    if (mesNum) return `${anio}-${mesNum}-${dia.padStart(2, '0')}`;
+  }
+  
+  return null;
+};
+
 export default function Vacaciones() {
   const [empleados, setEmpleados] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
   const [reglasGlobales, setReglasGlobales] = useState({});
-  const [puestosLista, setPuestosLista] = useState([]);
-  const [departamentosLista, setDepartamentosLista] = useState([]);
   
   const [anoReglaInput, setAnoReglaInput] = useState(1);
   const [diasReglaInput, setDiasReglaInput] = useState("");
@@ -46,7 +86,6 @@ export default function Vacaciones() {
   useEffect(() => {
     const inicializar = async () => {
       await cargarReglasGlobales();
-      await cargarCatalogos();
       await cargarEmpleados();
       await cargarVacaciones();
     };
@@ -60,22 +99,6 @@ export default function Vacaciones() {
       data.forEach((item) => { mapaReglas[item.ano] = item.dias; });
       setReglasGlobales(mapaReglas);
     }
-  };
-
-  const cargarCatalogos = async () => {
-    try {
-      const [resPuestos, resDepts] = await Promise.all([
-        supabase.from("puestos").select("*").order("nombre"),
-        supabase.from("departamentos").select("*").order("nombre")
-      ]);
-      const puestosUnicos = new Map();
-      (resPuestos.data || []).forEach((p) => {
-        const nombre = String(p.nombre || "").trim();
-        if (nombre && !puestosUnicos.has(nombre.toLowerCase())) puestosUnicos.set(nombre.toLowerCase(), { ...p, nombre });
-      });
-      setPuestosLista(Array.from(puestosUnicos.values()));
-      setDepartamentosLista(resDepts.data || []);
-    } catch (e) { console.error("Error cargando catálogos:", e); }
   };
 
   const cargarEmpleados = async () => {
@@ -93,7 +116,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Error cargando vacaciones:", err); }
   };
 
-  // 🔥 LÓGICA DE IMPORTACIÓN DE CSV HISTÓRICO
+  // 🔥 IMPORTACIÓN CON PARSER ROBUSTO DE MÚLTIPLES BLOQUES
   const procesarArchivoExcel = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -110,6 +133,7 @@ export default function Vacaciones() {
         
         rows.forEach((fila, index) => {
           const keys = Object.keys(fila);
+          
           // Identificar empleado
           const numKey = keys.find(k => /n[^a-z]*o|numero/i.test(k));
           const nombreKey = keys.find(k => /nombre|trabajador/i.test(k));
@@ -123,48 +147,59 @@ export default function Vacaciones() {
 
           if (!empleadoMatch) return;
 
-          // Buscar datos de vacaciones en la fila (maneja el formato ancho del CSV)
-          const inicioKey = keys.find(k => /inicio|fecha/i.test(k) && !/alta/i.test(k));
-          const finKey = keys.find(k => /termino|fin/i.test(k));
-          const diasKey = keys.find(k => /d[ií]as/i.test(k) && !/pendiente/i.test(k));
-
-          if (inicioKey && diasKey) {
-            let fechaInicio = fila[inicioKey];
-            let fechaFin = finKey ? fila[finKey] : fechaInicio;
-            
-            // Convertir fechas de Excel si es necesario
-            if (typeof fechaInicio === 'number') {
-              const d = new Date((fechaInicio - 25569) * 86400 * 1000);
-              fechaInicio = d.toISOString().split('T')[0];
+          // 🔥 Buscar todos los bloques de solicitudes de vacaciones
+          // Patrón: Días, INICIO, TERMINO, REGRESO LAB (repetido múltiples veces)
+          const bloquesSolicitudes = [];
+          
+          for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            if (/d[ií]as/i.test(key) && !/pendiente|vacaciones|años/i.test(key)) {
+              // Verificar si los siguientes 3 campos son INICIO, TERMINO, REGRESO
+              if (i + 3 < keys.length) {
+                const keyInicio = keys[i + 1];
+                const keyTermino = keys[i + 2];
+                const keyRegreso = keys[i + 3];
+                
+                if (/inicio/i.test(keyInicio) && /termino|fin/i.test(keyTermino) && /regreso|lab/i.test(keyRegreso)) {
+                  const dias = Number(fila[key]) || 0;
+                  const fechaInicio = parsearFechaCSV(fila[keyInicio]);
+                  const fechaFin = parsearFechaCSV(fila[keyTermino]);
+                  const fechaRegreso = parsearFechaCSV(fila[keyRegreso]);
+                  
+                  if (dias > 0 && fechaInicio) {
+                    bloquesSolicitudes.push({
+                      dias_solicitados: dias,
+                      fecha_inicio: fechaInicio,
+                      fecha_fin: fechaFin || fechaInicio,
+                      fecha_regreso: fechaRegreso,
+                      tipo: fila[keyRegreso] && /pagad/i.test(String(fila[keyRegreso])) ? "PAGADAS_NO_TOMADAS" : "TOMADAS_Y_PAGADAS"
+                    });
+                  }
+                }
+              }
             }
-            if (typeof fechaFin === 'number') {
-              const d = new Date((fechaFin - 25569) * 86400 * 1000);
-              fechaFin = d.toISOString().split('T')[0];
-            }
+          }
 
-            // Si hay múltiples bloques en la misma fila, el usuario podrá agregarlos manualmente desde el Kardex.
-            // Aquí importamos el primer bloque válido encontrado como histórico "APROBADO".
+          // Crear registros de vacaciones para cada bloque encontrado
+          bloquesSolicitudes.forEach((bloque, idx) => {
             registrosVacaciones.push({
-              id_fila: index,
+              id_fila: `${index}_${idx}`,
               empleado_id: empleadoMatch.id,
               nombre_encontrado: empleadoMatch.nombre_completo,
               numero_encontrado: empleadoMatch.numero_empleado,
               estatus_match: "✅ Vinculado",
               datos_vacaciones: {
-                fecha_inicio: fechaInicio,
-                fecha_fin: fechaFin,
-                dias_solicitados: Number(fila[diasKey]) || 0,
-                estatus: "APROBADO", // Histórico
-                tipo_vacaciones: "TOMADAS_Y_PAGADAS",
-                observaciones: "Importación histórica desde CSV"
+                ...bloque,
+                estatus: "PENDIENTE", // Se importan como pendientes para que RH las revise
+                observaciones: `Importado desde CSV - Bloque ${idx + 1}`
               }
             });
-          }
+          });
         });
 
         setDatosImportados(registrosVacaciones);
         setModoRevision(true);
-        alert(`✅ Se procesaron ${rows.length} filas.\n✅ Se encontraron ${registrosVacaciones.length} registros de vacaciones válidos para importar.`);
+        alert(`✅ Se procesaron ${rows.length} filas.\n✅ Se encontraron ${registrosVacaciones.length} solicitudes de vacaciones para revisar.`);
       } catch (error) {
         console.error(error);
         alert("Error al leer el archivo: " + error.message);
@@ -176,7 +211,7 @@ export default function Vacaciones() {
   const guardarImportacionRevisada = async () => {
     const datosValidos = datosImportados.filter(d => d.empleado_id);
     if (datosValidos.length === 0) { alert("⚠️ No hay datos vinculados."); return; }
-    if (!window.confirm(`¿Guardar ${datosValidos.length} registros históricos en la base de datos?`)) return;
+    if (!window.confirm(`¿Guardar ${datosValidos.length} solicitudes en la base de datos?`)) return;
     
     let errores = 0;
     for (const item of datosValidos) {
@@ -188,7 +223,7 @@ export default function Vacaciones() {
     }
     
     if (errores === 0) {
-      alert("✅ Importación histórica guardada exitosamente.");
+      alert("✅ Importación guardada exitosamente.");
       setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null);
       await cargarVacaciones();
     } else { 
@@ -196,7 +231,7 @@ export default function Vacaciones() {
     }
   };
 
-  // 🔥 LÓGICA DE KARDEX Y APROBACIÓN
+  // 🔥 KARDEX Y APROBACIÓN
   const abrirKardexRH = (emp) => {
     const resumen = obtenerResumenEmpleado(emp.id, emp.fecha_ingreso);
     const solicitudesPendientes = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "PENDIENTE");
@@ -204,7 +239,7 @@ export default function Vacaciones() {
     setKardexData({ empleado: emp, resumen, solicitudesPendientes, solicitudesAprobadas });
   };
 
-  const aprobarYGenerarRecibo = async (vacacionId, empresa) => {
+  const aprobarSolicitud = async (vacacionId, empresa) => {
     try {
       const { data: vacacionData, error } = await supabase
         .from("vacaciones")
@@ -216,6 +251,18 @@ export default function Vacaciones() {
       if (error) throw error;
       await cargarVacaciones();
       
+      // Actualizar kardex en pantalla
+      if (kardexData) {
+        const emp = kardexData.empleado;
+        setKardexData({
+          ...kardexData,
+          resumen: obtenerResumenEmpleado(emp.id, emp.fecha_ingreso),
+          solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId),
+          solicitudesAprobadas: [...kardexData.solicitudesAprobadas, vacacionData]
+        });
+      }
+      
+      // Abrir recibo automáticamente
       const fechaInicioDate = new Date(vacionData.fecha_inicio);
       const fechaFinDate = new Date(vacionData.fecha_fin);
       const fechaRegresoDate = new Date(fechaFinDate);
@@ -237,9 +284,34 @@ export default function Vacaciones() {
         antiguedad: calcularAntiguedad(vacionData.empleados.fecha_ingreso),
         resumen: obtenerResumenEmpleado(vacionData.empleado_id, vacacionData.empleados.fecha_ingreso)
       });
-      setKardexData(null);
     } catch (err) {
       alert("Error al aprobar: " + err.message);
+    }
+  };
+
+  const modificarSolicitud = async (vacacionId, nuevosDatos) => {
+    try {
+      const { error } = await supabase
+        .from("vacaciones")
+        .update(nuevosDatos)
+        .eq("id", vacacionId);
+
+      if (error) throw error;
+      await cargarVacaciones();
+      
+      if (kardexData) {
+        const emp = kardexData.empleado;
+        setKardexData({
+          ...kardexData,
+          resumen: obtenerResumenEmpleado(emp.id, emp.fecha_ingreso),
+          solicitudesPendientes: kardexData.solicitudesPendientes.map(v => 
+            v.id === vacacionId ? { ...v, ...nuevosDatos } : v
+          )
+        });
+      }
+      alert("✅ Solicitud modificada correctamente.");
+    } catch (err) {
+      alert("Error al modificar: " + err.message);
     }
   };
 
@@ -249,6 +321,7 @@ export default function Vacaciones() {
       await supabase.from("vacaciones").update({ estatus: "RECHAZADO" }).eq("id", vacacionId);
       await cargarVacaciones();
       if (kardexData) {
+        const emp = kardexData.empleado;
         setKardexData({
           ...kardexData,
           solicitudesPendientes: kardexData.solicitudesPendientes.filter(v => v.id !== vacacionId)
@@ -257,6 +330,30 @@ export default function Vacaciones() {
     } catch (err) {
       alert("Error al rechazar: " + err.message);
     }
+  };
+
+  const verReciboHistorico = (item) => {
+    const fechaInicioDate = new Date(item.fecha_inicio);
+    const fechaFinDate = new Date(item.fecha_fin);
+    const fechaRegresoDate = new Date(fechaFinDate);
+    fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
+    
+    setEmpresaRecibo("PAB");
+    setReciboData({
+      empleado: kardexData.empleado,
+      diasSolicitados: item.dias_solicitados,
+      fechaInicio: item.fecha_inicio,
+      fechaFin: item.fecha_fin,
+      fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      diaInicio: fechaInicioDate.getDate(),
+      diaFin: fechaFinDate.getDate(),
+      mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
+      mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
+      anoInicio: fechaInicioDate.getFullYear(),
+      anoFin: fechaFinDate.getFullYear(),
+      antiguedad: calcularAntiguedad(kardexData.empleado.fecha_ingreso),
+      resumen: obtenerResumenEmpleado(kardexData.empleado.id, kardexData.empleado.fecha_ingreso)
+    });
   };
 
   const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
@@ -301,7 +398,7 @@ export default function Vacaciones() {
       <div className="space-y-6 print:hidden">
         <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones (RH)</h1>
+            <h1 className="text-3xl font-bold text-slate-800">️ Control de Vacaciones (RH)</h1>
             <p className="text-slate-500">Gestión, aprobación de solicitudes, importación histórica y generación de recibos</p>
           </div>
           <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
@@ -316,21 +413,21 @@ export default function Vacaciones() {
           <KpiCard titulo="Días Totales" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* 🔥 SECCIÓN DE IMPORTACIÓN HISTÓRICA */}
+        {/* 🔥 IMPORTACIÓN CON BOTÓN GUARDAR */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold mb-3 text-slate-800">📥 Importar Información Histórica (CSV)</h2>
+          <h2 className="text-lg font-bold mb-3 text-slate-800"> Importar Solicitudes desde CSV</h2>
           {!modoRevision ? (
             <div>
-              <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para importar los periodos de vacaciones históricos como "APROBADOS".</p>
+              <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para importar solicitudes de vacaciones. Se importarán como PENDIENTES para que RH las revise.</p>
               <input type="file" accept=".csv,.xlsx,.xls" onChange={procesarArchivoExcel} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
             </div>
           ) : (
             <div className="space-y-4">
               <div className="flex justify-between items-center bg-amber-50 p-3 rounded-lg border border-amber-200">
-                <span className="text-sm text-amber-800 font-semibold">📝 Modo Revisión: {datosImportados.length} registros encontrados</span>
+                <span className="text-sm text-amber-800 font-semibold">📝 Modo Revisión: {datosImportados.length} solicitudes encontradas</span>
                 <div className="flex gap-2">
                   <button onClick={() => { setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null); }} className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1">Cancelar</button>
-                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">💾 Guardar Histórico en BD</button>
+                  <button onClick={guardarImportacionRevisada} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">💾 Guardar Solicitudes en BD</button>
                 </div>
               </div>
               <div className="overflow-x-auto max-h-96 border rounded-xl">
@@ -342,6 +439,7 @@ export default function Vacaciones() {
                       <th className="p-3 border-b">Inicio</th>
                       <th className="p-3 border-b">Fin</th>
                       <th className="p-3 border-b">Días</th>
+                      <th className="p-3 border-b">Tipo</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -352,6 +450,7 @@ export default function Vacaciones() {
                         <td className="p-3">{fila.datos_vacaciones.fecha_inicio}</td>
                         <td className="p-3">{fila.datos_vacaciones.fecha_fin}</td>
                         <td className="p-3 font-bold">{fila.datos_vacaciones.dias_solicitados}</td>
+                        <td className="p-3">{fila.datos_vacaciones.tipo === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas" : "✅ Tomadas"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -361,17 +460,17 @@ export default function Vacaciones() {
           )}
         </div>
 
-        {/* REGLAS GLOBALES (Colapsable) */}
+        {/* 🔥 REGLAS GLOBALES COMPACTAS (Tipo Display) */}
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
-          <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-700 transition">
+          <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
-              <span className="text-xl">⚙️</span>
+              <span className="text-lg">⚙️</span>
               <div className="text-left">
-                <h2 className="text-lg font-bold">Reglas Globales por Antigüedad</h2>
-                <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas · Click para {reglasExpandidas ? 'ocultar' : 'editar'}</p>
+                <h2 className="text-base font-bold">Reglas Globales por Antigüedad</h2>
+                <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas</p>
               </div>
             </div>
-            <span className="text-2xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+            <span className="text-xl transition-transform" style={{ transform: reglasExpandidas ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
           </button>
           {reglasExpandidas && (
             <div className="px-6 py-4 border-t border-slate-700 space-y-3">
@@ -462,10 +561,10 @@ export default function Vacaciones() {
           </div>
         </div>
 
-        {/* 🔥 MODAL: KARDEX Y SOLICITUDES DE RH */}
+        {/* 🔥 MODAL: KARDEX COMPLETO CON SOLICITUDES DEL SUPERVISOR */}
         {kardexData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-6">
               <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <div>
                   <h3 className="text-xl font-bold text-slate-800">📋 Kardex de Empleado</h3>
@@ -474,6 +573,7 @@ export default function Vacaciones() {
                 <button onClick={() => setKardexData(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
               </div>
 
+              {/* Resumen de Días */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div><span className="text-gray-500 text-xs block">Antigüedad</span><strong>{kardexData.antiguedad.texto}</strong></div>
                 <div><span className="text-gray-500 text-xs block">Días por Ley</span><strong className="text-blue-600">{kardexData.resumen.diasCorrespondientes}</strong></div>
@@ -481,7 +581,8 @@ export default function Vacaciones() {
                 <div><span className="text-gray-500 text-xs block">Remanentes</span><strong className="text-emerald-600">{kardexData.resumen.diasRemanentes}</strong></div>
               </div>
 
-              <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">⏳ Solicitudes Pendientes</h4>
+              {/* 🔥 SOLICITUDES DEL SUPERVISOR (Comparativa) */}
+              <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">⏳ Solicitudes del Supervisor (Pendientes de Revisión)</h4>
               {kardexData.solicitudesPendientes.length === 0 ? (
                 <p className="text-sm text-slate-500 mb-6 bg-slate-50 p-3 rounded-lg">No hay solicitudes pendientes para este empleado.</p>
               ) : (
@@ -493,6 +594,7 @@ export default function Vacaciones() {
                           <span className="font-bold">Solicitado:</span> {vac.dias_solicitados} días 
                           <span className="mx-2">|</span> 
                           <span className="font-bold">Periodo:</span> {vac.fecha_inicio} al {vac.fecha_fin}
+                          {vac.observaciones && <div className="text-xs text-slate-600 mt-1"><strong>Obs:</strong> {vac.observaciones}</div>}
                         </div>
                         <div className="flex gap-2">
                           <select 
@@ -504,13 +606,21 @@ export default function Vacaciones() {
                             <option value="SHERGON">Emitir a nombre de: SHERGON</option>
                           </select>
                           <button 
-                            onClick={() => {
-                              const empresa = document.getElementById(`empresa-${vac.id}`).value;
-                              aprobarYGenerarRecibo(vac.id, empresa);
-                            }}
+                            onClick={() => aprobarSolicitud(vac.id, document.getElementById(`empresa-${vac.id}`).value)}
                             className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
                           >
-                            ✅ Aprobar y Generar Recibo
+                            ✅ Aprobar
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const nuevosDias = prompt("Modificar días:", vac.dias_solicitados);
+                              if (nuevosDias !== null) {
+                                modificarSolicitud(vac.id, { dias_solicitados: Number(nuevosDias) });
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+                          >
+                            ️ Modificar
                           </button>
                           <button 
                             onClick={() => rechazarSolicitud(vac.id)}
@@ -520,50 +630,36 @@ export default function Vacaciones() {
                           </button>
                         </div>
                       </div>
-                      {vac.observaciones && <p className="text-xs text-slate-600 bg-white p-2 rounded border"><strong>Obs:</strong> {vac.observaciones}</p>}
                     </div>
                   ))}
                 </div>
               )}
 
+              {/* Historial Aprobado con Botón de Recibo */}
               <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">✅ Historial Aprobado</h4>
               {kardexData.solicitudesAprobadas.length === 0 ? (
                 <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg">Sin historial de vacaciones aprobadas.</p>
               ) : (
                 <div className="max-h-48 overflow-y-auto border rounded-xl">
                   <table className="w-full text-xs">
-                    <thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">Fechas</th><th className="p-2">Días</th><th className="p-2">Acción</th></tr></thead>
+                    <thead className="bg-slate-100 sticky top-0">
+                      <tr>
+                        <th className="p-2">Fechas</th>
+                        <th className="p-2">Días</th>
+                        <th className="p-2">Tipo</th>
+                        <th className="p-2">Acción</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {kardexData.solicitudesAprobadas.map(item => (
                         <tr key={item.id} className="border-t">
                           <td className="p-2">{item.fecha_inicio} al {item.fecha_fin}</td>
                           <td className="p-2 text-center font-bold">{item.dias_solicitados}</td>
+                          <td className="p-2 text-center">{item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas" : "✅ Tomadas"}</td>
                           <td className="p-2 text-center">
                             <button 
-                              onClick={() => {
-                                const fechaInicioDate = new Date(item.fecha_inicio);
-                                const fechaFinDate = new Date(item.fecha_fin);
-                                const fechaRegresoDate = new Date(fechaFinDate);
-                                fechaRegresoDate.setDate(fechaRegresoDate.getDate() + 1);
-                                setEmpresaRecibo("PAB");
-                                setReciboData({
-                                  empleado: kardexData.empleado,
-                                  diasSolicitados: item.dias_solicitados,
-                                  fechaInicio: item.fecha_inicio,
-                                  fechaFin: item.fecha_fin,
-                                  fechaRegreso: fechaRegresoDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-                                  diaInicio: fechaInicioDate.getDate(),
-                                  diaFin: fechaFinDate.getDate(),
-                                  mesInicio: fechaInicioDate.toLocaleString('es-MX', { month: 'long' }),
-                                  mesFin: fechaFinDate.toLocaleString('es-MX', { month: 'long' }),
-                                  anoInicio: fechaInicioDate.getFullYear(),
-                                  anoFin: fechaFinDate.getFullYear(),
-                                  antiguedad: calcularAntiguedad(kardexData.empleado.fecha_ingreso),
-                                  resumen: obtenerResumenEmpleado(kardexData.empleado.id, kardexData.empleado.fecha_ingreso)
-                                });
-                                setKardexData(null);
-                              }}
-                              className="text-blue-600 hover:text-blue-800 font-bold text-[10px]"
+                              onClick={() => verReciboHistorico(item)}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold"
                             >
                               🖨️ Ver Recibo
                             </button>
@@ -578,7 +674,7 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 MODAL: RECIBO DE VACACIONES CON SELECTOR DE EMPRESA */}
+        {/* 🔥 MODAL: RECIBO DE VACACIONES */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80] print:static print:bg-white print:p-0">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-8 max-h-[95vh] overflow-y-auto print:shadow-none print:max-h-none print:w-full print:p-4">
@@ -736,7 +832,7 @@ export default function Vacaciones() {
 
               <div className="mt-6 flex justify-end gap-3 print:hidden">
                 <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">Cerrar</button>
-                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">🖨️ Imprimir / PDF</button>
+                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">️ Imprimir / PDF</button>
               </div>
             </div>
           </div>

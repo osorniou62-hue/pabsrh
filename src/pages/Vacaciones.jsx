@@ -4,16 +4,17 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// 🔥 NUEVA FUNCIÓN: Normalización robusta de nombres para comparación
+// 🔥 FUNCIÓN ROBUSTA DE NORMALIZACIÓN (Igual que en Empleados, pero más agresiva con espacios)
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto)
+    .trim() // Elimina espacios al inicio y final (CRÍTICO para el CSV)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "") // Quita acentos
-    .replace(/ñ/g, "n")              // ñ → n
+    .replace(/ñ/g, "n")              // ñ -> n
     .replace(/[.,;:()]/g, "")        // Quita puntos, comas, paréntesis
-    .replace(/\s+/g, " ")            // Espacios múltiples → uno solo
+    .replace(/\s+/g, " ")            // Espacios múltiples -> uno solo
     .trim();
 };
 
@@ -24,8 +25,6 @@ export default function Vacaciones() {
   
   const [anoReglaInput, setAnoReglaInput] = useState(1);
   const [diasReglaInput, setDiasReglaInput] = useState("");
-  
-  // 🔥 NUEVO: Estado para colapsar/expandir reglas
   const [reglasExpandidas, setReglasExpandidas] = useState(false);
 
   const [configuracionMapeo, setConfiguracionMapeo] = useState(null);
@@ -92,11 +91,14 @@ export default function Vacaciones() {
         const puestoB = (b.puesto || "Sin Puesto").toLowerCase();
         return puestoA.localeCompare(puestoB);
       });
+      
       setEmpleados(datosOrdenados);
       
-      //  NUEVO: Log para depurar nombres en la BD
-      console.log(" Empleados en BD:", datosOrdenados.length);
-      console.log("📋 Primeros 10 nombres en BD:", datosOrdenados.slice(0, 10).map(e => normalizarNombre(e.nombre_completo)));
+      if (datosOrdenados.length === 0) {
+        console.warn("⚠️ ADVERTENCIA: No hay empleados en la base de datos");
+      } else {
+        console.log(`✅ Empleados cargados: ${datosOrdenados.length}`);
+      }
       
       if (datosOrdenados.length > 0 && !empleadoKardex) {
         const emp = datosOrdenados[0];
@@ -117,85 +119,70 @@ export default function Vacaciones() {
   const procesarArchivoExcel = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (empleados.length === 0) {
+      alert("⚠️ No hay empleados registrados en la base de datos.\n\nPara importar vacaciones, primero debes:\n1. Ir a 'Importar Empleados'\n2. Cargar el archivo de nómina.\n3. Volver aquí e importar las vacaciones.");
+      return;
+    }
+
     setArchivoVacaciones(file);
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const workbook = XLSX.read(e.target.result, { type: "binary", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
         
-        console.log("Filas leídas del CSV:", rows.length);
+        if (rows.length === 0) { alert("⚠️ El archivo está vacío."); return; }
         
-        if (rows.length === 0) {
-          alert("️ El archivo CSV está vacío.");
-          return;
-        }
-        
-        if (!configuracionMapeo?.asignacion) { 
-          alert("⚠️ No hay configuración de mapeo cargada."); 
-          return; 
-        }
-        
-        const mapeo = {};
-        Object.entries(configuracionMapeo.asignacion).forEach(([colExcel, info]) => {
-          if (info.tablaDestino === "vacaciones" || info.tablaDestino === "empleados") {
-            mapeo[colExcel.trim().toUpperCase()] = info.esManual ? info.campoManual : info.campoDestino;
-          }
-        });
-
-        // 🔥 NUEVO: Crear un índice de empleados normalizados para búsqueda rápida
+        // 🔥 ÍNDICE DE BÚSQUEDA OPTIMIZADO (Basado en la estructura de Empleados)
         const indiceEmpleados = new Map();
         empleados.forEach(emp => {
           const nombreNorm = normalizarNombre(emp.nombre_completo);
           const numeroNorm = String(emp.numero_empleado || "").trim();
-          // Indexar por nombre normalizado
           if (nombreNorm) indiceEmpleados.set(nombreNorm, emp);
-          // Indexar por número de empleado
           if (numeroNorm) indiceEmpleados.set("num_" + numeroNorm, emp);
         });
-        
-        console.log("🔍 Índice de empleados creado:", indiceEmpleados.size, "entradas");
+
+        console.log(`🔍 Índice de empleados creado: ${indiceEmpleados.size} entradas`);
 
         const datosProcesados = rows.map((fila, index) => {
-          const numEmpKey = Object.keys(fila).find(k => 
-            k.toUpperCase().includes("NUMERO") || 
-            k.toUpperCase().includes("NO.") ||
-            k.toUpperCase().includes("PROVEEDOR") ||
-            k.toUpperCase().includes("EMPLEADO")
-          );
+          // 🔥 DETECCIÓN FLEXIBLE DE COLUMNAS DEL CSV "CONTROL GENERAL"
+          const clavesFila = Object.keys(fila);
           
-          const nombreEmpKey = Object.keys(fila).find(k => 
-            k.toUpperCase().includes("NOMBRE") || 
-            k.toUpperCase().includes("COLABORADOR") ||
-            k.toUpperCase().includes("TRABAJADOR")
-          );
+          const numEmpKey = clavesFila.find(k => /n[^a-z]*o|numero|no\.|proveedor/i.test(k));
+          const nombreEmpKey = clavesFila.find(k => /nombre|trabajador|colaborador/i.test(k));
           
-          const valorBusqueda = numEmpKey ? String(fila[numEmpKey]).trim() : (nombreEmpKey ? String(fila[nombreEmpKey]).trim() : "");
+          const valorBusquedaNum = numEmpKey ? String(fila[numEmpKey]).trim() : "";
+          const valorBusquedaNom = nombreEmpKey ? String(fila[nombreEmpKey]).trim() : "";
           
-          // 🔥 NUEVO: Búsqueda mejorada con normalización
           let empleadoMatch = null;
-          
-          if (valorBusqueda) {
-            // Intento 1: Buscar por número de empleado
-            const porNumero = indiceEmpleados.get("num_" + valorBusqueda);
+          let metodoVinculacion = "No vinculado";
+
+          if (valorBusquedaNum) {
+            const porNumero = indiceEmpleados.get("num_" + valorBusquedaNum);
             if (porNumero) {
               empleadoMatch = porNumero;
+              metodoVinculacion = "Por Número";
+            }
+          }
+
+          if (!empleadoMatch && valorBusquedaNom) {
+            const busquedaNorm = normalizarNombre(valorBusquedaNom);
+            const porNombreExacto = indiceEmpleados.get(busquedaNorm);
+            
+            if (porNombreExacto) {
+              empleadoMatch = porNombreExacto;
+              metodoVinculacion = "Por Nombre Exacto";
             } else {
-              // Intento 2: Buscar por nombre normalizado (coincidencia exacta)
-              const nombreNorm = normalizarNombre(valorBusqueda);
-              const porNombreExacto = indiceEmpleados.get(nombreNorm);
-              if (porNombreExacto) {
-                empleadoMatch = porNombreExacto;
-              } else {
-                // Intento 3: Búsqueda parcial (contiene)
-                const coincidenciaParcial = empleados.find(emp => 
-                  normalizarNombre(emp.nombre_completo).includes(nombreNorm) ||
-                  nombreNorm.includes(normalizarNombre(emp.nombre_completo))
-                );
-                if (coincidenciaParcial) {
-                  empleadoMatch = coincidenciaParcial;
-                }
+              // Búsqueda parcial (por si el CSV tiene nombres ligeramente distintos)
+              const coincidenciaParcial = empleados.find(emp => {
+                const empNorm = normalizarNombre(emp.nombre_completo);
+                return empNorm.includes(busquedaNorm) || busquedaNorm.includes(empNorm);
+              });
+              if (coincidenciaParcial) {
+                empleadoMatch = coincidenciaParcial;
+                metodoVinculacion = "Por Nombre Parcial";
               }
             }
           }
@@ -206,17 +193,34 @@ export default function Vacaciones() {
             nombre_encontrado: empleadoMatch ? empleadoMatch.nombre_completo : "No encontrado",
             numero_encontrado: empleadoMatch ? empleadoMatch.numero_empleado : "N/A",
             estatus_match: empleadoMatch ? "✅ Vinculado" : "❌ Sin vincular", 
+            metodo_vinculacion: metodoVinculacion,
             datos_vacaciones: {},
-            busqueda_raw: valorBusqueda,
-            busqueda_normalizada: normalizarNombre(valorBusqueda)
+            busqueda_raw_num: valorBusquedaNum,
+            busqueda_raw_nom: valorBusquedaNom,
+            busqueda_normalizada: normalizarNombre(valorBusquedaNom)
           };
 
-          Object.keys(fila).forEach(keyExcel => {
-            const campoBD = mapeo[keyExcel.trim().toUpperCase()];
-            if (campoBD && campoBD !== "numero_empleado" && campoBD !== "nombre_completo") {
-              registro.datos_vacaciones[campoBD] = fila[keyExcel];
-            }
-          });
+          // Mapeo dinámico de otros campos (días, fechas, etc.)
+          if (configuracionMapeo?.asignacion) {
+            Object.keys(fila).forEach(keyExcel => {
+              const info = configuracionMapeo.asignacion[keyExcel.trim().toUpperCase()];
+              if (info && info.tablaDestino === "vacaciones") {
+                const campoBD = info.esManual ? info.campoManual : info.campoDestino;
+                if (campoBD) registro.datos_vacaciones[campoBD] = fila[keyExcel];
+              }
+            });
+          }
+
+          // Fallback manual para columnas comunes del CSV si no hay mapeo configurado
+          if (Object.keys(registro.datos_vacaciones).length === 0) {
+            const diasKey = clavesFila.find(k => /d[ií]as/i.test(k) && !/pendiente/i.test(k));
+            const inicioKey = clavesFila.find(k => /inicio/i.test(k));
+            const finKey = clavesFila.find(k => /termino|fin/i.test(k));
+            
+            if (diasKey) registro.datos_vacaciones.dias_solicitados = Number(fila[diasKey]) || 0;
+            if (inicioKey) registro.datos_vacaciones.fecha_inicio = fila[inicioKey];
+            if (finKey) registro.datos_vacaciones.fecha_fin = fila[finKey];
+          }
 
           if (!registro.datos_vacaciones.tipo_vacaciones) registro.datos_vacaciones.tipo_vacaciones = "TOMADAS_Y_PAGADAS";
           if (!registro.datos_vacaciones.estatus) registro.datos_vacaciones.estatus = "APROBADO";
@@ -227,19 +231,19 @@ export default function Vacaciones() {
         const vinculados = datosProcesados.filter(d => d.empleado_id);
         const noVinculados = datosProcesados.filter(d => !d.empleado_id);
         
-        console.log("✅ Vinculados:", vinculados.length);
-        console.log("❌ No vinculados:", noVinculados.length);
+        console.log(`✅ Vinculados: ${vinculados.length}`);
+        console.log(`❌ No vinculados: ${noVinculados.length}`);
         
-        if (noVinculados.length > 0) {
-          console.log("📋 Ejemplos de no vinculados (buscado → normalizado):");
-          noVinculados.slice(0, 5).forEach(d => {
-            console.log(`  "${d.busqueda_raw}" → "${d.busqueda_normalizada}"`);
+        if (noVinculados.length > 0 && noVinculados.length < 10) {
+          console.log("📋 Ejemplos de no vinculados:");
+          noVinculados.forEach(d => {
+            console.log(`  [${d.metodo_vinculacion}] CSV: "${d.busqueda_raw_nom}" (Norm: "${d.busqueda_normalizada}") vs BD`);
           });
         }
 
         setDatosImportados(datosProcesados);
         setModoRevision(true);
-        alert(`✅ Se procesaron ${datosProcesados.length} filas.\n✅ Vinculados: ${vinculados.length}\n❌ Sin vincular: ${noVinculados.length}`);
+        alert(`✅ Se procesaron ${datosProcesados.length} filas.\n✅ Vinculados: ${vinculados.length}\n❌ Sin vincular: ${noVinculados.length}\n\nRevisa la consola (F12) si hay errores de vinculación.`);
       } catch (error) { 
         console.error("Error al procesar archivo:", error); 
         alert("Error al leer el archivo: " + error.message); 
@@ -252,20 +256,29 @@ export default function Vacaciones() {
     const datosValidos = datosImportados.filter(d => d.empleado_id);
     if (datosValidos.length === 0) { alert("⚠️ No hay datos vinculados."); return; }
     if (!window.confirm(`¿Guardar ${datosValidos.length} registros?`)) return;
+    
     let errores = 0;
     for (const item of datosValidos) {
-      const { error } = await supabase.from("vacaciones").insert([{ empleado_id: item.empleado_id, ...item.datos_vacaciones }]);
+      const { error } = await supabase.from("vacaciones").insert([{ 
+        empleado_id: item.empleado_id, 
+        ...item.datos_vacaciones 
+      }]);
       if (error) errores++;
     }
+    
     if (errores === 0) {
       alert("✅ Importación guardada.");
       setModoRevision(false); setDatosImportados([]); setArchivoVacaciones(null);
       await cargarVacaciones();
-    } else { alert(`⚠️ Hubo ${errores} errores.`); }
+    } else { 
+      alert(`⚠️ Se guardaron algunos, pero hubo ${errores} errores.`); 
+    }
   };
 
   const actualizarDatoImportado = (idFila, campo, valor) => {
-    setDatosImportados(prev => prev.map(item => item.id_fila === idFila ? { ...item, datos_vacaciones: { ...item.datos_vacaciones, [campo]: valor } } : item));
+    setDatosImportados(prev => prev.map(item => 
+      item.id_fila === idFila ? { ...item, datos_vacaciones: { ...item.datos_vacaciones, [campo]: valor } } : item
+    ));
   };
 
   const calcularAntiguedad = (fechaIngresoStr) => {
@@ -367,9 +380,14 @@ export default function Vacaciones() {
   return (
     <Layout>
       <div className="space-y-6 print:hidden">
-        <div className="mb-4">
-          <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
-          <p className="text-slate-500">Gestión global, importación masiva y generación de recibos</p>
+        <div className="mb-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones</h1>
+            <p className="text-slate-500">Sincronizado con la base de datos de Empleados</p>
+          </div>
+          <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
+            🔄 Recargar Empleados
+          </button>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
@@ -379,7 +397,16 @@ export default function Vacaciones() {
           <KpiCard titulo="Días Totales" valor={vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0)} icono="🗓️" color="text-blue-600" />
         </div>
 
-        {/* 🔥 REGLAS GLOBALES DESPLEGABLES */}
+        {empleados.length === 0 && (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center">
+            <h3 className="text-xl font-bold text-amber-800 mb-2">⚠️ No hay empleados registrados</h3>
+            <p className="text-amber-700 mb-4">Para importar vacaciones, primero debes cargar la nómina de empleados.</p>
+            <a href="/empleados/importar" className="inline-block bg-amber-600 hover:bg-amber-700 text-white px-6 py-2 rounded-lg font-semibold">
+              Ir a Importar Empleados →
+            </a>
+          </div>
+        )}
+
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
           <button 
             onClick={() => setReglasExpandidas(!reglasExpandidas)}
@@ -439,6 +466,7 @@ export default function Vacaciones() {
                   <thead className="bg-slate-100 sticky top-0 z-10">
                     <tr>
                       <th className="p-3 border-b">Estado</th>
+                      <th className="p-3 border-b">Método</th>
                       <th className="p-3 border-b">Empleado</th>
                       {datosImportados.length > 0 && Object.keys(datosImportados[0].datos_vacaciones).map(key => (<th key={key} className="p-3 border-b capitalize">{key.replace(/_/g, ' ')}</th>))}
                     </tr>
@@ -447,6 +475,7 @@ export default function Vacaciones() {
                     {datosImportados.map((fila) => (
                       <tr key={fila.id_fila} className={`border-b hover:bg-slate-50 ${!fila.empleado_id ? 'bg-red-50' : ''}`}>
                         <td className="p-3"><span className={`text-[10px] font-bold px-2 py-1 rounded ${fila.empleado_id ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{fila.estatus_match}</span></td>
+                        <td className="p-3 text-[10px] text-slate-500">{fila.metodo_vinculacion}</td>
                         <td className="p-3 font-medium">{fila.nombre_encontrado} <span className="text-gray-400">({fila.numero_encontrado})</span></td>
                         {fila.empleado_id && Object.keys(fila.datos_vacaciones).map(key => (
                           <td key={key} className="p-2">
@@ -462,7 +491,7 @@ export default function Vacaciones() {
                             )}
                           </td>
                         ))}
-                        {!fila.empleado_id && <td colSpan="10" className="p-3 text-red-600 text-xs">⚠️ No se encontró el empleado. Buscado: "{fila.busqueda_raw}"</td>}
+                        {!fila.empleado_id && <td colSpan="10" className="p-3 text-red-600 text-xs">⚠️ No se encontró. Buscado: "{fila.busqueda_raw_nom}"</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -613,7 +642,7 @@ export default function Vacaciones() {
             {empleadoKardex ? (
               <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-6">
                 <div className="flex justify-between items-center mb-4 border-b pb-3">
-                  <h3 className="text-lg font-bold"> Kardex</h3>
+                  <h3 className="text-lg font-bold">📋 Kardex</h3>
                   <button onClick={() => setEmpleadoKardex(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
                 </div>
                 

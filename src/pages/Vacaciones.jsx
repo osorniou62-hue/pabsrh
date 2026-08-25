@@ -4,32 +4,10 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
-// 🔥 NORMALIZADOR DE NOMBRES
-const normalizarNombre = (texto) => {
-  if (!texto) return "";
-  return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
-};
-
-// 🔥 CALCULADOR DE ANTIGÜEDAD
-const calcularAntiguedad = (fechaIngresoStr) => {
-  if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
-  try {
-    const fecha = new Date(fechaIngresoStr);
-    if (isNaN(fecha.getTime())) return { anosCumplidos: 0, texto: "Fecha inválida" };
-    const hoy = new Date();
-    const dias = Math.floor((hoy - fecha) / (1000 * 60 * 60 * 24));
-    const anos = Math.floor(dias / 365);
-    return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
-  } catch {
-    return { anosCumplidos: 0, texto: "Error" };
-  }
-};
-
-// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (Maneja todos los errores del CSV)
+// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO
 const parsearFechaCSV = (valor) => {
   if (!valor) return null;
   
-  // 1. Manejar fechas en formato número de Excel (ej: 45845)
   const numVal = parseFloat(valor);
   if (!isNaN(numVal) && numVal > 10000) {
     const fecha = new Date((numVal - 25569) * 86400 * 1000);
@@ -39,32 +17,26 @@ const parsearFechaCSV = (valor) => {
   let str = String(valor).trim();
   if (str === '-' || str.toUpperCase().includes('PAGAD') || str.includes('#¡REF!') || str === '') return null;
   
-  // 2. Corregir errores de dedo comunes: "02/04//2026" -> "02/04/2026"
-  str = str.replace(/\/+/g, '/');
-  
-  // 3. Corregir "1407/2026" -> "14/07/2026"
-  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3');
+  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3').replace(/\/+/g, '/');
 
-  // 4. Parsear formato dd/mm/yyyy o dd/mm/yy
   const matchSlash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4,5})$/);
   if (matchSlash) {
     let [, dia, mes, anio] = matchSlash;
-    if (anio.length > 4) anio = anio.slice(-4); // Corregir "12026" -> "2026"
+    if (anio.length > 4) anio = anio.slice(-4);
     if (anio.length === 2) anio = '20' + anio;
     
     const fechaStr = `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
     const fechaPrueba = new Date(fechaStr);
     
-    // 5. Validar que la fecha sea real (evita 31/11/2025 o 15/0/2026)
     if (isNaN(fechaPrueba.getTime()) || 
         fechaPrueba.getDate() !== parseInt(dia) || 
         (fechaPrueba.getMonth() + 1) !== parseInt(mes)) {
       return null; 
     }
+    
     return fechaStr;
   }
   
-  // 6. Parsear formato dd/mmm/yy (ej: 14/ene/26)
   const meses = { 'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06', 'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12' };
   const matchMes = str.match(/^(\d{1,2})[\/\-]([a-z]{3})[\/\-](\d{2,4})$/i);
   if (matchMes) {
@@ -86,6 +58,65 @@ const parsearFechaCSV = (valor) => {
   return null;
 };
 
+// 🔥 NORMALIZADOR DE NOMBRES
+const normalizarNombre = (texto) => {
+  if (!texto) return "";
+  return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
+};
+
+// 🔥 DETECTOR DE TIPO DE COLUMNA BASADO EN TÍTULO
+const detectarTipoColumna = (titulo) => {
+  const t = titulo.toLowerCase();
+  
+  // Datos del empleado
+  if (t.includes('n°') || t.includes('numero') || t.includes('proveedor')) return 'numero_empleado';
+  if (t.includes('nombre') && t.includes('trabajador')) return 'nombre_completo';
+  if (t.includes('puesto') || t.includes('área')) return 'puesto';
+  if (t.includes('empresa')) return 'empresa';
+  if (t.includes('salario') && t.includes('fiscal')) return 'salario_fiscal';
+  if (t.includes('salario') && t.includes('no fiscal')) return 'salario_no_fiscal';
+  if (t.includes('bono')) return 'bono';
+  if (t.includes('genero') || t.includes('género')) return 'genero';
+  if (t.includes('fecha') && t.includes('alta') || t.includes('ingreso')) return 'fecha_ingreso';
+  
+  // Datos de vacaciones
+  if (t.includes('año') || t.includes('anio')) return 'anos_servicio';
+  if (t.includes('días') && t.includes('corresponden')) return 'dias_correspondientes';
+  if (t.includes('días') && t.includes('tomados')) return 'dias_tomados';
+  if (t.includes('días') && t.includes('pendientes')) return 'dias_pendientes';
+  if (t.includes('días') && t.includes('disfrutar')) return 'dias_disfrutar';
+  if (t.includes('periodo')) return 'periodo';
+  
+  // Bloques de vacaciones
+  if (t === 'días' || t === 'dias') return 'bloque_dias';
+  if (t.includes('inicio')) return 'bloque_inicio';
+  if (t.includes('termino') || t.includes('término')) return 'bloque_termino';
+  if (t.includes('regreso') || t.includes('lab')) return 'bloque_regreso';
+  
+  return 'desconocido';
+};
+
+// 🔥 FUNCIÓN PARA CREAR COLUMNA DINÁMICAMENTE EN SUPABASE
+const crearColumnaDinamica = async (nombreColumna, tipo) => {
+  try {
+    // Intentar agregar la columna usando una función de Supabase
+    const { error } = await supabase.rpc('add_column_to_table', {
+      table_name: 'vacaciones',
+      column_name: nombreColumna,
+      column_type: tipo
+    });
+    
+    if (error) {
+      console.warn(`No se pudo crear columna ${nombreColumna}:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`Error creando columna ${nombreColumna}:`, err);
+    return false;
+  }
+};
+
 export default function Vacaciones() {
   const [empleados, setEmpleados] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
@@ -99,6 +130,7 @@ export default function Vacaciones() {
   const [modoImportacion, setModoImportacion] = useState(false);
   const [progresoImportacion, setProgresoImportacion] = useState(0);
   const [resultadosImportacion, setResultadosImportacion] = useState(null);
+  const [erroresImportacion, setErroresImportacion] = useState([]);
 
   const [kardexData, setKardexData] = useState(null);
   const [reciboData, setReciboData] = useState(null);
@@ -153,7 +185,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Excepción vacaciones:", err); setVacaciones([]); }
   };
 
-  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO (Maneja el CSV desordenado)
+  // 🔥 FUNCIÓN DE IMPORTACIÓN INTELIGENTE
   const procesarArchivoExcel = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -161,6 +193,7 @@ export default function Vacaciones() {
     setModoImportacion(true);
     setProgresoImportacion(0);
     setResultadosImportacion(null);
+    setErroresImportacion([]);
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -169,69 +202,116 @@ export default function Vacaciones() {
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         
-        let startIndex = 0;
-        for (let i = 0; i < rows.length; i++) {
-          if (String(rows[i][4]).toUpperCase().includes('NOMBRE DEL TRABAJADOR')) {
-            startIndex = i + 1;
+        // Encontrar fila de encabezados
+        let headerRow = 0;
+        for (let i = 0; i < Math.min(rows.length, 20); i++) {
+          const row = rows[i];
+          if (row.some(cell => String(cell).toLowerCase().includes('nombre') && String(cell).toLowerCase().includes('trabajador'))) {
+            headerRow = i;
             break;
           }
         }
 
+        const headers = rows[headerRow];
+        const dataRows = rows.slice(headerRow + 1);
+
+        // Mapear columnas
+        const columnMapping = headers.map((header, idx) => ({
+          index: idx,
+          titulo: String(header).trim(),
+          tipo: detectarTipoColumna(header)
+        }));
+
+        console.log("Mapeo de columnas:", columnMapping);
+
         let empleadosProcesados = 0;
+        let empleadosNoEncontrados = 0;
         let vacacionesCreadas = 0;
         let vacacionesActualizadas = 0;
-        let errores = 0;
-        let fechasOmitidas = 0;
+        let errores = [];
+        let columnasCreadas = new Set();
 
-        for (let i = startIndex; i < rows.length; i++) {
-          const row = rows[i];
-          const numEmp = String(row[0] || '').trim();
-          const nombreEmp = String(row[4] || '').trim();
+        // Procesar cada fila
+        for (let i = 0; i < dataRows.length; i++) {
+          const row = dataRows[i];
           
-          // Saltar filas vacías o duplicados del encabezado
-          if (!numEmp && !nombreEmp) continue;
-          if (nombreEmp.toUpperCase() === 'NOMBRE DEL TRABAJADOR') continue;
+          // Saltar filas vacías
+          if (row.every(cell => !cell || String(cell).trim() === '')) continue;
 
+          // Extraer datos del empleado
+          const numEmpCol = columnMapping.find(c => c.tipo === 'numero_empleado');
+          const nombreCol = columnMapping.find(c => c.tipo === 'nombre_completo');
+          
+          const numEmp = numEmpCol ? String(row[numEmpCol.index] || '').trim() : '';
+          const nombreEmp = nombreCol ? String(row[nombreCol.index] || '').trim() : '';
+
+          if (!numEmp && !nombreEmp) continue;
+
+          // Buscar empleado en BD
           const empleadoMatch = empleados.find(emp => 
             String(emp.numero_empleado) === numEmp || 
             normalizarNombre(emp.nombre_completo) === normalizarNombre(nombreEmp)
           );
 
-          if (!empleadoMatch) { errores++; continue; }
+          if (!empleadoMatch) {
+            empleadosNoEncontrados++;
+            errores.push(`Fila ${i + 2}: Empleado no encontrado - ${nombreEmp} (${numEmp})`);
+            continue;
+          }
+
           empleadosProcesados++;
 
-          // 🔥 Extraer bloques de vacaciones (comienzan en el índice 20: Días, Inicio, Fin, Status)
-          const vacBlocks = [];
-          for (let j = 20; j < row.length - 3; j += 4) {
-            const dias = parseInt(row[j]);
-            const inicio = String(row[j+1]).trim();
-            const termino = String(row[j+2]).trim();
-            const regreso = String(row[j+3]).trim();
+          // Extraer datos de vacaciones
+          const anosCol = columnMapping.find(c => c.tipo === 'anos_servicio');
+          const diasCorrCol = columnMapping.find(c => c.tipo === 'dias_correspondientes');
+          const diasTomadosCol = columnMapping.find(c => c.tipo === 'dias_tomados');
+          const diasPendCol = columnMapping.find(c => c.tipo === 'dias_pendientes');
+          const diasDisfCol = columnMapping.find(c => c.tipo === 'dias_disfrutar');
 
-            if (!isNaN(dias) && dias > 0 && inicio && inicio !== '-' && !inicio.toUpperCase().includes('PAGAD')) {
-              const isPagadas = regreso.toUpperCase().includes('PAGAD'); // Maneja PAGADAS, PAGADOS, PADADAS
-              const fechaInicioParsed = parsearFechaCSV(inicio);
-              const fechaFinParsed = parsearFechaCSV(termino) || fechaInicioParsed;
-              
-              if (fechaInicioParsed) {
-                vacBlocks.push({
+          const anosServicio = anosCol ? parseInt(row[anosCol.index]) || 0 : 0;
+          const diasCorrespondientes = diasCorrCol ? parseInt(row[diasCorrCol.index]) || 0 : 0;
+          const diasTomados = diasTomadosCol ? parseInt(row[diasTomadosCol.index]) || 0 : 0;
+          const diasPendientes = diasPendCol ? parseInt(row[diasPendCol.index]) || 0 : 0;
+          const diasDisfrutar = diasDisfCol ? parseInt(row[diasDisfCol.index]) || 0 : 0;
+
+          // Extraer bloques de vacaciones
+          const bloquesVacaciones = [];
+          const bloquesCols = columnMapping.filter(c => 
+            c.tipo === 'bloque_dias' || c.tipo === 'bloque_inicio' || 
+            c.tipo === 'bloque_termino' || c.tipo === 'bloque_regreso'
+          );
+
+          // Agrupar bloques de 4 columnas
+          for (let j = 0; j < bloquesCols.length; j += 4) {
+            const diasBlock = bloquesCols[j];
+            const inicioBlock = bloquesCols[j + 1];
+            const terminoBlock = bloquesCols[j + 2];
+            const regresoBlock = bloquesCols[j + 3];
+
+            if (diasBlock && inicioBlock) {
+              const dias = parseInt(row[diasBlock.index]);
+              const inicio = parsearFechaCSV(row[inicioBlock.index]);
+              const termino = terminoBlock ? parsearFechaCSV(row[terminoBlock.index]) : null;
+              const regreso = regresoBlock ? parsearFechaCSV(row[regresoBlock.index]) : null;
+
+              if (!isNaN(dias) && dias > 0 && inicio) {
+                bloquesVacaciones.push({
                   dias_solicitados: dias,
-                  fecha_inicio: fechaInicioParsed,
-                  fecha_fin: fechaFinParsed,
-                  tipo_vacaciones: isPagadas ? 'PAGADAS_NO_TOMADAS' : 'TOMADAS_Y_PAGADAS',
+                  fecha_inicio: inicio,
+                  fecha_fin: termino || inicio,
+                  fecha_regreso: regreso,
+                  tipo_vacaciones: 'TOMADAS_Y_PAGADAS',
                   estatus: 'APROBADO',
-                  observaciones: 'Importado desde CSV histórico'
+                  observaciones: 'Importado desde CSV'
                 });
-              } else {
-                fechasOmitidas++;
-                console.warn(`Fecha inválida omitida para ${nombreEmp}: ${inicio}`);
               }
             }
           }
 
-          // Guardar cada bloque de vacaciones en la base de datos
-          for (const bloque of vacBlocks) {
+          // Crear/actualizar registros de vacaciones
+          for (const bloque of bloquesVacaciones) {
             try {
+              // Verificar si existe
               const { data: existente } = await supabase
                 .from("vacaciones")
                 .select("id")
@@ -240,28 +320,75 @@ export default function Vacaciones() {
                 .eq("fecha_fin", bloque.fecha_fin)
                 .maybeSingle();
 
+              const payload = {
+                empleado_id: empleadoMatch.id,
+                ...bloque,
+                anos_servicio: anosServicio,
+                dias_correspondientes: diasCorrespondientes,
+                dias_tomados: diasTomados,
+                dias_pendientes: diasPendientes,
+                dias_disfrutar: diasDisfrutar
+              };
+
               if (existente) {
-                const { error: errorUpdate } = await supabase.from("vacaciones").update(bloque).eq("id", existente.id);
-                if (errorUpdate) errores++; else vacacionesActualizadas++;
+                const { error } = await supabase
+                  .from("vacaciones")
+                  .update(payload)
+                  .eq("id", existente.id);
+                if (error) {
+                  errores.push(`Error actualizando: ${error.message}`);
+                } else {
+                  vacacionesActualizadas++;
+                }
               } else {
-                const { error: errorInsert } = await supabase.from("vacaciones").insert([{ empleado_id: empleadoMatch.id, ...bloque }]);
-                if (errorInsert) errores++; else vacacionesCreadas++;
+                const { error } = await supabase
+                  .from("vacaciones")
+                  .insert([payload]);
+                if (error) {
+                  // Si falla, intentar crear columnas faltantes
+                  if (error.message.includes('column')) {
+                    const colName = error.message.match(/column "([^"]+)"/)?.[1];
+                    if (colName && !columnasCreadas.has(colName)) {
+                      await crearColumnaDinamica(colName, 'text');
+                      columnasCreadas.add(colName);
+                      // Reintentar
+                      const { error: retryError } = await supabase
+                        .from("vacaciones")
+                        .insert([payload]);
+                      if (retryError) {
+                        errores.push(`Error reintentando: ${retryError.message}`);
+                      } else {
+                        vacacionesCreadas++;
+                      }
+                    } else {
+                      errores.push(`Error creando: ${error.message}`);
+                    }
+                  } else {
+                    errores.push(`Error creando: ${error.message}`);
+                  }
+                } else {
+                  vacacionesCreadas++;
+                }
               }
-            } catch (err) { errores++; }
+            } catch (err) {
+              errores.push(`Excepción: ${err.message}`);
+            }
           }
 
           if (i % 10 === 0) {
-            setProgresoImportacion(Math.round((i / rows.length) * 100));
+            setProgresoImportacion(Math.round((i / dataRows.length) * 100));
           }
         }
 
         setResultadosImportacion({ 
-          empleadosProcesados, 
+          empleadosProcesados,
+          empleadosNoEncontrados,
           vacacionesActualizadas, 
           vacacionesCreadas, 
-          errores,
-          fechasOmitidas
+          errores: errores.length,
+          columnasCreadas: columnasCreadas.size
         });
+        setErroresImportacion(errores);
         setProgresoImportacion(100);
         await cargarVacaciones();
       } catch (error) {
@@ -281,7 +408,14 @@ export default function Vacaciones() {
       const solicitudesAprobadas = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "APROBADO");
       const solicitudesRechazadas = vacaciones.filter(v => String(v.empleado_id) === String(emp.id) && v.estatus === "RECHAZADO");
       
-      setKardexData({ empleado: emp, antiguedad, resumen, solicitudesPendientes, solicitudesAprobadas, solicitudesRechazadas });
+      setKardexData({ 
+        empleado: emp, 
+        antiguedad, 
+        resumen, 
+        solicitudesPendientes, 
+        solicitudesAprobadas, 
+        solicitudesRechazadas 
+      });
     } catch (err) {
       console.error("Error al abrir kardex:", err);
       alert("Error al abrir el kardex");
@@ -463,6 +597,20 @@ export default function Vacaciones() {
     }
   };
 
+  const calcularAntiguedad = (fechaIngresoStr) => {
+    if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
+    try {
+      const fecha = new Date(fechaIngresoStr);
+      if (isNaN(fecha.getTime())) return { anosCumplidos: 0, texto: "Fecha inválida" };
+      const hoy = new Date();
+      const dias = Math.floor((hoy - fecha) / (1000 * 60 * 60 * 24));
+      const anos = Math.floor(dias / 365);
+      return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
+    } catch {
+      return { anosCumplidos: 0, texto: "Error" };
+    }
+  };
+
   const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
     try {
       const anos = calcularAntiguedad(fechaIngresoStr).anosCumplidos;
@@ -586,25 +734,6 @@ export default function Vacaciones() {
                 </ul>
               )}
             </div>
-            <button 
-              onClick={() => {
-                setEmpresaRecibo("PAB");
-                setReciboData({
-                  empleado: { nombre_completo: "JUAN PÉREZ EJEMPLO", numero_empleado: "00000", fecha_ingreso: "2020-01-15" },
-                  diasSolicitados: 6,
-                  fechaInicio: "2026-08-10",
-                  fechaFin: "2026-08-15",
-                  fechaRegreso: "lunes, 17 de agosto de 2026",
-                  diaInicio: 10, mesInicio: "agosto", anoInicio: 2026,
-                  diaFin: 15, mesFin: "agosto", anoFin: 2026,
-                  antiguedad: { anosCumplidos: 6, texto: "6 año(s)" },
-                  resumen: { diasCorrespondientes: 22, diasRemanentes: 16 }
-                });
-              }}
-              className="whitespace-nowrap bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition"
-            >
-              📄 Ver Ejemplo de Recibo
-            </button>
           </div>
           {busquedaActiva && (
             <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
@@ -614,7 +743,7 @@ export default function Vacaciones() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">📥 Importar Histórico de Vacaciones (CSV)</h2>
+          <h2 className="text-xl font-bold mb-4"> Importar Histórico de Vacaciones (CSV)</h2>
           {!modoImportacion ? (
             <div>
               <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para actualizar el historial. El sistema detectará automáticamente múltiples bloques de vacaciones por empleado y omitirá fechas inválidas.</p>
@@ -636,15 +765,22 @@ export default function Vacaciones() {
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <h3 className="font-bold text-green-800 mb-2">✅ Importación Completada</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div><span className="text-slate-600">Empleados:</span><strong className="block">{resultadosImportacion.empleadosProcesados}</strong></div>
-                    <div><span className="text-slate-600">Actualizados:</span><strong className="text-blue-600 block">{resultadosImportacion.vacacionesActualizadas}</strong></div>
-                    <div><span className="text-slate-600">Creados:</span><strong className="text-green-600 block">{resultadosImportacion.vacacionesCreadas}</strong></div>
-                    <div>
-                      <span className="text-slate-600">Fechas inválidas omitidas:</span>
-                      <strong className="text-amber-600 block">{resultadosImportacion.fechasOmitidas || 0}</strong>
-                    </div>
+                    <div><span className="text-slate-600">Empleados procesados:</span><strong className="block">{resultadosImportacion.empleadosProcesados}</strong></div>
+                    <div><span className="text-slate-600">No encontrados:</span><strong className="text-amber-600 block">{resultadosImportacion.empleadosNoEncontrados}</strong></div>
+                    <div><span className="text-slate-600">Vacaciones creadas:</span><strong className="text-green-600 block">{resultadosImportacion.vacacionesCreadas}</strong></div>
+                    <div><span className="text-slate-600">Vacaciones actualizadas:</span><strong className="text-blue-600 block">{resultadosImportacion.vacacionesActualizadas}</strong></div>
                   </div>
-                  <button onClick={() => { setModoImportacion(false); setArchivoVacaciones(null); setResultadosImportacion(null); }} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">
+                  {erroresImportacion.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-sm font-bold text-red-700 mb-2">Errores ({erroresImportacion.length}):</p>
+                      <div className="max-h-40 overflow-y-auto bg-white p-2 rounded text-xs text-red-600">
+                        {erroresImportacion.map((err, idx) => (
+                          <div key={idx}>• {err}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={() => { setModoImportacion(false); setArchivoVacaciones(null); setResultadosImportacion(null); setErroresImportacion([]); }} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">
                     Cerrar
                   </button>
                 </div>
@@ -656,7 +792,7 @@ export default function Vacaciones() {
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
           <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
-              <span className="text-lg">⚙️</span>
+              <span className="text-lg">️</span>
               <div className="text-left">
                 <h2 className="text-base font-bold">Reglas Globales por Antigüedad</h2>
                 <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas</p>
@@ -697,7 +833,7 @@ export default function Vacaciones() {
               {Object.entries(empleadosAgrupadosFiltrados).map(([depto, puestos]) => (
                 <div key={depto} className="border border-slate-200 rounded-xl overflow-hidden">
                   <button onClick={() => toggleDepto(depto)} className="w-full bg-slate-100 hover:bg-slate-200 p-3 flex justify-between items-center transition">
-                    <span className="font-bold text-slate-800 flex items-center gap-2">{deptoExpandido[depto] ? "📂" : "📁"} {depto}</span>
+                    <span className="font-bold text-slate-800 flex items-center gap-2">{deptoExpandido[depto] ? "" : "📁"} {depto}</span>
                     <span className="text-xs bg-slate-300 text-slate-700 px-2 py-1 rounded-full">{Object.values(puestos).flat().length} empleados</span>
                   </button>
                   {deptoExpandido[depto] && (
@@ -758,7 +894,7 @@ export default function Vacaciones() {
             <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-y-auto p-6">
               <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-800">📋 Kardex de Empleado</h3>
+                  <h3 className="text-xl font-bold text-slate-800"> Kardex de Empleado</h3>
                   <p className="text-sm text-slate-600">{kardexData.empleado?.nombre_completo || "Sin nombre"} | {kardexData.empleado?.puesto || "Sin puesto"} | {kardexData.empleado?.departamento || "Sin departamento"}</p>
                 </div>
                 <button onClick={() => setKardexData(null)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
@@ -797,7 +933,7 @@ export default function Vacaciones() {
                           </select>
                           <button onClick={() => { const select = document.getElementById(`empresa-${vac.id}`); aprobarSolicitud(vac.id, select?.value || "PAB"); }} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">✅ Aprobar</button>
                           <button onClick={() => { const nuevosDias = prompt("Modificar días:", vac.dias_solicitados); if (nuevosDias !== null) modificarSolicitud(vac.id, { dias_solicitados: Number(nuevosDias) }); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">✏️ Modificar</button>
-                          <button onClick={() => rechazarSolicitud(vac.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">❌ Rechazar</button>
+                          <button onClick={() => rechazarSolicitud(vac.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"> Rechazar</button>
                           <button onClick={() => eliminarSolicitud(vac.id)} className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">🗑️ Eliminar</button>
                         </div>
                       </div>
@@ -891,13 +1027,12 @@ export default function Vacaciones() {
           </div>
         )}
 
-        {/* 🔥 MODAL RECIBO - DISEÑO EXACTO AL EXCEL */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-0 print:shadow-none print:max-h-none print:w-full print:p-0">
               
-              {/* SECCIÓN DATOS DE CAPTURA */}
-              <div className="border-2 border-black p-0 mb-0">
+              {/* SECCIÓN DATOS DE CAPTURA - No imprimible */}
+              <div className="border-2 border-black p-0 mb-0 print:hidden">
                 <div className="bg-white p-4">
                   <h3 className="font-bold text-sm mb-4 text-center uppercase">Datos de Captura</h3>
                   
@@ -956,7 +1091,7 @@ export default function Vacaciones() {
                 </div>
               </div>
 
-              {/* SECCIÓN DEL RECIBO */}
+              {/* SECCIÓN DEL RECIBO - Imprimible */}
               <div className="border-2 border-black p-4 mt-4">
                 <div className="text-center mb-6">
                   <div className="text-5xl font-bold text-green-600 mb-2" style={{fontFamily: 'Arial, sans-serif'}}>pab</div>

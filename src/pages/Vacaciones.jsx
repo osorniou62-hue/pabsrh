@@ -4,11 +4,13 @@ import { supabase } from "../services/supabase";
 import Layout from "../components/Layout";
 import KpiCard from "../components/KpiCard";
 
+// 🔥 NORMALIZADOR DE NOMBRES
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
 };
 
+// 🔥 CALCULADOR DE ANTIGÜEDAD
 const calcularAntiguedad = (fechaIngresoStr) => {
   if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
   try {
@@ -23,10 +25,11 @@ const calcularAntiguedad = (fechaIngresoStr) => {
   }
 };
 
-// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (Detecta y omite fechas imposibles como 31/11/2025)
+// 🔥 PARSER DE FECHAS ULTRA-ROBUSTO (Maneja todos los errores del CSV)
 const parsearFechaCSV = (valor) => {
   if (!valor) return null;
   
+  // 1. Manejar fechas en formato número de Excel (ej: 45845)
   const numVal = parseFloat(valor);
   if (!isNaN(numVal) && numVal > 10000) {
     const fecha = new Date((numVal - 25569) * 86400 * 1000);
@@ -36,27 +39,32 @@ const parsearFechaCSV = (valor) => {
   let str = String(valor).trim();
   if (str === '-' || str.toUpperCase().includes('PAGAD') || str.includes('#¡REF!') || str === '') return null;
   
-  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3').replace(/\/+/g, '/');
+  // 2. Corregir errores de dedo comunes: "02/04//2026" -> "02/04/2026"
+  str = str.replace(/\/+/g, '/');
+  
+  // 3. Corregir "1407/2026" -> "14/07/2026"
+  str = str.replace(/^(\d{2})(\d{2})\/(\d{4})$/, '$1/$2/$3');
 
+  // 4. Parsear formato dd/mm/yyyy o dd/mm/yy
   const matchSlash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4,5})$/);
   if (matchSlash) {
     let [, dia, mes, anio] = matchSlash;
-    if (anio.length > 4) anio = anio.slice(-4);
+    if (anio.length > 4) anio = anio.slice(-4); // Corregir "12026" -> "2026"
     if (anio.length === 2) anio = '20' + anio;
     
     const fechaStr = `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
     const fechaPrueba = new Date(fechaStr);
     
-    // Validar que la fecha sea real y que el mes/día coincidan (evita 31/11/2025)
+    // 5. Validar que la fecha sea real (evita 31/11/2025 o 15/0/2026)
     if (isNaN(fechaPrueba.getTime()) || 
         fechaPrueba.getDate() !== parseInt(dia) || 
         (fechaPrueba.getMonth() + 1) !== parseInt(mes)) {
       return null; 
     }
-    
     return fechaStr;
   }
   
+  // 6. Parsear formato dd/mmm/yy (ej: 14/ene/26)
   const meses = { 'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06', 'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12' };
   const matchMes = str.match(/^(\d{1,2})[\/\-]([a-z]{3})[\/\-](\d{2,4})$/i);
   if (matchMes) {
@@ -145,7 +153,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Excepción vacaciones:", err); setVacaciones([]); }
   };
 
-  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO
+  // 🔥 MÓDULO DE IMPORTACIÓN ROBUSTO (Maneja el CSV desordenado)
   const procesarArchivoExcel = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -180,6 +188,7 @@ export default function Vacaciones() {
           const numEmp = String(row[0] || '').trim();
           const nombreEmp = String(row[4] || '').trim();
           
+          // Saltar filas vacías o duplicados del encabezado
           if (!numEmp && !nombreEmp) continue;
           if (nombreEmp.toUpperCase() === 'NOMBRE DEL TRABAJADOR') continue;
 
@@ -191,6 +200,7 @@ export default function Vacaciones() {
           if (!empleadoMatch) { errores++; continue; }
           empleadosProcesados++;
 
+          // 🔥 Extraer bloques de vacaciones (comienzan en el índice 20: Días, Inicio, Fin, Status)
           const vacBlocks = [];
           for (let j = 20; j < row.length - 3; j += 4) {
             const dias = parseInt(row[j]);
@@ -199,7 +209,7 @@ export default function Vacaciones() {
             const regreso = String(row[j+3]).trim();
 
             if (!isNaN(dias) && dias > 0 && inicio && inicio !== '-' && !inicio.toUpperCase().includes('PAGAD')) {
-              const isPagadas = regreso.toUpperCase().includes('PAGAD');
+              const isPagadas = regreso.toUpperCase().includes('PAGAD'); // Maneja PAGADAS, PAGADOS, PADADAS
               const fechaInicioParsed = parsearFechaCSV(inicio);
               const fechaFinParsed = parsearFechaCSV(termino) || fechaInicioParsed;
               
@@ -219,6 +229,7 @@ export default function Vacaciones() {
             }
           }
 
+          // Guardar cada bloque de vacaciones en la base de datos
           for (const bloque of vacBlocks) {
             try {
               const { data: existente } = await supabase
@@ -880,179 +891,165 @@ export default function Vacaciones() {
           </div>
         )}
 
+        {/* 🔥 MODAL RECIBO - DISEÑO EXACTO AL EXCEL */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0 overflow-y-auto">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-4 print:shadow-none print:max-h-none print:w-full print:p-0">
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg print:hidden">
-                <label className="text-xs font-bold text-blue-800 block mb-1">🏢 Seleccionar Empresa:</label>
-                <select value={empresaRecibo} onChange={(e) => setEmpresaRecibo(e.target.value)} className="w-full md:w-1/2 border rounded p-2 text-sm bg-white">
-                  <option value="PAB">PLÁSTICOS AMBIENTALES DEL BAJÍO (PAB)</option>
-                  <option value="SHERGON">SHERGON</option>
-                </select>
-              </div>
-
-              <div className="border-2 border-black p-4 mb-6">
-                <h3 className="font-bold text-sm mb-3 text-center">DATOS DE CAPTURA</h3>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="col-span-2 flex">
-                    <span className="font-bold w-32">NOMBRE:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.nombre_completo || "N/A"}</span>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-0 print:shadow-none print:max-h-none print:w-full print:p-0">
+              
+              {/* SECCIÓN DATOS DE CAPTURA */}
+              <div className="border-2 border-black p-0 mb-0">
+                <div className="bg-white p-4">
+                  <h3 className="font-bold text-sm mb-4 text-center uppercase">Datos de Captura</h3>
+                  
+                  <div className="grid grid-cols-12 gap-0 text-xs">
+                    <div className="col-span-2 font-bold py-1">NOMBRE:</div>
+                    <div className="col-span-10 bg-blue-100 px-2 py-1 font-semibold">{reciboData.empleado?.nombre_completo || "N/A"}</div>
+                    
+                    <div className="col-span-2 font-bold py-1"># PROVEEDOR:</div>
+                    <div className="col-span-4 bg-yellow-300 px-2 py-1 font-bold">{reciboData.empleado?.numero_empleado || "N/A"}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Fecha Ingreso:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1">{reciboData.empleado?.fecha_ingreso || "N/A"}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Años de Servicio:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center">{reciboData.antiguedad?.anosCumplidos || 0}</div>
+                    <div className="col-span-2 font-bold py-1">Días pendientes:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold text-green-700">{reciboData.resumen?.diasRemanentes || 0}</div>
+                    
+                    <div className="col-span-2 font-bold py-1">Días que Corresponden:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Días a Disfrutar:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.diasSolicitados || 0}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Fecha en Inicial Vacaciones</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Fecha en Final Vacaciones</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Día que Inicia Labores:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1">{reciboData.fechaRegreso}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Fecha Elaboración del Reporte:</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1">{new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                    <div className="col-span-6"></div>
+                    
+                    <div className="col-span-2 font-bold py-1">Observaciones:</div>
+                    <div className="col-span-10 bg-blue-100 px-2 py-1">&nbsp;</div>
                   </div>
-                  <div className="col-span-2 flex">
-                    <span className="font-bold w-32"># PROVEEDOR:</span>
-                    <span className="bg-yellow-300 flex-1 px-2 py-0.5 font-bold">{reciboData.empleado?.numero_empleado || "N/A"}</span>
+                  
+                  <div className="mt-4 text-right text-xs">
+                    <p className="font-bold">Nota.-</p>
+                    <p>Clic en el Icono de la Impresora</p>
+                    <p>Lista nada mas para imprimirse</p>
+                    <p>media Hoja, o si no clic Icono</p>
+                    <p>ver Vista preliminar</p>
                   </div>
-                  <div className="col-span-2 flex">
-                    <span className="font-bold w-32">Fecha Ingreso:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.fecha_ingreso || "N/A"}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Años de Servicio:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.antiguedad?.anosCumplidos || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Días pendientes:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.resumen?.diasRemanentes || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Días que Corresponden:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.resumen?.diasCorrespondientes || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Días a Disfrutar:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.diasSolicitados || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Fecha en Inicial Vacaciones</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.diaInicio} {reciboData.mesInicio} {reciboData.anoInicio}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Fecha en Final Vacaciones</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.diaFin} {reciboData.mesFin} {reciboData.anoFin}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Día que Inicia Labores:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.fechaRegreso}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-32">Fecha Elaboración del Reporte:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-                  </div>
-                  <div className="col-span-2 flex">
-                    <span className="font-bold w-32">Observaciones:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">&nbsp;</span>
-                  </div>
-                </div>
-                <div className="mt-2 text-right">
-                  <p className="text-xs"><strong>Nota.-</strong> Clic en el Icono de la Impresora</p>
-                  <p className="text-xs">Lista nada mas para imprimirse</p>
-                  <p className="text-xs">media Hoja, o si no clic Icono</p>
-                  <p className="text-xs">ver Vista preliminar</p>
                 </div>
               </div>
 
-              <div className="border-2 border-black p-4">
-                <div className="text-center mb-4">
-                  <div className="text-4xl font-bold text-green-600 mb-2">pab</div>
-                  <h1 className="text-lg font-black uppercase">PLÁSTICOS AMBIENTALES DEL BAJIO</h1>
-                  <h2 className="text-base font-bold">SOLICITUD Y AUTORIZACION DE</h2>
-                  <h2 className="text-base font-bold">VACACIONES</h2>
+              {/* SECCIÓN DEL RECIBO */}
+              <div className="border-2 border-black p-4 mt-4">
+                <div className="text-center mb-6">
+                  <div className="text-5xl font-bold text-green-600 mb-2" style={{fontFamily: 'Arial, sans-serif'}}>pab</div>
+                  <h1 className="text-xl font-black uppercase">PLÁSTICOS AMBIENTALES DEL BAJIO</h1>
+                  <h2 className="text-lg font-bold">SOLICITUD Y AUTORIZACION DE</h2>
+                  <h2 className="text-lg font-bold">VACACIONES</h2>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                  <div className="flex">
-                    <span className="font-bold w-40">Nombre de la Empresa:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">Plástico Ambiental del Bajío S.A. de C.V.</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Área y/ p Departamento:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">&nbsp;</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">No de Empleado:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{String(reciboData.empleado?.numero_empleado || '').padStart(5, '0')}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Nombre del Empleado:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.nombre_completo || "N/A"}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Fecha de Ingreso:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5">{reciboData.empleado?.fecha_ingreso || "N/A"}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Años de Servicio:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-right font-bold">{String(reciboData.antiguedad?.anosCumplidos || 0).padStart(2, '0')} AÑOS</span>
-                  </div>
+                <div className="grid grid-cols-12 gap-0 text-xs mb-4">
+                  <div className="col-span-4 font-bold py-1">Nombre de la Empresa:</div>
+                  <div className="col-span-8 bg-blue-100 px-2 py-1">Plástico Ambiental del Bajío S.A. de C.V.</div>
+                  
+                  <div className="col-span-4 font-bold py-1">Área y/ p Departamento:</div>
+                  <div className="col-span-8 bg-blue-100 px-2 py-1">&nbsp;</div>
+                  
+                  <div className="col-span-4 font-bold py-1">No de Empleado:</div>
+                  <div className="col-span-4 bg-blue-100 px-2 py-1 text-center">{String(reciboData.empleado?.numero_empleado || '').padStart(5, '0')}</div>
+                  <div className="col-span-4 font-bold py-1">Nombre del Empleado:</div>
+                  <div className="col-span-8 bg-blue-100 px-2 py-1">{reciboData.empleado?.nombre_completo || "N/A"}</div>
+                  
+                  <div className="col-span-4 font-bold py-1">Fecha de Ingreso:</div>
+                  <div className="col-span-8 bg-blue-100 px-2 py-1">{reciboData.empleado?.fecha_ingreso || "N/A"}</div>
+                  
+                  <div className="col-span-8 font-bold py-1">Años de Servicio:</div>
+                  <div className="col-span-4 bg-blue-100 px-2 py-1 text-right font-bold">{String(reciboData.antiguedad?.anosCumplidos || 0).padStart(2, '0')} AÑOS</div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-xs mb-3 border-t border-b border-black py-2">
-                  <div className="flex">
-                    <span className="font-bold w-40">Días que corresponden:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Días a disfrutar :</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.diasSolicitados || 0}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="font-bold w-40">Días Pendientes:</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.resumen?.diasRemanentes || 0}</span>
-                  </div>
+                <div className="grid grid-cols-12 gap-0 text-xs mb-4 border-t-2 border-b-2 border-black py-2">
+                  <div className="col-span-4 font-bold py-1">Días que corresponden:</div>
+                  <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.resumen?.diasCorrespondientes || 0}</div>
+                  <div className="col-span-2 font-bold py-1">Días a disfrutar :</div>
+                  <div className="col-span-2 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.diasSolicitados || 0}</div>
+                </div>
+                
+                <div className="grid grid-cols-12 gap-0 text-xs mb-4 border-t border-b border-black py-2">
+                  <div className="col-span-4 font-bold py-1">Días Pendientes:</div>
+                  <div className="col-span-8 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.resumen?.diasRemanentes || 0}</div>
                 </div>
 
-                <div className="mb-3">
-                  <div className="flex text-xs mb-1">
+                <div className="mb-4">
+                  <div className="flex text-xs mb-2">
                     <span className="font-bold w-40">Período a Disfrutar:</span>
                   </div>
-                  <div className="flex text-xs mb-2">
-                    <span className="w-20">del Año de</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.anoInicio}</span>
-                    <span className="w-16">al Año</span>
-                    <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center font-bold">{reciboData.anoFin}</span>
+                  <div className="grid grid-cols-12 gap-0 text-xs mb-2">
+                    <div className="col-span-2">del Año de</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.anoInicio}</div>
+                    <div className="col-span-2">al Año</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.anoFin}</div>
                   </div>
                 </div>
 
-                <div className="mb-3">
+                <div className="mb-4">
                   <p className="text-xs font-bold mb-2">Días que Inician sus Vacaciones</p>
-                  <div className="grid grid-cols-4 gap-2 text-xs mb-1">
-                    <span className="text-right">del</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">{reciboData.diaInicio}</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">de {reciboData.mesInicio}</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">del {reciboData.anoInicio}</span>
+                  <div className="grid grid-cols-12 gap-0 text-xs mb-2">
+                    <div className="col-span-2 text-right">del</div>
+                    <div className="col-span-3 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.diaInicio}</div>
+                    <div className="col-span-2">de</div>
+                    <div className="col-span-3 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.mesInicio}</div>
+                    <div className="col-span-2">del</div>
+                    <div className="col-span-2 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.anoInicio}</div>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 text-xs">
-                    <span className="text-right">del</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">{reciboData.diaFin}</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">de {reciboData.mesFin}</span>
-                    <span className="bg-blue-100 px-2 py-0.5 text-center font-bold">del {reciboData.anoFin}</span>
+                  <div className="grid grid-cols-12 gap-0 text-xs">
+                    <div className="col-span-2 text-right">del</div>
+                    <div className="col-span-3 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.diaFin}</div>
+                    <div className="col-span-2">de</div>
+                    <div className="col-span-3 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.mesFin}</div>
+                    <div className="col-span-2">del</div>
+                    <div className="col-span-2 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.anoFin}</div>
                   </div>
                 </div>
 
-                <div className="flex text-xs mb-2">
+                <div className="flex text-xs mb-4">
                   <span className="font-bold w-96">FECHA EN QUE DEBERÁ DE PRESENTARSE A TRABAJAR:</span>
-                  <span className="bg-blue-100 flex-1 px-2 py-0.5 text-center">{reciboData.fechaRegreso}</span>
+                  <span className="bg-blue-100 flex-1 px-2 py-1 text-center">{reciboData.fechaRegreso}</span>
                 </div>
 
                 <div className="flex text-xs mb-4">
                   <span className="font-bold w-40">OBSERVACIONES:</span>
-                  <span className="bg-blue-100 flex-1 px-2 py-0.5">0</span>
+                  <span className="bg-blue-100 flex-1 px-2 py-1">0</span>
                 </div>
 
                 <div className="border-t-2 border-black pt-4 mt-4">
-                  <p className="text-xs mb-4">
+                  <p className="text-xs mb-4 text-justify">
                     POR EL PRESENTE EXPRESO MI CONFORMIDAD DE SOLICITAR Y GOZAR MIS VACACIONES DE ACUERDO A LO QUE ESTABLECE EL 
                     ARTICULO 76 DE LA LEY FEDERAL DEL TRABAJO, CONSIDERANDO LOS SIGUIENTES DATOS:
                   </p>
                   
-                  <div className="grid grid-cols-4 gap-4 text-xs mt-6 mb-4">
-                    <div className="text-center">
-                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.diaInicio}</span>
-                      <span className="mx-1">A</span>
-                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.mesInicio}</span>
-                      <span className="mx-1">DE</span>
-                      <span className="bg-blue-100 px-2 py-0.5 font-bold">{reciboData.anoInicio}</span>
-                    </div>
+                  <div className="grid grid-cols-12 gap-0 text-xs mt-6 mb-4">
+                    <div className="col-span-2 text-right">14</div>
+                    <div className="col-span-2 text-center">A</div>
+                    <div className="col-span-4 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.mesInicio}</div>
+                    <div className="col-span-2 text-center">DE</div>
+                    <div className="col-span-2 bg-blue-100 px-2 py-1 text-center font-bold">{reciboData.anoInicio}</div>
                   </div>
 
                   <div className="grid grid-cols-4 gap-4 text-center text-xs mt-8">
@@ -1076,7 +1073,7 @@ export default function Vacaciones() {
                 </div>
               </div>
 
-              <div className="mt-4 flex justify-end gap-3 print:hidden">
+              <div className="mt-4 flex justify-end gap-3 print:hidden p-4">
                 <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">Cerrar</button>
                 <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">🖨️ Imprimir / PDF</button>
               </div>

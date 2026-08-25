@@ -58,63 +58,55 @@ const parsearFechaCSV = (valor) => {
   return null;
 };
 
-// 🔥 NORMALIZADOR DE NOMBRES
 const normalizarNombre = (texto) => {
   if (!texto) return "";
   return String(texto).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, "n").replace(/[.,;:()]/g, "").replace(/\s+/g, " ").trim();
+};
+
+const calcularAntiguedad = (fechaIngresoStr) => {
+  if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
+  try {
+    const fecha = new Date(fechaIngresoStr);
+    if (isNaN(fecha.getTime())) return { anosCumplidos: 0, texto: "Fecha inválida" };
+    const hoy = new Date();
+    const dias = Math.floor((hoy - fecha) / (1000 * 60 * 60 * 24));
+    const anos = Math.floor(dias / 365);
+    return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
+  } catch {
+    return { anosCumplidos: 0, texto: "Error" };
+  }
 };
 
 // 🔥 DETECTOR DE TIPO DE COLUMNA BASADO EN TÍTULO
 const detectarTipoColumna = (titulo) => {
   const t = titulo.toLowerCase();
   
-  // Datos del empleado
   if (t.includes('n°') || t.includes('numero') || t.includes('proveedor')) return 'numero_empleado';
   if (t.includes('nombre') && t.includes('trabajador')) return 'nombre_completo';
-  if (t.includes('puesto') || t.includes('área')) return 'puesto';
+  if (t.includes('puesto')) return 'puesto';
+  if (t.includes('área') || t.includes('area')) return 'area';
   if (t.includes('empresa')) return 'empresa';
   if (t.includes('salario') && t.includes('fiscal')) return 'salario_fiscal';
   if (t.includes('salario') && t.includes('no fiscal')) return 'salario_no_fiscal';
-  if (t.includes('bono')) return 'bono';
+  if (t.includes('bono') && t.includes('puesto')) return 'bono_puesto';
+  if (t.includes('bono') && t.includes('punt')) return 'bono_puntualidad';
+  if (t.includes('bono') && t.includes('asis')) return 'bono_asistencia';
+  if (t.includes('bono') && t.includes('desempeño')) return 'bono_desempeno';
+  if (t.includes('monto') && t.includes('semanal')) return 'monto_semanal';
   if (t.includes('genero') || t.includes('género')) return 'genero';
   if (t.includes('fecha') && t.includes('alta') || t.includes('ingreso')) return 'fecha_ingreso';
-  
-  // Datos de vacaciones
   if (t.includes('año') || t.includes('anio')) return 'anos_servicio';
   if (t.includes('días') && t.includes('corresponden')) return 'dias_correspondientes';
-  if (t.includes('días') && t.includes('tomados')) return 'dias_tomados';
   if (t.includes('días') && t.includes('pendientes')) return 'dias_pendientes';
   if (t.includes('días') && t.includes('disfrutar')) return 'dias_disfrutar';
-  if (t.includes('periodo')) return 'periodo';
+  if (t.includes('período') || t.includes('periodo')) return 'periodo';
   
-  // Bloques de vacaciones
   if (t === 'días' || t === 'dias') return 'bloque_dias';
   if (t.includes('inicio')) return 'bloque_inicio';
   if (t.includes('termino') || t.includes('término')) return 'bloque_termino';
   if (t.includes('regreso') || t.includes('lab')) return 'bloque_regreso';
   
   return 'desconocido';
-};
-
-// 🔥 FUNCIÓN PARA CREAR COLUMNA DINÁMICAMENTE EN SUPABASE
-const crearColumnaDinamica = async (nombreColumna, tipo) => {
-  try {
-    // Intentar agregar la columna usando una función de Supabase
-    const { error } = await supabase.rpc('add_column_to_table', {
-      table_name: 'vacaciones',
-      column_name: nombreColumna,
-      column_type: tipo
-    });
-    
-    if (error) {
-      console.warn(`No se pudo crear columna ${nombreColumna}:`, error.message);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn(`Error creando columna ${nombreColumna}:`, err);
-    return false;
-  }
 };
 
 export default function Vacaciones() {
@@ -131,6 +123,8 @@ export default function Vacaciones() {
   const [progresoImportacion, setProgresoImportacion] = useState(0);
   const [resultadosImportacion, setResultadosImportacion] = useState(null);
   const [erroresImportacion, setErroresImportacion] = useState([]);
+  const [columnasDetectadas, setColumnasDetectadas] = useState([]);
+  const [mapeoColumnas, setMapeoColumnas] = useState({});
 
   const [kardexData, setKardexData] = useState(null);
   const [reciboData, setReciboData] = useState(null);
@@ -146,11 +140,22 @@ export default function Vacaciones() {
   const [busquedaActiva, setBusquedaActiva] = useState(false);
   const [deptoExpandido, setDeptoExpandido] = useState({});
 
+  const [mostrarMapeo, setMostrarMapeo] = useState(false);
+
   useEffect(() => {
     const inicializar = async () => {
       await cargarReglasGlobales();
       await cargarEmpleados();
       await cargarVacaciones();
+      // Cargar mapeo guardado
+      const mapeoGuardado = localStorage.getItem("mapeo_vacaciones_csv");
+      if (mapeoGuardado) {
+        try {
+          setMapeoColumnas(JSON.parse(mapeoGuardado));
+        } catch (e) {
+          console.error("Error cargando mapeo:", e);
+        }
+      }
     };
     inicializar();
   }, []);
@@ -185,7 +190,7 @@ export default function Vacaciones() {
     } catch (err) { console.error("Excepción vacaciones:", err); setVacaciones([]); }
   };
 
-  // 🔥 FUNCIÓN DE IMPORTACIÓN INTELIGENTE
+  // 🔥 FUNCIÓN DE IMPORTACIÓN CON MAPEO PERSONALIZADO
   const procesarArchivoExcel = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -222,32 +227,38 @@ export default function Vacaciones() {
           tipo: detectarTipoColumna(header)
         }));
 
+        setColumnasDetectadas(columnMapping);
         console.log("Mapeo de columnas:", columnMapping);
+
+        // Usar mapeo personalizado si existe
+        const mapeoFinal = { ...mapeoColumnas };
+        columnMapping.forEach(col => {
+          if (col.tipo !== 'desconocido' && !mapeoFinal[col.titulo]) {
+            mapeoFinal[col.titulo] = col.tipo;
+          }
+        });
 
         let empleadosProcesados = 0;
         let empleadosNoEncontrados = 0;
         let vacacionesCreadas = 0;
         let vacacionesActualizadas = 0;
         let errores = [];
-        let columnasCreadas = new Set();
 
         // Procesar cada fila
         for (let i = 0; i < dataRows.length; i++) {
           const row = dataRows[i];
           
-          // Saltar filas vacías
           if (row.every(cell => !cell || String(cell).trim() === '')) continue;
 
-          // Extraer datos del empleado
-          const numEmpCol = columnMapping.find(c => c.tipo === 'numero_empleado');
-          const nombreCol = columnMapping.find(c => c.tipo === 'nombre_completo');
+          // Extraer datos del empleado usando mapeo
+          const numEmpCol = columnMapping.find(c => mapeoFinal[c.titulo] === 'numero_empleado');
+          const nombreCol = columnMapping.find(c => mapeoFinal[c.titulo] === 'nombre_completo');
           
           const numEmp = numEmpCol ? String(row[numEmpCol.index] || '').trim() : '';
           const nombreEmp = nombreCol ? String(row[nombreCol.index] || '').trim() : '';
 
           if (!numEmp && !nombreEmp) continue;
 
-          // Buscar empleado en BD
           const empleadoMatch = empleados.find(emp => 
             String(emp.numero_empleado) === numEmp || 
             normalizarNombre(emp.nombre_completo) === normalizarNombre(nombreEmp)
@@ -262,26 +273,23 @@ export default function Vacaciones() {
           empleadosProcesados++;
 
           // Extraer datos de vacaciones
-          const anosCol = columnMapping.find(c => c.tipo === 'anos_servicio');
-          const diasCorrCol = columnMapping.find(c => c.tipo === 'dias_correspondientes');
-          const diasTomadosCol = columnMapping.find(c => c.tipo === 'dias_tomados');
-          const diasPendCol = columnMapping.find(c => c.tipo === 'dias_pendientes');
-          const diasDisfCol = columnMapping.find(c => c.tipo === 'dias_disfrutar');
+          const anosCol = columnMapping.find(c => mapeoFinal[c.titulo] === 'anos_servicio');
+          const diasCorrCol = columnMapping.find(c => mapeoFinal[c.titulo] === 'dias_correspondientes');
+          const diasPendCol = columnMapping.find(c => mapeoFinal[c.titulo] === 'dias_pendientes');
 
           const anosServicio = anosCol ? parseInt(row[anosCol.index]) || 0 : 0;
           const diasCorrespondientes = diasCorrCol ? parseInt(row[diasCorrCol.index]) || 0 : 0;
-          const diasTomados = diasTomadosCol ? parseInt(row[diasTomadosCol.index]) || 0 : 0;
           const diasPendientes = diasPendCol ? parseInt(row[diasPendCol.index]) || 0 : 0;
-          const diasDisfrutar = diasDisfCol ? parseInt(row[diasDisfCol.index]) || 0 : 0;
 
           // Extraer bloques de vacaciones
-          const bloquesVacaciones = [];
           const bloquesCols = columnMapping.filter(c => 
-            c.tipo === 'bloque_dias' || c.tipo === 'bloque_inicio' || 
-            c.tipo === 'bloque_termino' || c.tipo === 'bloque_regreso'
+            mapeoFinal[c.titulo] === 'bloque_dias' || 
+            mapeoFinal[c.titulo] === 'bloque_inicio' || 
+            mapeoFinal[c.titulo] === 'bloque_termino' || 
+            mapeoFinal[c.titulo] === 'bloque_regreso'
           );
 
-          // Agrupar bloques de 4 columnas
+          const bloquesVacaciones = [];
           for (let j = 0; j < bloquesCols.length; j += 4) {
             const diasBlock = bloquesCols[j];
             const inicioBlock = bloquesCols[j + 1];
@@ -302,16 +310,17 @@ export default function Vacaciones() {
                   fecha_regreso: regreso,
                   tipo_vacaciones: 'TOMADAS_Y_PAGADAS',
                   estatus: 'APROBADO',
-                  observaciones: 'Importado desde CSV'
+                  observaciones: 'Importado desde CSV',
+                  anos_servicio: anosServicio,
+                  dias_correspondientes: diasCorrespondientes,
+                  dias_pendientes: diasPendientes
                 });
               }
             }
           }
 
-          // Crear/actualizar registros de vacaciones
           for (const bloque of bloquesVacaciones) {
             try {
-              // Verificar si existe
               const { data: existente } = await supabase
                 .from("vacaciones")
                 .select("id")
@@ -320,55 +329,19 @@ export default function Vacaciones() {
                 .eq("fecha_fin", bloque.fecha_fin)
                 .maybeSingle();
 
-              const payload = {
-                empleado_id: empleadoMatch.id,
-                ...bloque,
-                anos_servicio: anosServicio,
-                dias_correspondientes: diasCorrespondientes,
-                dias_tomados: diasTomados,
-                dias_pendientes: diasPendientes,
-                dias_disfrutar: diasDisfrutar
-              };
-
               if (existente) {
                 const { error } = await supabase
                   .from("vacaciones")
-                  .update(payload)
+                  .update(bloque)
                   .eq("id", existente.id);
-                if (error) {
-                  errores.push(`Error actualizando: ${error.message}`);
-                } else {
-                  vacacionesActualizadas++;
-                }
+                if (error) errores.push(`Error actualizando: ${error.message}`);
+                else vacacionesActualizadas++;
               } else {
                 const { error } = await supabase
                   .from("vacaciones")
-                  .insert([payload]);
-                if (error) {
-                  // Si falla, intentar crear columnas faltantes
-                  if (error.message.includes('column')) {
-                    const colName = error.message.match(/column "([^"]+)"/)?.[1];
-                    if (colName && !columnasCreadas.has(colName)) {
-                      await crearColumnaDinamica(colName, 'text');
-                      columnasCreadas.add(colName);
-                      // Reintentar
-                      const { error: retryError } = await supabase
-                        .from("vacaciones")
-                        .insert([payload]);
-                      if (retryError) {
-                        errores.push(`Error reintentando: ${retryError.message}`);
-                      } else {
-                        vacacionesCreadas++;
-                      }
-                    } else {
-                      errores.push(`Error creando: ${error.message}`);
-                    }
-                  } else {
-                    errores.push(`Error creando: ${error.message}`);
-                  }
-                } else {
-                  vacacionesCreadas++;
-                }
+                  .insert([{ empleado_id: empleadoMatch.id, ...bloque }]);
+                if (error) errores.push(`Error creando: ${error.message}`);
+                else vacacionesCreadas++;
               }
             } catch (err) {
               errores.push(`Excepción: ${err.message}`);
@@ -383,10 +356,9 @@ export default function Vacaciones() {
         setResultadosImportacion({ 
           empleadosProcesados,
           empleadosNoEncontrados,
-          vacacionesActualizadas, 
           vacacionesCreadas, 
-          errores: errores.length,
-          columnasCreadas: columnasCreadas.size
+          vacacionesActualizadas, 
+          errores: errores.length
         });
         setErroresImportacion(errores);
         setProgresoImportacion(100);
@@ -597,20 +569,6 @@ export default function Vacaciones() {
     }
   };
 
-  const calcularAntiguedad = (fechaIngresoStr) => {
-    if (!fechaIngresoStr) return { anosCumplidos: 0, texto: "Sin fecha" };
-    try {
-      const fecha = new Date(fechaIngresoStr);
-      if (isNaN(fecha.getTime())) return { anosCumplidos: 0, texto: "Fecha inválida" };
-      const hoy = new Date();
-      const dias = Math.floor((hoy - fecha) / (1000 * 60 * 60 * 24));
-      const anos = Math.floor(dias / 365);
-      return { anosCumplidos: anos, texto: anos === 0 ? "< 1 año" : `${anos} año(s)` };
-    } catch {
-      return { anosCumplidos: 0, texto: "Error" };
-    }
-  };
-
   const obtenerResumenEmpleado = (empleadoId, fechaIngresoStr) => {
     try {
       const anos = calcularAntiguedad(fechaIngresoStr).anosCumplidos;
@@ -690,60 +648,59 @@ export default function Vacaciones() {
   const totalRechazadas = vacaciones.filter(v => v.estatus === "RECHAZADO").length;
   const totalDias = vacaciones.filter(v => v.estatus === "APROBADO").reduce((a, b) => a + Number(b.dias_solicitados || 0), 0);
 
+  //  Ver ejemplo de recibo
+  const verEjemploRecibo = () => {
+    setEmpresaRecibo("PAB");
+    setReciboData({
+      empleado: { nombre_completo: "GONZALEZ PALAFOX MA DE JESUS", numero_empleado: "11", fecha_ingreso: "12/09/2020" },
+      diasSolicitados: 5,
+      fechaInicio: "2026-08-15",
+      fechaFin: "2026-08-17",
+      fechaRegreso: "martes, 18 de agosto de 2026",
+      diaInicio: 15, mesInicio: "agosto", anoInicio: 2026,
+      diaFin: 17, mesFin: "agosto", anoFin: 2026,
+      antiguedad: { anosCumplidos: 6, texto: "6 año(s)" },
+      resumen: { diasCorrespondientes: 22, diasRemanentes: 17 }
+    });
+  };
+
+  // 🔥 Guardar mapeo
+  const guardarMapeo = () => {
+    localStorage.setItem("mapeo_vacaciones_csv", JSON.stringify(mapeoColumnas));
+    alert("✅ Mapeo guardado correctamente. Se aplicará en la próxima importación.");
+    setMostrarMapeo(false);
+  };
+
   return (
     <Layout>
       <div className="space-y-6 print:hidden">
         <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-800">🏖️ Control de Vacaciones (RH)</h1>
+            <h1 className="text-3xl font-bold text-slate-800">️ Control de Vacaciones (RH)</h1>
             <p className="text-slate-500">Gestión, aprobación de solicitudes, importación histórica y generación de recibos</p>
           </div>
-          <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
-            🔄 Recargar Datos
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={cargarEmpleados} className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-blue-200">
+              🔄 Recargar Datos
+            </button>
+            <button onClick={verEjemploRecibo} className="text-xs bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-purple-200">
+              📄 Ver Ejemplo de Recibo
+            </button>
+            <button onClick={() => setMostrarMapeo(true)} className="text-xs bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg font-semibold hover:bg-orange-200">
+              🔧 Ver Mapeo de Columnas
+            </button>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-4 gap-4">
           <KpiCard titulo="Pendientes" valor={totalPendientes} icono="⏳" color="text-amber-600" />
           <KpiCard titulo="Aprobadas" valor={totalAprobadas} icono="✅" color="text-green-600" />
-          <KpiCard titulo="Rechazadas" valor={totalRechazadas} icono="❌" color="text-red-600" />
-          <KpiCard titulo="Días Totales" valor={totalDias} icono="🗓️" color="text-blue-600" />
+          <KpiCard titulo="Rechazadas" valor={totalRechazadas} icono="" color="text-red-600" />
+          <KpiCard titulo="Días Totales" valor={totalDias} icono="️" color="text-blue-600" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4">🔎 Búsqueda y Acciones</h2>
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div className="relative flex-1 w-full">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-              <input 
-                type="text" 
-                placeholder="Buscar empleado por nombre o número..." 
-                value={busquedaTexto}
-                onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
-                onFocus={() => setMostrarSugerencias(true)}
-                className="w-full pl-10 pr-3 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
-                <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
-                  {sugerenciasEmpleados.map((emp) => (
-                    <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
-                      <span className="font-medium">{emp.nombre_completo}</span>
-                      <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-          {busquedaActiva && (
-            <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
-              Limpiar filtro
-            </button>
-          )}
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-xl font-bold mb-4"> Importar Histórico de Vacaciones (CSV)</h2>
+          <h2 className="text-xl font-bold mb-4">📥 Importar Histórico de Vacaciones (CSV)</h2>
           {!modoImportacion ? (
             <div>
               <p className="text-sm text-slate-600 mb-3">Sube tu archivo "CONTROL GENERAL" para actualizar el historial. El sistema detectará automáticamente múltiples bloques de vacaciones por empleado y omitirá fechas inválidas.</p>
@@ -792,7 +749,7 @@ export default function Vacaciones() {
         <div className="bg-slate-800 text-white rounded-2xl shadow-xl overflow-hidden">
           <button onClick={() => setReglasExpandidas(!reglasExpandidas)} className="w-full px-6 py-3 flex items-center justify-between hover:bg-slate-700 transition">
             <div className="flex items-center gap-3">
-              <span className="text-lg">️</span>
+              <span className="text-lg">⚙️</span>
               <div className="text-left">
                 <h2 className="text-base font-bold">Reglas Globales por Antigüedad</h2>
                 <p className="text-xs text-slate-300">{Object.keys(reglasGlobales).length} reglas configuradas</p>
@@ -825,6 +782,36 @@ export default function Vacaciones() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6">
+          <h2 className="text-xl font-bold mb-4">🔎 Búsqueda de Empleados</h2>
+          <div className="relative flex-1 w-full">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+            <input 
+              type="text" 
+              placeholder="Buscar empleado por nombre o número..." 
+              value={busquedaTexto}
+              onChange={(e) => { setBusquedaTexto(e.target.value); setEmpleadoSeleccionadoId(""); setMostrarSugerencias(true); }}
+              onFocus={() => setMostrarSugerencias(true)}
+              className="w-full pl-10 pr-3 py-2.5 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            {mostrarSugerencias && busquedaTexto.trim() !== "" && sugerenciasEmpleados.length > 0 && (
+              <ul className="absolute z-20 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-lg max-h-60 overflow-y-auto">
+                {sugerenciasEmpleados.map((emp) => (
+                  <li key={emp.id} onClick={() => { setBusquedaTexto(`[${emp.numero_empleado}] ${emp.nombre_completo}`); setEmpleadoSeleccionadoId(emp.id); setMostrarSugerencias(false); setBusquedaActiva(true); }} className="p-3 hover:bg-blue-50 cursor-pointer text-sm border-b flex justify-between">
+                    <span className="font-medium">{emp.nombre_completo}</span>
+                    <span className="text-xs text-gray-400">#{emp.numero_empleado}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {busquedaActiva && (
+            <button onClick={() => { setBusquedaActiva(false); setBusquedaTexto(""); setEmpleadoSeleccionadoId(""); }} className="mt-2 text-sm text-red-600 hover:underline">
+              Limpiar filtro
+            </button>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg p-6">
           <h2 className="text-xl font-bold mb-4">📋 Listado de Empleados</h2>
           {Object.keys(empleadosAgrupadosFiltrados).length === 0 ? (
             <p className="text-center text-gray-500 py-8">No se encontraron empleados.</p>
@@ -833,7 +820,7 @@ export default function Vacaciones() {
               {Object.entries(empleadosAgrupadosFiltrados).map(([depto, puestos]) => (
                 <div key={depto} className="border border-slate-200 rounded-xl overflow-hidden">
                   <button onClick={() => toggleDepto(depto)} className="w-full bg-slate-100 hover:bg-slate-200 p-3 flex justify-between items-center transition">
-                    <span className="font-bold text-slate-800 flex items-center gap-2">{deptoExpandido[depto] ? "" : "📁"} {depto}</span>
+                    <span className="font-bold text-slate-800 flex items-center gap-2">{deptoExpandido[depto] ? "📂" : "📁"} {depto}</span>
                     <span className="text-xs bg-slate-300 text-slate-700 px-2 py-1 rounded-full">{Object.values(puestos).flat().length} empleados</span>
                   </button>
                   {deptoExpandido[depto] && (
@@ -889,6 +876,7 @@ export default function Vacaciones() {
           )}
         </div>
 
+        {/* 🔥 MODAL KARDEX COMPLETO */}
         {kardexData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-y-auto p-6">
@@ -933,8 +921,8 @@ export default function Vacaciones() {
                           </select>
                           <button onClick={() => { const select = document.getElementById(`empresa-${vac.id}`); aprobarSolicitud(vac.id, select?.value || "PAB"); }} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">✅ Aprobar</button>
                           <button onClick={() => { const nuevosDias = prompt("Modificar días:", vac.dias_solicitados); if (nuevosDias !== null) modificarSolicitud(vac.id, { dias_solicitados: Number(nuevosDias) }); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">✏️ Modificar</button>
-                          <button onClick={() => rechazarSolicitud(vac.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"> Rechazar</button>
-                          <button onClick={() => eliminarSolicitud(vac.id)} className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">🗑️ Eliminar</button>
+                          <button onClick={() => rechazarSolicitud(vac.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">❌ Rechazar</button>
+                          <button onClick={() => eliminarSolicitud(vac.id)} className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold">️ Eliminar</button>
                         </div>
                       </div>
                     ))}
@@ -949,13 +937,18 @@ export default function Vacaciones() {
                 ) : (
                   <div className="max-h-64 overflow-y-auto border rounded-xl">
                     <table className="w-full text-xs">
-                      <thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">Fechas</th><th className="p-2">Días</th><th className="p-2">Tipo</th><th className="p-2">Acción</th></tr></thead>
+                      <thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">Fechas</th><th className="p-2">Días</th><th className="p-2">Tipo</th><th className="p-2">Origen</th><th className="p-2">Acción</th></tr></thead>
                       <tbody>
                         {kardexData.solicitudesAprobadas.map(item => (
                           <tr key={item.id} className="border-t">
                             <td className="p-2">{item.fecha_inicio} al {item.fecha_fin}</td>
                             <td className="p-2 text-center font-bold">{item.dias_solicitados}</td>
                             <td className="p-2 text-center">{item.tipo_vacaciones === "PAGADAS_NO_TOMADAS" ? "💰 Pagadas No Tomadas" : "✅ Tomadas"}</td>
+                            <td className="p-2 text-center">
+                              <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.observaciones?.includes('Importado') ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                                {item.observaciones?.includes('Importado') ? '📥 Importado' : '✍️ Manual'}
+                              </span>
+                            </td>
                             <td className="p-2 text-center">
                               <button onClick={() => verReciboHistorico(item)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-bold">🖨️ Ver Recibo</button>
                             </td>
@@ -990,6 +983,7 @@ export default function Vacaciones() {
           </div>
         )}
 
+        {/* 🔥 MODAL CREAR/EDITAR SOLICITUD */}
         {formSolicitud.abierto && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
@@ -1027,6 +1021,7 @@ export default function Vacaciones() {
           </div>
         )}
 
+        {/* 🔥 MODAL RECIBO */}
         {reciboData && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[90] print:static print:bg-white print:p-0 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-0 print:shadow-none print:max-h-none print:w-full print:p-0">
@@ -1210,7 +1205,99 @@ export default function Vacaciones() {
 
               <div className="mt-4 flex justify-end gap-3 print:hidden p-4">
                 <button onClick={() => setReciboData(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm font-semibold">Cerrar</button>
-                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">🖨️ Imprimir / PDF</button>
+                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg text-sm font-bold">️ Imprimir / PDF</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 🔥 MODAL MAPEO DE COLUMNAS */}
+        {mostrarMapeo && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100]">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
+              <div className="flex justify-between items-center mb-6 border-b pb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-800">🔧 Mapeo de Columnas del CSV</h3>
+                  <p className="text-sm text-slate-600">Configura cómo se mapean las columnas del archivo CSV a los campos de la base de datos</p>
+                </div>
+                <button onClick={() => setMostrarMapeo(false)} className="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+              </div>
+
+              <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm text-blue-800">
+                  <strong>ℹ️ Instrucciones:</strong> Las columnas detectadas automáticamente se muestran abajo. 
+                  Puedes cambiar el mapeo de cada columna para corregir la importación. 
+                  El mapeo se guardará automáticamente para futuras importaciones.
+                </p>
+              </div>
+
+              {columnasDetectadas.length === 0 ? (
+                <div className="text-center py-8 text-slate-500">
+                  <p className="text-lg mb-2">📄 No hay columnas detectadas</p>
+                  <p className="text-sm">Importa un archivo CSV primero para ver las columnas detectadas.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-12 gap-2 text-xs font-bold text-slate-700 bg-slate-100 p-2 rounded">
+                    <div className="col-span-1">#</div>
+                    <div className="col-span-4">Columna CSV</div>
+                    <div className="col-span-4">Tipo Detectado</div>
+                    <div className="col-span-3">Mapear a</div>
+                  </div>
+                  
+                  {columnasDetectadas.map((col, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 text-xs items-center p-2 border-b border-slate-100">
+                      <div className="col-span-1 text-slate-500">{idx + 1}</div>
+                      <div className="col-span-4 font-medium">{col.titulo || <span className="text-slate-400">(vacía)</span>}</div>
+                      <div className="col-span-4">
+                        <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                          col.tipo === 'desconocido' ? 'bg-red-100 text-red-700' :
+                          col.tipo.startsWith('bloque_') ? 'bg-blue-100 text-blue-700' :
+                          'bg-green-100 text-green-700'
+                        }`}>
+                          {col.tipo === 'desconocido' ? 'No detectado' : col.tipo}
+                        </span>
+                      </div>
+                      <div className="col-span-3">
+                        <select 
+                          value={mapeoColumnas[col.titulo] || col.tipo}
+                          onChange={(e) => setMapeoColumnas(prev => ({ ...prev, [col.titulo]: e.target.value }))}
+                          className="w-full border rounded px-2 py-1 text-xs"
+                        >
+                          <option value="desconocido">-- Ignorar --</option>
+                          <option value="numero_empleado">Número Empleado</option>
+                          <option value="nombre_completo">Nombre Completo</option>
+                          <option value="puesto">Puesto</option>
+                          <option value="area">Área</option>
+                          <option value="empresa">Empresa</option>
+                          <option value="salario_fiscal">Salario Fiscal</option>
+                          <option value="salario_no_fiscal">Salario No Fiscal</option>
+                          <option value="bono_puesto">Bono Puesto</option>
+                          <option value="bono_puntualidad">Bono Puntualidad</option>
+                          <option value="bono_asistencia">Bono Asistencia</option>
+                          <option value="bono_desempeno">Bono Desempeño</option>
+                          <option value="monto_semanal">Monto Semanal</option>
+                          <option value="genero">Género</option>
+                          <option value="fecha_ingreso">Fecha Ingreso</option>
+                          <option value="anos_servicio">Años Servicio</option>
+                          <option value="dias_correspondientes">Días Correspondientes</option>
+                          <option value="dias_pendientes">Días Pendientes</option>
+                          <option value="dias_disfrutar">Días a Disfrutar</option>
+                          <option value="periodo">Período</option>
+                          <option value="bloque_dias">Bloque: Días</option>
+                          <option value="bloque_inicio">Bloque: Inicio</option>
+                          <option value="bloque_termino">Bloque: Término</option>
+                          <option value="bloque_regreso">Bloque: Regreso</option>
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2 mt-6 pt-4 border-t">
+                <button onClick={() => setMostrarMapeo(false)} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-semibold">Cancelar</button>
+                <button onClick={guardarMapeo} className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold">💾 Guardar Mapeo</button>
               </div>
             </div>
           </div>
